@@ -212,8 +212,8 @@ function App() {
           pageIcon={viewMeta[currentView]?.icon}
         />
         
-        <main className="flex-1 overflow-y-auto">
-          <div className="p-6">
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <div className={`p-6 flex-1 flex flex-col ${currentView==='room-calendar' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
             {renderCurrentView()}
           </div>
         </main>
