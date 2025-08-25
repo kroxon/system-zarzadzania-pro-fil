@@ -8,7 +8,8 @@ import RoomCalendar from './components/Views/RoomCalendar';
 import LoginForm from './components/Auth/LoginForm';
 import EmployeesManage from './components/Views/EmployeesManage';
 import Patients from './components/Views/Patients';
-import { User, Meeting } from './types';
+import RoomsManage from './components/Views/RoomsManage';
+import { User, Meeting, Room } from './types';
 import { sampleUsers, sampleRooms, sampleMeetings } from './data/sampleData';
 import { 
   saveMeetings, 
@@ -17,7 +18,11 @@ import {
   loadCurrentUser,
   addMeeting,
   updateMeeting,
-  deleteMeeting
+  deleteMeeting,
+  loadRooms,
+  saveRooms,
+  loadUsers,
+  saveUsers
 } from './utils/storage';
 import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
 
@@ -26,14 +31,17 @@ function App() {
   const [currentView, setCurrentView] = useState('dashboard');
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [usersState, setUsersState] = useState(sampleUsers);
-  const [showWeekends, setShowWeekends] = useState(false); // global setting
-  const [startHour, setStartHour] = useState(8); // NEW opening hours start
-  const [endHour, setEndHour] = useState(17);   // NEW opening hours end (closing time)
+  const [roomsState, setRoomsState] = useState<Room[]>(sampleRooms);
+  const [showWeekends, setShowWeekends] = useState(false);
+  const [startHour, setStartHour] = useState(8);
+  const [endHour, setEndHour] = useState(17);
 
   // Inicjalizacja danych przy pierwszym uruchomieniu
   useEffect(() => {
     const storedUser = loadCurrentUser();
     const storedMeetings = loadMeetings();
+    const storedRooms = loadRooms();
+    const storedUsers = loadUsers();
 
     if (storedUser) {
       setCurrentUser(storedUser);
@@ -42,11 +50,29 @@ function App() {
     if (storedMeetings.length > 0) {
       setMeetings(storedMeetings);
     } else {
-      // Jeśli nie ma danych, użyj przykładowych
       setMeetings(sampleMeetings);
       saveMeetings(sampleMeetings);
     }
+
+    if (storedRooms.length > 0) {
+      setRoomsState(storedRooms);
+    } else {
+      setRoomsState(sampleRooms);
+      saveRooms(sampleRooms);
+    }
+
+    if (storedUsers.length > 0) {
+      setUsersState(storedUsers);
+    } else {
+      setUsersState(sampleUsers);
+      saveUsers(sampleUsers);
+    }
   }, []);
+
+  // Persist rooms on change
+  useEffect(()=>{ saveRooms(roomsState); },[roomsState]);
+  // Persist users on change
+  useEffect(()=>{ saveUsers(usersState); },[usersState]);
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
@@ -109,7 +135,7 @@ function App() {
   const renderCurrentView = () => {
     const commonProps = {
       users: usersState,
-      rooms: sampleRooms,
+      rooms: roomsState,
       meetings,
       currentUser,
       onMeetingCreate: handleMeetingCreate,
@@ -124,8 +150,8 @@ function App() {
       case 'dashboard':
         return (
           <Dashboard
-            users={sampleUsers}
-            rooms={sampleRooms}
+            users={usersState}
+            rooms={roomsState}
             meetings={meetings}
           />
         );
@@ -135,6 +161,8 @@ function App() {
         return <EmployeeCalendar {...commonProps} />;
       case 'room-calendar':
         return <RoomCalendar {...commonProps} />;
+      case 'rooms-manage':
+        return <RoomsManage rooms={roomsState} onRoomsChange={setRoomsState} userRole={currentUser!.role} />;
       case 'employees-manage':
         return <EmployeesManage users={usersState} onAdd={handleAddEmployee} onUpdate={handleUpdateEmployee} onDelete={handleDeleteEmployee} />;
       case 'patients':
@@ -192,7 +220,7 @@ function App() {
           </div>
         );
       default:
-        return <Dashboard users={sampleUsers} rooms={sampleRooms} meetings={meetings} />;
+        return <Dashboard users={usersState} rooms={roomsState} meetings={meetings} />;
     }
   };
 
@@ -201,14 +229,14 @@ function App() {
       <Sidebar
         currentView={currentView}
         onViewChange={setCurrentView}
-        userRole={currentUser.role}
+        userRole={currentUser!.role}
       />
       
       <div className="flex-1 flex flex-col overflow-hidden">
         <TopBar
-          currentUser={currentUser}
+          currentUser={currentUser!}
           onLogout={handleLogout}
-          pageTitle={viewMeta[currentView]?.title || ''}
+          pageTitle={(viewMeta[currentView]?.title) || ''}
           pageIcon={viewMeta[currentView]?.icon}
         />
         

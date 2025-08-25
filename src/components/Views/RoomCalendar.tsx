@@ -8,13 +8,39 @@ const SLOT_HEIGHT = 24;
 const SLOT_GAP = 2;
 const TIME_COL_WIDTH = 60; // minimal width to fit HH:MM without wrapping
 
+// Utility: derive lighter background + contrast text from base room color
+function deriveRoomColors(hex?: string){
+  const base = (hex||'#94a3b8').replace('#','');
+  if(!/^([0-9a-fA-F]{6})$/.test(base)) return { bg:'#e5e7eb', border:'#9ca3af', text:'#1f2937'};
+  const r=parseInt(base.slice(0,2),16), g=parseInt(base.slice(2,4),16), b=parseInt(base.slice(4,6),16);
+  // lighten factor
+  const lf = 0.65; // move 65% toward white for background
+  const lr = Math.round(r + (255-r)*lf);
+  const lg = Math.round(g + (255-g)*lf);
+  const lb = Math.round(b + (255-b)*lf);
+  const toHex = (n:number)=> n.toString(16).padStart(2,'0');
+  const bg = `#${toHex(lr)}${toHex(lg)}${toHex(lb)}`;
+  // border a bit darker than bg (blend 30% toward original)
+  const bf = 0.3; const br=Math.round(lr*bf + r*(1-bf)); const bg2=Math.round(lg*bf + g*(1-bf)); const bb=Math.round(lb*bf + b*(1-bf));
+  const border = `#${toHex(br)}${toHex(bg2)}${toHex(bb)}`;
+  // luminance for contrast
+  const lum = (0.2126*r/255 + 0.7152*g/255 + 0.0722*b/255);
+  const text = lum > 0.55 ? '#1f2937' : '#111827';
+  return { bg, border, text };
+}
+
+function getRoomStyle(room: Room | undefined){
+  if(!room) return { backgroundColor:'#e5e7eb', borderColor:'#9ca3af', color:'#1f2937' };
+  const { bg, border, text } = deriveRoomColors(room.color);
+  return { backgroundColor: bg, borderColor: border, color: text };
+}
+
 interface RoomCalendarProps { users: User[]; rooms: Room[]; meetings: Meeting[]; currentUser: User; onMeetingCreate: (m: Omit<Meeting,'id'>) => void; onMeetingUpdate: (id:string, u:Partial<Meeting>)=>void; showWeekends:boolean; startHour:number; endHour:number; }
 
 const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, currentUser, onMeetingCreate, onMeetingUpdate, showWeekends, startHour, endHour }) => {
   // State
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewType, setViewType] = useState<'day'|'week'|'month'>('week');
-  const [selectedRoom, setSelectedRoom] = useState('');
   const [showMeetingForm, setShowMeetingForm] = useState(false);
   const [selectedTime, setSelectedTime] = useState('');
   const [selectedEndTime, setSelectedEndTime] = useState<string | undefined>(undefined);
@@ -43,6 +69,10 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
   const [moveGhostSlotDelta, setMoveGhostSlotDelta] = useState(0); // how many slots ghost shifted
   const [conflictMessage, setConflictMessage] = useState<string|null>(null);
   const [conflictFlashId, setConflictFlashId] = useState<string|null>(null);
+  // Animacja / stan okna konfliktu
+  const [showConflict, setShowConflict] = useState(false);
+  const [conflictEntering, setConflictEntering] = useState(false);
+  const [conflictLeaving, setConflictLeaving] = useState(false);
 
   // Time slots
   const timeSlots = generateTimeSlots(startHour, endHour);
@@ -69,11 +99,22 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
     return -1; // unknown
   };
 
-  // Auto-hide conflict UI after 1 second
+  // Auto-hide conflict UI after 1 second -> zastąpione animacją
+  // useEffect(()=>{ if(conflictMessage){ const t = setTimeout(()=> setConflictMessage(null), 1000); return ()=> clearTimeout(t); } },[conflictMessage]);
   useEffect(()=>{
     if(conflictMessage){
-      const t = setTimeout(()=> setConflictMessage(null), 1000);
-      return ()=> clearTimeout(t);
+      setShowConflict(true);
+      setConflictLeaving(false);
+      setConflictEntering(false);
+      const raf = requestAnimationFrame(()=> setConflictEntering(true));
+      // wyświetlone ok ~1000ms, potem 300ms znikania
+      const visibleTimer = setTimeout(()=>{
+        setConflictLeaving(true);
+        setConflictEntering(false);
+        const removeTimer = setTimeout(()=>{ setShowConflict(false); setConflictLeaving(false); setConflictMessage(null); },300);
+        (visibleTimer as any).removeTimer = removeTimer;
+      },1000);
+      return ()=>{ cancelAnimationFrame(raf); clearTimeout(visibleTimer); if((visibleTimer as any).removeTimer) clearTimeout((visibleTimer as any).removeTimer); };
     }
   },[conflictMessage]);
   useEffect(()=>{
@@ -119,7 +160,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
   const startResize = (e:React.MouseEvent, meeting:Meeting, edge:'start'|'end') => { e.stopPropagation(); setPointerDownMeeting(null); const startIdx=timeSlots.indexOf(meeting.startTime); let endIdx=endExclusiveIdx(meeting.endTime); if(startIdx===-1||endIdx===-1) return; setResizingMeetingId(meeting.id); setResizeEdge(edge); setResizeMeta({ startIdx, endIdx, initialMouseY:e.clientY, date:meeting.date, roomId:meeting.roomId }); setResizeGhostSlotDelta(0); setResizePixelOffset(0); };
   const clearResizeState = () => { setResizingMeetingId(null); setResizeEdge(null); setResizeMeta(null); setResizeGhostSlotDelta(0); setResizePixelOffset(0); };
 
-  useEffect(()=>{ const onMove=(e:MouseEvent)=>{ if(!resizingMeetingId || !resizeMeta || !resizeEdge) return; const slotUnit=dynamicSlotHeight+SLOT_GAP; const deltaY=e.clientY-resizeMeta.initialMouseY; const rawShift=deltaY/slotUnit; let slotDelta = rawShift>0? Math.floor(rawShift): Math.ceil(rawShift); if(resizeEdge==='end'){ slotDelta = Math.max(1-resizeMeta.endIdx+resizeMeta.startIdx, slotDelta); slotDelta = Math.min(slotDelta, timeSlots.length - resizeMeta.endIdx); } else { slotDelta = Math.min(slotDelta, resizeMeta.endIdx-1-resizeMeta.startIdx); slotDelta = Math.max(-resizeMeta.startIdx, slotDelta); } let newStartIdx = resizeMeta.startIdx + (resizeEdge==='start'? slotDelta:0); let newEndIdx = resizeMeta.endIdx + (resizeEdge==='end'? slotDelta:0); if(newStartIdx<0) newStartIdx=0; if(newEndIdx>timeSlots.length) newEndIdx=timeSlots.length; const newStart=timeSlots[newStartIdx]; const newEnd=getEndLabel(newEndIdx); if(newStart && newEnd){ const meetingCurrent = meetings.find(m=>m.id===resizingMeetingId); const roomConflictMeeting = meetings.find(m=> m.roomId===resizeMeta.roomId && m.date===resizeMeta.date && m.id!==resizingMeetingId && !(newEnd<=m.startTime || newStart>=m.endTime)); const specialistConflictMeeting = meetingCurrent ? meetings.find(m=> m.specialistId===meetingCurrent.specialistId && m.date===meetingCurrent.date && m.id!==meetingCurrent.id && !(newEnd<=m.startTime || newStart>=m.endTime)) : undefined; if(roomConflictMeeting || specialistConflictMeeting){ if(specialistConflictMeeting){ setConflictMessage('Konflikt specjalisty: pracownik ma już spotkanie w tym czasie.'); setConflictFlashId(specialistConflictMeeting.id); } else if(roomConflictMeeting){ setConflictFlashId(roomConflictMeeting.id); } return; } } setResizeGhostSlotDelta(slotDelta); const remainder = deltaY - slotDelta*slotUnit; setResizePixelOffset(remainder); }; const onUp=()=>{ if(resizingMeetingId && resizeMeta && resizeEdge){ let newStartIdx = resizeMeta.startIdx; let newEndIdx = resizeMeta.endIdx; if(resizeEdge==='start'){ newStartIdx = resizeMeta.startIdx + resizeGhostSlotDelta; } else { newEndIdx = resizeMeta.endIdx + resizeGhostSlotDelta; } if(newStartIdx<0) newStartIdx=0; if(newEndIdx>timeSlots.length) newEndIdx=timeSlots.length; if(newEndIdx-newStartIdx>=1){ const newStart=timeSlots[newStartIdx]; const newEnd=getEndLabel(newEndIdx); if(newStart && newEnd){ const m=meetings.find(mm=>mm.id===resizingMeetingId); if(m && (m.startTime!==newStart || m.endTime!==newEnd)){ const roomConflictMeeting = meetings.find(mm=> mm.roomId===m.roomId && mm.date===m.date && mm.id!==m.id && !(newEnd<=mm.startTime || newStart>=mm.endTime)); const specConflictMeeting = meetings.find(mm=> mm.specialistId===m.specialistId && mm.date===m.date && mm.id!==m.id && !(newEnd<=mm.startTime || newStart>=mm.endTime)); if(roomConflictMeeting || specConflictMeeting){ if(specConflictMeeting){ setConflictMessage('Konflikt specjalisty: pracownik ma już spotkanie w tym czasie.'); setConflictFlashId(specConflictMeeting.id); } else if(roomConflictMeeting){ setConflictFlashId(roomConflictMeeting.id); } } else { onMeetingUpdate(resizingMeetingId,{ startTime:newStart, endTime:newEnd }); } } } } } clearResizeState(); }; window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp); return ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }; },[resizingMeetingId, resizeMeta, resizeEdge, timeSlots, meetings, onMeetingUpdate, dynamicSlotHeight, resizeGhostSlotDelta]);
+  useEffect(()=>{ const onMove=(e:MouseEvent)=>{ if(!resizingMeetingId || !resizeMeta || !resizeEdge) return; const slotUnit=dynamicSlotHeight+SLOT_GAP; const deltaY=e.clientY-resizeMeta.initialMouseY; const rawShift=deltaY/slotUnit; let slotDelta = rawShift>0? Math.floor(rawShift): Math.ceil(rawShift); if(resizeEdge==='end'){ slotDelta = Math.max(1-resizeMeta.endIdx+resizeMeta.startIdx, slotDelta); slotDelta = Math.min(slotDelta, timeSlots.length - resizeMeta.endIdx); } else { slotDelta = Math.min(slotDelta, resizeMeta.endIdx-1-resizeMeta.startIdx); slotDelta = Math.max(-resizeMeta.startIdx, slotDelta); } let newStartIdx = resizeMeta.startIdx + (resizeEdge==='start'? slotDelta:0); let newEndIdx = resizeMeta.endIdx + (resizeEdge==='end'? slotDelta:0); if(newStartIdx<0) newStartIdx=0; if(newEndIdx>timeSlots.length) newEndIdx=timeSlots.length; const newStart=timeSlots[newStartIdx]; const newEnd=getEndLabel(newEndIdx); if(newStart && newEnd){ const meetingCurrent = meetings.find(m=>m.id===resizingMeetingId); const roomConflictMeeting = meetings.find(m=> m.roomId===resizeMeta.roomId && m.date===resizeMeta.date && m.id!==resizingMeetingId && !(newEnd<=m.startTime || newStart>=m.endTime)); const specialistConflictMeeting = meetingCurrent ? meetings.find(m=> m.specialistId===meetingCurrent.specialistId && m.date===meetingCurrent.date && m.id!==meetingCurrent.id && !(newEnd<=m.startTime || newStart>=m.endTime)) : undefined; if(roomConflictMeeting || specialistConflictMeeting){ if(specialistConflictMeeting){ setConflictMessage('Pracownik ma już w tym czasie inne spotkanie.'); setConflictFlashId(specialistConflictMeeting.id); } else if(roomConflictMeeting){ setConflictMessage('Sala jest już zajęta w tym czasie przez inne spotkanie.'); setConflictFlashId(roomConflictMeeting.id); } return; } } setResizeGhostSlotDelta(slotDelta); const remainder = deltaY - slotDelta*slotUnit; setResizePixelOffset(remainder); }; const onUp=()=>{ if(resizingMeetingId && resizeMeta && resizeEdge){ let newStartIdx = resizeMeta.startIdx; let newEndIdx = resizeMeta.endIdx; if(resizeEdge==='start'){ newStartIdx = resizeMeta.startIdx + resizeGhostSlotDelta; } else { newEndIdx = resizeMeta.endIdx + resizeGhostSlotDelta; } if(newStartIdx<0) newStartIdx=0; if(newEndIdx>timeSlots.length) newEndIdx=timeSlots.length; if(newEndIdx-newStartIdx>=1){ const newStart=timeSlots[newStartIdx]; const newEnd=getEndLabel(newEndIdx); if(newStart && newEnd){ const m=meetings.find(mm=>mm.id===resizingMeetingId); if(m && (m.startTime!==newStart || m.endTime!==newEnd)){ const roomConflictMeeting = meetings.find(mm=> mm.roomId===m.roomId && mm.date===m.date && mm.id!==m.id && !(newEnd<=mm.startTime || newStart>=mm.endTime)); const specConflictMeeting = meetings.find(mm=> mm.specialistId===m.specialistId && mm.date===m.date && mm.id!==m.id && !(newEnd<=mm.startTime || newStart>=mm.endTime)); if(roomConflictMeeting || specConflictMeeting){ if(specConflictMeeting){ setConflictMessage('Pracownik ma już w tym czasie inne spotkanie.'); setConflictFlashId(specConflictMeeting.id); } else if(roomConflictMeeting){ setConflictMessage('Sala jest już zajęta w tym czasie przez inne spotkanie.'); setConflictFlashId(roomConflictMeeting.id); } } else { onMeetingUpdate(resizingMeetingId,{ startTime:newStart, endTime:newEnd }); } } } } } clearResizeState(); }; window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp); return ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }; },[resizingMeetingId, resizeMeta, resizeEdge, timeSlots, meetings, onMeetingUpdate, dynamicSlotHeight, resizeGhostSlotDelta]);
 
   // Move (drag whole block) effect
   useEffect(()=>{
@@ -136,7 +177,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
           if(meeting && (meeting.startTime!==newStart || meeting.endTime!==newEnd)){
             const roomConflictMeeting = meetings.find(m=> m.id!==movingMeetingId && m.roomId===meeting.roomId && m.date===meeting.date && !(newEnd<=m.startTime || newStart>=m.endTime));
             const specConflictMeeting = meetings.find(m=> m.id!==movingMeetingId && m.specialistId===meeting.specialistId && m.date===meeting.date && !(newEnd<=m.startTime || newStart>=m.endTime));
-            if(roomConflictMeeting || specConflictMeeting){ if(specConflictMeeting){ setConflictMessage('Konflikt specjalisty: pracownik ma już spotkanie w tym czasie.'); setConflictFlashId(specConflictMeeting.id); } else if(roomConflictMeeting){ setConflictFlashId(roomConflictMeeting.id); } } else { onMeetingUpdate(movingMeetingId, { startTime:newStart, endTime:newEnd }); }
+            if(roomConflictMeeting || specConflictMeeting){ if(specConflictMeeting){ setConflictMessage('Pracownik ma już w tym czasie inne spotkanie.'); setConflictFlashId(specConflictMeeting.id); } else if(roomConflictMeeting){ setConflictMessage('Sala jest już zajęta w tym czasie przez inne spotkanie.'); setConflictFlashId(roomConflictMeeting.id); } } else { onMeetingUpdate(movingMeetingId, { startTime:newStart, endTime:newEnd }); }
           }
         }
       }
@@ -178,8 +219,8 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
             const roomConflictMeeting = meetings.find(m=> m.id!==meeting.id && m.roomId===meeting.roomId && m.date===meeting.date && !(newEnd<=m.startTime || newStart>=m.endTime));
             const specialistConflictMeeting = meetings.find(m=> m.id!==meeting.id && m.specialistId===meeting.specialistId && m.date===meeting.date && !(newEnd<=m.startTime || newStart>=m.endTime));
             if(roomConflictMeeting || specialistConflictMeeting){
-              if(specialistConflictMeeting){ setConflictMessage('Konflikt specjalisty: pracownik ma już spotkanie w tym czasie.'); setConflictFlashId(specialistConflictMeeting.id); }
-              else if(roomConflictMeeting){ setConflictFlashId(roomConflictMeeting.id); }
+              if(specialistConflictMeeting){ setConflictMessage('Pracownik ma już w tym czasie inne spotkanie.'); setConflictFlashId(specialistConflictMeeting.id); }
+              else if(roomConflictMeeting){ setConflictMessage('Sala jest już zajęta w tym czasie przez inne spotkanie.'); setConflictFlashId(roomConflictMeeting.id); }
               return;
             }
           }
@@ -284,15 +325,17 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                 const specialist = users.find(u=>u.id===m.specialistId);
                 const specName = specialist? specialist.name : 'Specjalista';
                 const timeRange = `${m.startTime}-${m.endTime}`;
-                const baseClass = `${ m.status==='present'?"bg-blue-200 border-blue-400 text-blue-900": m.status==='in-progress'?"bg-yellow-300 border-yellow-500 text-yellow-900": m.status==='cancelled'?"bg-red-300 border-red-500 text-red-900 line-through": 'bg-gray-300 border-gray-500 text-gray-800'}`;
+                const room = rooms.find(r=>r.id===m.roomId);
+                const roomStyle = getRoomStyle(room);
                 return (
                   <div key={m.id+"_orig"}
                     onMouseDown={(e)=>{ if(e.button!==0) return; if(resizingMeetingId) return; setPointerDownMeeting({ id:m.id, y:e.clientY, t:Date.now(), dateStr, roomId:m.roomId }); }}
-                    className={`group absolute border rounded-md px-1.5 text-[11px] shadow-sm cursor-pointer overflow-hidden hover:brightness-95 transition-opacity flex items-center justify-center ${baseClass} ${conflictFlashId===m.id? '!ring-4 !ring-red-500 !border-red-500 animate-pulse':''}`}
-                    style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`}}
-                    title={`${specName} (${timeRange})`}>
+                    className={`group absolute rounded-md px-1.5 text-[11px] shadow-sm cursor-pointer overflow-hidden hover:brightness-95 transition-opacity flex items-center justify-center border ${(conflictFlashId===m.id)?'!ring-4 !ring-red-500 !border-red-500 animate-pulse':''} ${m.status==='cancelled'?'line-through opacity-70':''}`}
+                    style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, ...roomStyle }}
+                    title={`${specName} (${timeRange})`}
+                  >
                     <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize flex items-end justify-center" onMouseDown={(e)=>startResize(e,m,'end')}>
-                      <span className="w-8 h-0.5 rounded bg-blue-500/40 mb-[3px] group-hover:bg-blue-500 transition" />
+                      <span className="w-8 h-0.5 rounded bg-black/20 mb-[3px] group-hover:bg-black/40 transition" />
                     </div>
                     <div className={`pointer-events-none select-none flex ${isShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
                       <div className={`${isShort?'text-[12px]':'text-[11px] mb-1'} font-semibold opacity-80`}>{timeRange}</div>
@@ -318,8 +361,9 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                   const specialist = users.find(u=>u.id===m.specialistId); const specName = specialist?specialist.name:'Specjalista';
                   const timeRange = `${ghostStart}-${ghostEnd}`;
                   const isShort = durationSlots===1;
+                  const room = rooms.find(r=>r.id===m.roomId); const roomStyle = getRoomStyle(room);
                   interactiveGhost = (
-                    <div key={m.id+"_moveGhostLive"} className="absolute border rounded-md px-1.5 text-[11px] shadow-lg cursor-grabbing overflow-hidden ring-2 ring-blue-400 bg-blue-200/70 border-blue-400 text-blue-900 flex items-center justify-center" style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, transform:`translateY(${movePixelOffset}px)`, transition:'none', zIndex:65}}>
+                    <div key={m.id+"_moveGhostLive"} className="absolute rounded-md px-1.5 text-[11px] shadow-lg cursor-grabbing overflow-hidden ring-2 ring-blue-400 flex items-center justify-center" style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, transform:`translateY(${movePixelOffset}px)`, transition:'none', zIndex:65, ...roomStyle}}>
                       <div className={`pointer-events-none select-none flex ${isShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
                         <div className={`${isShort?'text-[12px]':'text-[11px] mb-1'} font-semibold opacity-80`}>{timeRange}</div>
                         <div className="text-[10px] font-medium truncate max-w-full opacity-80">{specName}</div>
@@ -341,8 +385,9 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                   const specialist = users.find(u=>u.id===m.specialistId); const specName = specialist?specialist.name:'Specjalista';
                   const timeRange = `${ghostStart}-${ghostEnd}`; const isShort = slots===1;
                   const transform = resizeEdge==='start'? `translateY(${resizePixelOffset}px)`:'none';
+                  const room = rooms.find(r=>r.id===m.roomId); const roomStyle = getRoomStyle(room);
                   interactiveGhost = (
-                    <div key={m.id+"_resizeGhostLive"} className="absolute border rounded-md px-1.5 text-[11px] shadow-lg cursor-ns-resize overflow-hidden ring-2 ring-blue-400 bg-blue-200/70 border-blue-400 text-blue-900 flex items-center justify-center" style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, transform, zIndex:70}}>
+                    <div key={m.id+"_resizeGhostLive"} className="absolute rounded-md px-1.5 text-[11px] shadow-lg cursor-ns-resize overflow-hidden ring-2 ring-blue-400 flex items-center justify-center" style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, transform, zIndex:70, ...roomStyle}}>
                       <div className={`pointer-events-none select-none flex ${isShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
                         <div className={`${isShort?'text-[12px]':'text-[11px] mb-1'} font-semibold opacity-80`}>{timeRange}</div>
                         <div className="text-[10px] font-medium truncate max-w-full opacity-80">{specName}</div>
@@ -446,14 +491,15 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                     <div className="text-[12px] font-semibold uppercase tracking-wide truncate max-w-full">{specName}</div>
                   </div>
                 );
+                const roomStyle = getRoomStyle(room);
                 const originalBlock = (
                   <div key={m.id+"_orig"}
                     onMouseDown={(e)=>{ if(e.button!==0) return; if(resizingMeetingId) return; setPointerDownMeeting({ id:m.id, y:e.clientY, t:Date.now(), dateStr, roomId: room.id }); }}
-                    className={`group absolute left-1 right-1 border rounded-md px-1.5 text-[11px] shadow-sm cursor-pointer overflow-hidden hover:brightness-95 transition-opacity flex items-center justify-center ${ m.status==='present'?"bg-blue-200 border-blue-400 text-blue-900" : m.status==='in-progress'?"bg-yellow-300 border-yellow-500 text-yellow-900" : m.status==='cancelled'?"bg-red-300 border-red-500 text-red-900 line-through" : 'bg-gray-300 border-gray-500 text-gray-800' } ${(isResizing)?'ring-2 ring-blue-400':''} ${conflictFlashId===m.id? '!ring-4 !ring-red-500 !border-red-500 animate-pulse':''}`}
-                    style={{top,height, opacity:isResizing||isMoving?0.25:1}}
+                    className={`group absolute left-1 right-1 rounded-md px-1.5 text-[11px] shadow-sm cursor-pointer overflow-hidden hover:brightness-95 transition-opacity flex items-center justify-center border ${(isResizing)?'ring-2 ring-blue-400':''} ${conflictFlashId===m.id? '!ring-4 !ring-red-500 !border-red-500 animate-pulse':''} ${m.status==='cancelled'?'line-through opacity-70':''}`}
+                    style={{top,height, opacity:isResizing||isMoving?0.25:1, ...roomStyle}}
                     title={`${specName} (${timeRange})`}>
                     <div onMouseDown={(e)=>startResize(e,m,'end')} className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize flex items-end justify-center group/handleEnd">
-                      <span className="w-8 h-0.5 rounded bg-blue-500/40 mb-[3px] group-hover/handleEnd:bg-blue-500 transition" />
+                      <span className="w-8 h-0.5 rounded bg-black/20 mb-[3px] group-hover/handleEnd:bg-black/40 transition" />
                     </div>
                     {content}
                   </div>
@@ -474,7 +520,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                   );
                   const ghostHeight = ghostSlots*slotHeight + (ghostSlots-1)*slotGap;
                   const moveGhost = (
-                    <div key={m.id+"_moveGhost"} className="absolute left-1 right-1 border rounded-md px-1.5 text-[11px] shadow-lg cursor-grabbing overflow-hidden ring-2 ring-blue-400 bg-blue-200/70 border-blue-400 text-blue-900 flex items-center justify-center" style={{top:ghostTop, height:ghostHeight, transform:`translateY(${movePixelOffset}px)`, transition:'none', zIndex:65}}>
+                    <div key={m.id+"_moveGhost"} className="absolute left-1 right-1 rounded-md px-1.5 text-[11px] shadow-lg cursor-grabbing overflow-hidden ring-2 ring-blue-400 flex items-center justify-center border" style={{top:ghostTop, height:ghostHeight, transform:`translateY(${movePixelOffset}px)`, transition:'none', zIndex:65, ...roomStyle}}>
                       {ghostContent}
                     </div>
                   );
@@ -497,7 +543,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                     </div>
                   );
                   const ghost = (
-                    <div key={m.id+"_resizeGhost"} className="absolute left-1 right-1 border rounded-md px-1.5 text-[11px] shadow-lg cursor-ns-resize overflow-hidden ring-2 ring-blue-400 bg-blue-200/70 border-blue-400 text-blue-900 flex items-center justify-center" style={{top:ghostTop, height:ghostHeight, transform, zIndex:70}}>
+                    <div key={m.id+"_resizeGhost"} className="absolute left-1 right-1 rounded-md px-1.5 text-[11px] shadow-lg cursor-ns-resize overflow-hidden ring-2 ring-blue-400 flex items-center justify-center border" style={{top:ghostTop, height:ghostHeight, transform, zIndex:70, ...roomStyle}}>
                       {ghostContent}
                     </div>
                   );
@@ -561,25 +607,62 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
     );
   };
 
-  return (<div className={`flex flex-col flex-1 h-full min-h-0 overflow-hidden ${viewType==='day'?'gap-2':'space-y-6'} pb-4`}>{/* full height inside parent */}
-    {viewType!=='day' && viewType!=='week' && (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex-none">
-        {/* Room selection panel removed for week view */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Wybierz salę</label>
-            <select value={selectedRoom} onChange={(e)=>setSelectedRoom(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-              <option value="">Wszystkie</option>
-              {rooms.map(r=> <option key={r.id} value={r.id}>{r.name} (pojemność: {r.capacity} os.)</option>)}
-            </select>
-          </div>
+  // Month view (calendar grid, room occupancy indicators)
+  const renderMonthView = () => {
+    // Calendar grid covering full month (6 weeks) with indicators for ALL rooms having meetings each day
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstOfMonth = new Date(year, month, 1);
+    const mondayIndex = (firstOfMonth.getDay()+6)%7; // Monday=0
+    const gridStart = new Date(firstOfMonth);
+    gridStart.setDate(firstOfMonth.getDate() - mondayIndex);
+    const days: Date[] = [];
+    for(let i=0;i<42;i++){ const d=new Date(gridStart); d.setDate(gridStart.getDate()+i); days.push(d);} // 6 weeks
+    const weekdays = ['Pn','Wt','Śr','Cz','Pt','So','Nd'];
+    return (
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full overflow-hidden">
+        <div className="grid grid-cols-7 text-[12px] font-semibold text-gray-600 border-b border-gray-200 bg-gray-50/70">
+          {weekdays.map(w=> <div key={w} className="px-2 py-2 text-center">{w}</div>)}
+        </div>
+        <div className="flex-1 grid grid-cols-7 auto-rows-[minmax(90px,1fr)] text-[12px]">
+          {days.map((d,i)=>{
+            const dateStr = formatDateForComparison(d);
+            const isCurrentMonth = d.getMonth()===month;
+            const isToday = dateStr === formatDateForComparison(new Date());
+            const dayMeetings = meetings.filter(m=>m.date===dateStr);
+            const busyRoomIds: string[] = Array.from(new Set(dayMeetings.map(m=>m.roomId)));
+            return (
+              <div key={dateStr+"_"+i} className={`relative border border-gray-200 p-1.5 flex flex-col gap-1 overflow-hidden transition-colors ${isCurrentMonth? 'bg-white':'bg-gray-50'} ${!isCurrentMonth?'opacity-60':''} ${isToday?'ring-2 ring-blue-500':''}`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className={`text-[11px] font-medium ${isCurrentMonth?'text-gray-700':'text-gray-400'}`}>{d.getDate()}</span>
+                  {busyRoomIds.length>0 && <span className="text-[9px] font-semibold text-gray-400">{busyRoomIds.length}</span>}
+                </div>
+                {busyRoomIds.length>0 && (
+                  <div className="mt-auto flex flex-wrap gap-1">
+                    {busyRoomIds.map(rid=>{ const room=rooms.find(r=>r.id===rid); if(!room) return null; return <span key={rid} className="inline-block w-4 h-4 rounded-full shadow" style={{backgroundColor:room.color}} title={`Sala ${room.name} ma spotkania (${dateStr})`}></span>; })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  return (<div className={`flex flex-col flex-1 h-full min-h-0 overflow-hidden ${viewType==='day'?'gap-2':'space-y-6'} pb-4`}>
+    {/* Removed room selection panel for month view */}
+    <div className="flex-none"><CalendarHeader currentDate={currentDate} viewType={viewType} onDateChange={setCurrentDate} onViewTypeChange={setViewType} /></div>
+    <div className="flex-1 min-h-0">{viewType==='day' && renderDayViewMultiRoom()}{viewType==='week' && renderWeekView()}{viewType==='month' && renderMonthView()}</div>
+    <MeetingForm isOpen={showMeetingForm} onClose={()=>{ setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); }} onSubmit={handleMeetingFormSubmit} users={users} rooms={rooms} meetings={meetings} selectedDate={formatDateForComparison(currentDate)} selectedTime={selectedTime} currentUser={currentUser} editingMeeting={editingMeeting} initialRoomId={formRoomId} selectedEndTime={selectedEndTime} />
+    {showConflict && conflictMessage && (
+      <div className="fixed inset-0 z-[120] flex items-center justify-center pointer-events-none">
+        <div className={`pointer-events-auto bg-white/50 border-4 border-red-600/50 text-red-700/50 shadow-2xl rounded-2xl px-14 py-12 font-bold text-center transition-all duration-300 ease-out ${conflictEntering && !conflictLeaving ? 'opacity-100 scale-100' : 'opacity-0 scale-90'} ${conflictLeaving ? 'opacity-0 scale-90' : ''}`}
+             style={{fontSize:'1.6rem', lineHeight:1.3}}>
+          {conflictMessage}
         </div>
       </div>
     )}
-    <div className="flex-none"><CalendarHeader currentDate={currentDate} viewType={viewType} onDateChange={setCurrentDate} onViewTypeChange={setViewType} /></div>
-    <div className="flex-1 min-h-0">{viewType==='day' && renderDayViewMultiRoom()}{viewType==='week' && renderWeekView()}{viewType==='month' && (<div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-full"><p className="text-gray-500 text-center py-8">Widok miesięczny będzie dostępny w przyszłych wersjach</p></div>)}</div>
-    <MeetingForm isOpen={showMeetingForm} onClose={()=>{ setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); }} onSubmit={handleMeetingFormSubmit} users={users} rooms={rooms} meetings={meetings} selectedDate={formatDateForComparison(currentDate)} selectedTime={selectedTime} currentUser={currentUser} editingMeeting={editingMeeting} initialRoomId={formRoomId} selectedEndTime={selectedEndTime} />
-    {conflictMessage && <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl text-sm z-[100] max-w-sm text-center animate-in fade-in">{conflictMessage}</div>}
   </div>);
 };
 

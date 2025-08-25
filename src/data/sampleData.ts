@@ -32,25 +32,33 @@ export const sampleRooms: Room[] = [
     id: '1',
     name: 'Gabinet A',
     capacity: 2,
-    equipment: ['Łóżko rehabilitacyjne', 'Sprzęt do fizykoterapii']
+    equipment: ['Łóżko rehabilitacyjne', 'Sprzęt do fizykoterapii'],
+    purpose: 'Rehabilitacja',
+    color: '#3b82f6'
   },
   {
     id: '2',
     name: 'Sala konsultacyjna',
     capacity: 4,
-    equipment: ['Stół konferencyjny', 'Projektor']
+    equipment: ['Stół konferencyjny', 'Projektor'],
+    purpose: 'Konsultacje',
+    color: '#6366f1'
   },
   {
     id: '3',
     name: 'Gabinet B',
     capacity: 2,
-    equipment: ['Łóżko masażu', 'Aromaty']
+    equipment: ['Łóżko masażu', 'Aromaty'],
+    purpose: 'Masaż',
+    color: '#0ea5e9'
   },
   {
     id: '4',
     name: 'Sala grupowa',
     capacity: 8,
-    equipment: ['Maty do ćwiczeń', 'Sprzęt fitness']
+    equipment: ['Maty do ćwiczeń', 'Sprzęt fitness'],
+    purpose: 'Zajęcia grupowe',
+    color: '#10b981'
   }
 ];
 

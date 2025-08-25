@@ -22,6 +22,9 @@ export interface Room {
   name: string;
   capacity: number;
   equipment: string[];
+  // NEW optional extended attributes
+  purpose?: string;
+  color?: string; // hex color used for UI accents
 }
 
 export interface Meeting {

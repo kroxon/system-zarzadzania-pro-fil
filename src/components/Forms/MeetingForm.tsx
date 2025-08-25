@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, AlertCircle } from 'lucide-react';
 import { Meeting, User, Room } from '../../types';
-import { isTimeSlotAvailable } from '../../utils/timeSlots';
 
 interface MeetingFormProps {
   isOpen: boolean;
@@ -51,6 +50,12 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     d.setHours(h, m + 30, 0, 0);
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
+
+  // helpery konfliktów (pełny przedział)
+  const toMin = (t:string) => { const [h,m]=t.split(':').map(Number); return h*60+m; };
+  const overlap = (s1:string,e1:string,s2:string,e2:string) => !(toMin(e1) <= toMin(s2) || toMin(s1) >= toMin(e2));
+  const specialistHasConflict = (specialistId:string, date:string, start:string, end:string, excludeId?:string) => meetings.some(m=> m.id!==excludeId && m.date===date && m.specialistId===specialistId && overlap(start,end,m.startTime,m.endTime));
+  const roomHasConflict = (roomId:string, date:string, start:string, end:string, excludeId?:string) => meetings.some(m=> m.id!==excludeId && m.date===date && m.roomId===roomId && overlap(start,end,m.startTime,m.endTime));
 
   const [formData, setFormData] = useState<MeetingFormState>({
     specialistId: currentUser.role === 'employee' ? currentUser.id : '',
@@ -111,41 +116,26 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     }
 
     if (formData.startTime && formData.endTime) {
-      const startMinutes = parseInt(formData.startTime.replace(':', ''));
-      const endMinutes = parseInt(formData.endTime.replace(':', ''));
-      
-      if (endMinutes <= startMinutes) {
+      const startM = toMin(formData.startTime);
+      const endM = toMin(formData.endTime);
+      if (endM <= startM) {
         newErrors.push('Godzina zakończenia musi być późniejsza niż rozpoczęcia');
       }
     }
 
-    // Sprawdź dostępność specjalisty
-    if (formData.specialistId && !editingMeeting) {
-      const isEmployeeAvailable = isTimeSlotAvailable(
-        selectedDate,
-        formData.startTime,
-        meetings,
-        formData.specialistId,
-        'employee'
-      );
-
-      if (!isEmployeeAvailable) {
-        newErrors.push('Specjalista jest niedostępny w tym czasie');
+    // Sprawdź dostępność specjalisty (również przy edycji, z pominięciem bieżącego spotkania)
+    if (formData.specialistId && formData.startTime && formData.endTime) {
+      const conflict = specialistHasConflict(formData.specialistId, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id);
+      if (conflict) {
+        newErrors.push('Specjalista jest niedostępny w tym przedziale czasu');
       }
     }
 
-    // Sprawdź dostępność sali
-    if (formData.roomId && !editingMeeting) {
-      const isRoomAvailable = isTimeSlotAvailable(
-        selectedDate,
-        formData.startTime,
-        meetings,
-        formData.roomId,
-        'room'
-      );
-
-      if (!isRoomAvailable) {
-        newErrors.push('Sala jest zajęta w tym czasie');
+    // Sprawdź dostępność sali (również przy edycji, z pominięciem bieżącego spotkania)
+    if (formData.roomId && formData.startTime && formData.endTime) {
+      const conflict = roomHasConflict(formData.roomId, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id);
+      if (conflict) {
+        newErrors.push('Sala jest zajęta w tym przedziale czasu');
       }
     }
 
@@ -213,11 +203,14 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               disabled={currentUser.role === 'employee'}
             >
               <option value="">Wybierz specjalistę</option>
-              {availableSpecialists.map(user => (
-                <option key={user.id} value={user.id}>
-                  {user.name} - {user.specialization}
-                </option>
-              ))}
+              {availableSpecialists.map(user => {
+                const disabledOpt = !!(formData.startTime && formData.endTime && specialistHasConflict(user.id, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id) && user.id !== formData.specialistId);
+                return (
+                  <option key={user.id} value={user.id} disabled={disabledOpt}>
+                    {user.name} - {user.specialization}{disabledOpt ? ' (zajęty)' : ''}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -258,16 +251,10 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
             >
               <option value="">Wybierz salę</option>
               {rooms.map(room => {
-                const isAvailable = editingMeeting || isTimeSlotAvailable(
-                  selectedDate,
-                  formData.startTime,
-                  meetings,
-                  room.id,
-                  'room'
-                );
+                const disabledOpt = !!(formData.startTime && formData.endTime && roomHasConflict(room.id, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id) && room.id !== formData.roomId);
                 return (
-                  <option key={room.id} value={room.id} disabled={!isAvailable}>
-                    {room.name} - {room.capacity} os. {!isAvailable ? '(Zajęta)' : ''}
+                  <option key={room.id} value={room.id} disabled={disabledOpt}>
+                    {room.name} - {room.capacity} os. {disabledOpt ? '(Zajęta)' : ''}
                   </option>
                 );
               })}
