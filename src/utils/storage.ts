@@ -5,7 +5,10 @@ const STORAGE_KEYS = {
   MEETINGS: 'schedule_meetings',
   CURRENT_USER: 'schedule_current_user',
   ROOMS: 'schedule_rooms',
-  USERS: 'schedule_users', // NEW: employees/users list
+  USERS: 'schedule_users',
+  PATIENTS: 'schedule_patients',
+  DEMO_FLAG: 'schedule_demo_loaded',
+  ASSIGNMENTS: 'schedule_therapist_assignments'
 };
 
 // Meetings persistence
@@ -81,12 +84,26 @@ export const deleteRoom = (roomId: string): Room[] => {
   return filtered;
 };
 
-// Users (employees) persistence
-export const saveUsers = (users: User[]): void => {
-  localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+export const clearAllData = () => {
+  Object.values(STORAGE_KEYS).forEach(k=> localStorage.removeItem(k));
 };
 
-export const loadUsers = (): User[] => {
-  const stored = localStorage.getItem(STORAGE_KEYS.USERS);
-  return stored ? JSON.parse(stored) : [];
+// Users persistence (demo override only)
+export const saveUsers = (users: User[]) => localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+export const loadUsers = (): User[] => { const s=localStorage.getItem(STORAGE_KEYS.USERS); return s? JSON.parse(s): []; };
+
+// Patients persistence
+import type { Patient } from '../types';
+export const savePatients = (patients: Patient[]) => localStorage.setItem(STORAGE_KEYS.PATIENTS, JSON.stringify(patients));
+export const loadPatients = (): Patient[] => { const s=localStorage.getItem(STORAGE_KEYS.PATIENTS); return s? JSON.parse(s): []; };
+
+export const markDemoLoaded = () => localStorage.setItem(STORAGE_KEYS.DEMO_FLAG,'1');
+export const isDemoLoaded = () => !!localStorage.getItem(STORAGE_KEYS.DEMO_FLAG);
+
+// Therapist assignments persistence
+export const saveTherapistAssignments = (map: Record<string,string[]>) => {
+  localStorage.setItem(STORAGE_KEYS.ASSIGNMENTS, JSON.stringify(map));
+};
+export const loadTherapistAssignments = (): Record<string,string[]> => {
+  const s = localStorage.getItem(STORAGE_KEYS.ASSIGNMENTS); return s? JSON.parse(s): {};
 };

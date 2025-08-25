@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface CalendarHeaderProps {
   currentDate: Date;
@@ -24,6 +24,23 @@ const CalendarHeader: React.FC<CalendarHeaderProps> = ({
     };
     return date.toLocaleDateString('pl-PL', options);
   };
+
+  const formatRangeWeek = (date: Date) => {
+    const d = new Date(date);
+    const day = (d.getDay()+6)%7; // 0..6 (0=Mon)
+    const start = new Date(d); start.setDate(d.getDate()-day); // poniedziałek
+    const end = new Date(start); end.setDate(start.getDate()+6); // niedziela
+    const sameMonth = start.getMonth()===end.getMonth() && start.getFullYear()===end.getFullYear();
+    if(sameMonth){
+      return `${start.getDate()}–${end.getDate()} ${end.toLocaleDateString('pl-PL', { month:'long', year:'numeric'})}`;
+    }
+    const startStr = start.toLocaleDateString('pl-PL', { day:'numeric', month:'short' }).replace('.', '');
+    const endStr = end.toLocaleDateString('pl-PL', { day:'numeric', month:'long', year:'numeric' });
+    return `${startStr} – ${endStr}`;
+  };
+  const formatMonth = (date: Date) => date.toLocaleDateString('pl-PL', { month:'long', year:'numeric' });
+
+  const displayLabel = viewType==='week' ? formatRangeWeek(currentDate) : viewType==='month' ? formatMonth(currentDate) : formatDate(currentDate);
 
   const navigateDate = (direction: 'prev' | 'next') => {
     const newDate = new Date(currentDate);
@@ -65,7 +82,7 @@ const CalendarHeader: React.FC<CalendarHeaderProps> = ({
           </button>
         </div>
         
-        <h2 className="text-xl font-semibold text-gray-900">{formatDate(currentDate)}</h2>
+        <h2 className="text-xl font-semibold text-gray-900 capitalize">{displayLabel}</h2>
         
         <button
           onClick={goToToday}

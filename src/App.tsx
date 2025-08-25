@@ -10,7 +10,6 @@ import EmployeesManage from './components/Views/EmployeesManage';
 import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
 import { User, Meeting, Room } from './types';
-import { sampleUsers, sampleRooms, sampleMeetings } from './data/sampleData';
 import { 
   saveMeetings, 
   loadMeetings, 
@@ -22,61 +21,42 @@ import {
   loadRooms,
   saveRooms,
   loadUsers,
-  saveUsers
+  saveUsers,
+  loadPatients,
+  savePatients
 } from './utils/storage';
+import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
 import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState('dashboard');
-  const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [usersState, setUsersState] = useState(sampleUsers);
-  const [roomsState, setRoomsState] = useState<Room[]>(sampleRooms);
+  // Initialize ONLY from persisted storage (no implicit sample fallback)
+  const [meetings, setMeetings] = useState<Meeting[]>(() => loadMeetings());
+  const [usersState, setUsersState] = useState<User[]>(() => loadUsers());
+  const [patientsState, setPatientsState] = useState(() => loadPatients());
+  const [roomsState, setRoomsState] = useState<Room[]>(() => loadRooms());
   const [showWeekends, setShowWeekends] = useState(false);
   const [startHour, setStartHour] = useState(8);
   const [endHour, setEndHour] = useState(17);
 
-  // Inicjalizacja danych przy pierwszym uruchomieniu
+  // Only restore current user (do NOT overwrite entity states)
   useEffect(() => {
     const storedUser = loadCurrentUser();
-    const storedMeetings = loadMeetings();
-    const storedRooms = loadRooms();
-    const storedUsers = loadUsers();
-
-    if (storedUser) {
-      setCurrentUser(storedUser);
-    }
-
-    if (storedMeetings.length > 0) {
-      setMeetings(storedMeetings);
-    } else {
-      setMeetings(sampleMeetings);
-      saveMeetings(sampleMeetings);
-    }
-
-    if (storedRooms.length > 0) {
-      setRoomsState(storedRooms);
-    } else {
-      setRoomsState(sampleRooms);
-      saveRooms(sampleRooms);
-    }
-
-    if (storedUsers.length > 0) {
-      setUsersState(storedUsers);
-    } else {
-      setUsersState(sampleUsers);
-      saveUsers(sampleUsers);
-    }
+    if (storedUser) setCurrentUser(storedUser);
   }, []);
 
   // Persist rooms on change
   useEffect(()=>{ saveRooms(roomsState); },[roomsState]);
-  // Persist users on change
   useEffect(()=>{ saveUsers(usersState); },[usersState]);
+  useEffect(()=>{ savePatients(patientsState); },[patientsState]);
+  useEffect(()=>{ saveMeetings(meetings); },[meetings]);
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
     saveCurrentUser(user);
+    // Optional: ensure logged user exists in users list if storage empty
+    setUsersState(prev => prev.some(u=>u.id===user.id) ? prev : [...prev, user]);
   };
 
   const handleLogout = () => {
@@ -90,32 +70,46 @@ function App() {
       ...meetingData,
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
     };
-    
     const updatedMeetings = addMeeting(newMeeting);
     setMeetings(updatedMeetings);
+    saveMeetings(updatedMeetings); // ensure persist
   };
 
   const handleMeetingUpdate = (meetingId: string, updates: Partial<Meeting>) => {
     const updatedMeetings = updateMeeting(meetingId, updates);
     setMeetings(updatedMeetings);
+    saveMeetings(updatedMeetings); // ensure persist
   };
 
   const handleMeetingDelete = (meetingId: string) => {
     const updatedMeetings = deleteMeeting(meetingId);
     setMeetings(updatedMeetings);
+    saveMeetings(updatedMeetings); // ensure persist
   };
 
   const handleAddEmployee = (data: Omit<User, 'id'>) => {
     const newUser: User = { id: Date.now().toString(), ...data };
-    setUsersState(prev => [...prev, newUser]);
+    setUsersState(prev => {
+      const next = [...prev, newUser];
+      saveUsers(next); // immediate persist
+      return next;
+    });
   };
 
   const handleUpdateEmployee = (id: string, update: Partial<User>) => {
-    setUsersState(prev => prev.map(u => u.id === id ? { ...u, ...update } : u));
+    setUsersState(prev => {
+      const next = prev.map(u => u.id === id ? { ...u, ...update } : u);
+      saveUsers(next); // immediate persist
+      return next;
+    });
   };
 
   const handleDeleteEmployee = (id: string) => {
-    setUsersState(prev => prev.filter(u => u.id !== id));
+    setUsersState(prev => {
+      const next = prev.filter(u => u.id !== id);
+      saveUsers(next); // immediate persist
+      return next;
+    });
   };
 
   const viewMeta: Record<string, { title: string; icon: JSX.Element }> = {
@@ -212,6 +206,35 @@ function App() {
                     Zakres generuje sloty co 30 min. Ostatni slot kończy się dokładnie o godzinie zamknięcia.
                   </div>
                 </div>
+              </div>
+              <div className="mt-8 border-t pt-6 space-y-4">
+                <h4 className="text-sm font-semibold text-gray-800">Dane demonstracyjne</h4>
+                <div className="flex flex-wrap gap-3">
+                  <button onClick={()=>{
+                    // Only generate if no data yet (prevent accidental overwrite)
+                    const existingUsers = loadUsers();
+                    const existingRooms = loadRooms();
+                    const existingMeetings = loadMeetings();
+                    if(existingUsers.length || existingRooms.length || existingMeetings.length){
+                      if(!confirm('Dane już istnieją. Czy na pewno nadpisać danymi demo?')) return;
+                    }
+                    const { users, rooms, patients, meetings: ms } = loadAndApplyDemo();
+                    setUsersState(users);
+                    setRoomsState(rooms);
+                    setPatientsState(patients);
+                    setMeetings(ms);
+                  }} className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition">Wygeneruj dane (3 tygodnie)</button>
+                  <button onClick={()=>{
+                    if(!confirm('Usunąć wszystkie dane demonstracyjne?')) return;
+                    purgeDemo();
+                    setMeetings([]);
+                    setRoomsState([]);
+                    setUsersState([] as any);
+                    setPatientsState([] as any);
+                    localStorage.removeItem('schedule_current_user');
+                  }} className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition">Wyczyść dane</button>
+                </div>
+                <p className="text-xs text-gray-500">Generuje 5 sal, 7 terapeutów, 20 podopiecznych i spotkania (pon-pt) dla ubiegłego, bieżącego i przyszłego tygodnia. Dane można następnie edytować.</p>
               </div>
             </div>
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
