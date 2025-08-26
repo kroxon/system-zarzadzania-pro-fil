@@ -1,0 +1,82 @@
+/* Basic reset / normalize (lightweight) */
+*,*::before,*::after { box-sizing: border-box; }
+html,body,#root { height:100%; }
+body { margin:0; font-family: var(--font-sans); background: var(--color-bg); color: var(--color-text); -webkit-font-smoothing: antialiased; }
+h1,h2,h3,h4,h5,h6 { margin:0; font-weight:600; line-height: var(--leading-tight); }
+p { line-height: var(--leading-normal); margin-top:0; }
+a { color: var(--color-primary); text-decoration:none; }
+a:hover { text-decoration:underline; }
+button { font-family: inherit; cursor:pointer; }
+button, input, select, textarea { font-size: var(--text-sm); }
+ul { list-style: none; padding:0; margin:0; }
+img { max-width:100%; display:block; }
+
+/* Scrollbar (from previous index.css) */
+.styled-scrollbar { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+.styled-scrollbar::-webkit-scrollbar { width:8px; }
+.styled-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.styled-scrollbar::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:20px; border:2px solid transparent; background-clip: content-box; }
+.styled-scrollbar::-webkit-scrollbar-thumb:hover { background:#94a3b8; }
+
+/* Headings scale mapping */
+.h1 { font-size: var(--text-2xl); font-weight:700; }
+.h2 { font-size: var(--text-xl); font-weight:600; }
+.h3 { font-size: var(--text-lg); font-weight:600; }
+
+.text-muted { color: var(--color-text-muted); }
+.text-secondary { color: var(--color-text-secondary); }
+
+/* Utility spacing (only minimal set used initially) */
+.mt-1 { margin-top: var(--space-1); }
+.mb-1 { margin-bottom: var(--space-1); }
+.mb-4 { margin-bottom: var(--space-4); }
+.p-6 { padding: var(--space-6); }
+.px-6 { padding-left: var(--space-6); padding-right: var(--space-6); }
+.py-6 { padding-top: var(--space-6); padding-bottom: var(--space-6); }
+
+.flex { display:flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.items-start { align-items: flex-start; }
+.items-end { align-items: flex-end; }
+.justify-between { justify-content: space-between; }
+.justify-center { justify-content: center; }
+.gap-3 { gap: var(--space-3); }
+.gap-6 { gap: var(--space-6); }
+.space-y-6 > * + * { margin-top: var(--space-6); }
+.space-y-4 > * + * { margin-top: var(--space-4); }
+
+.w-full { width:100%; }
+.h-16 { height:64px; }
+.rounded-lg { border-radius: var(--radius-lg); }
+.rounded-xl { border-radius: var(--radius-xl); }
+.rounded-md { border-radius: var(--radius-md); }
+.rounded-full { border-radius: var(--radius-pill); }
+
+.text-sm { font-size: var(--text-sm); }
+.text-xs { font-size: var(--text-xs); }
+.text-lg { font-size: var(--text-lg); }
+.font-medium { font-weight:500; }
+.font-semibold { font-weight:600; }
+.font-bold { font-weight:700; }
+
+.shadow-sm { box-shadow: var(--shadow-sm); }
+.shadow-lg { box-shadow: var(--shadow-lg); }
+.border { border:1px solid var(--color-border); }
+.border-b { border-bottom:1px solid var(--color-border); }
+.border-gray-200 { border-color: var(--color-border); }
+.bg-white { background: var(--color-white); }
+.bg-gray-50 { background: var(--color-bg); }
+.text-gray-900 { color: var(--color-text); }
+.text-gray-800 { color: var(--color-text-secondary); }
+.text-gray-700 { color: var(--color-text-secondary); }
+.text-gray-600 { color: var(--color-text-muted); }
+.text-gray-500 { color: var(--color-text-muted); }
+.text-gray-400 { color: var(--color-text-subtle); }
+.text-blue-600 { color: var(--color-primary); }
+.bg-blue-600 { background: var(--color-primary); }
+.bg-red-600 { background: var(--color-danger); }
+.bg-red-50 { background: var(--color-danger-bg-subtle); }
+.border-red-200 { border-color: var(--color-danger-border); }
+
+/* We will gradually remove the tailwind-esque utilities as components get semantic classes */

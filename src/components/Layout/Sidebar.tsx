@@ -37,26 +37,22 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
   const roomsActive = roomsGroupSelected || isRoomChildActive;
 
   return (
-    <div className="w-64 bg-white shadow-lg border-r border-gray-200 flex flex-col">
-      <div className="p-6 border-b border-gray-200">
-        <h1 className="text-xl font-bold text-gray-800">Grafik Pracowników</h1>
-        <p className="text-sm text-gray-500 mt-1">System zarządzania</p>
+    <div className="sidebar">
+      <div className="sidebar__header">
+        <h1 className="sidebar__title">Grafik Pracowników</h1>
+        <p className="sidebar__subtitle">System zarządzania</p>
       </div>
 
-      <nav className="flex-1 p-4">
-        <ul className="space-y-2">
+      <nav className="sidebar__nav">
+        <ul className="sidebar-menu" style={{display:'flex', flexDirection:'column', gap:'8px'}}>
           {/* Panel główny */}
           <li>
             <button
               onClick={() => { onViewChange('dashboard'); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); }}
-              className={`w-full flex items-center px-4 py-3 text-left rounded-lg transition-all duration-200 ${
-                currentView === 'dashboard' && !employeesGroupSelected && !roomsGroupSelected
-                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              }`}
+              className={`nav-btn ${currentView === 'dashboard' && !employeesGroupSelected && !roomsGroupSelected ? 'nav-btn--active' : ''}`}
             >
-              <BarChart3 className={`mr-3 h-5 w-5 ${currentView === 'dashboard' && !employeesGroupSelected && !roomsGroupSelected ? 'text-blue-700' : 'text-gray-400'}`} />
-              <span className="font-medium">Panel główny</span>
+              <BarChart3 className="nav-btn__icon" />
+              <span>Panel główny</span>
             </button>
           </li>
 
@@ -72,21 +68,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                 if (currentView !== target) onViewChange(target);
               }}
               aria-expanded={employeesOpen}
-              className={`w-full flex items-center px-4 py-3 text-left rounded-lg transition-all duration-200 ${
-                employeesActive
-                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              }`}
+              className={`nav-btn ${employeesActive ? 'nav-btn--active' : ''}`}
             >
-              <Users className={`mr-3 h-5 w-5 ${employeesActive ? 'text-blue-700' : 'text-gray-400'}`} />
-              <span className="font-medium flex-1">Pracownicy Fundacji</span>
+              <Users className="nav-btn__icon" />
+              <span style={{flex:1}}>Pracownicy Fundacji</span>
             </button>
-            <div
-              className={`mt-1 overflow-hidden transition-all duration-300 ease-in-out ${
-                employeesOpen ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0'
-              }`}
-            >
-              <ul className={`space-y-1 pl-0 transition-all duration-300 ${employeesOpen ? 'opacity-100' : 'opacity-0'}`}>
+            <div className="submenu" style={{maxHeight: employeesOpen ? '160px' : '0', opacity: employeesOpen ? 1:0}}>
+              <ul className="submenu-items" style={{opacity: employeesOpen ? 1:0}}>
                 {employeeChildren.map(child => {
                   const active = currentView === child.id;
                   const disabled = child.adminOnly && userRole !== 'admin';
@@ -99,13 +87,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                           setEmployeesGroupSelected(true);
                         }}
                         disabled={disabled}
-                        className={`w-full flex items-center pl-11 pr-4 py-2 text-left rounded-md text-sm transition-colors ${
-                          disabled
-                            ? 'text-gray-300 cursor-not-allowed'
-                            : active
-                              ? 'text-blue-700 font-medium'
-                              : 'text-gray-600 hover:text-blue-600'
-                        }`}
+                        className={`submenu-item-btn ${active ? 'submenu-item-btn--active' : ''} ${disabled ? 'is-disabled' : ''}`}
                       >
                         <span>{child.label}</span>
                       </button>
@@ -128,21 +110,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                 if (currentView !== target) onViewChange(target);
               }}
               aria-expanded={roomsOpen}
-              className={`w-full flex items-center px-4 py-3 text-left rounded-lg transition-all duration-200 ${
-                roomsActive
-                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              }`}
+              className={`nav-btn ${roomsActive ? 'nav-btn--active' : ''}`}
             >
-              <MapPin className={`mr-3 h-5 w-5 ${roomsActive ? 'text-blue-700' : 'text-gray-400'}`} />
-              <span className="font-medium flex-1">Rezerwacje sal</span>
+              <MapPin className="nav-btn__icon" />
+              <span style={{flex:1}}>Rezerwacje sal</span>
             </button>
-            <div
-              className={`mt-1 overflow-hidden transition-all duration-300 ease-in-out ${
-                roomsOpen ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0'
-              }`}
-            >
-              <ul className={`space-y-1 pl-0 transition-all duration-300 ${roomsOpen ? 'opacity-100' : 'opacity-0'}`}>
+            <div className="submenu" style={{maxHeight: roomsOpen ? '160px' : '0', opacity: roomsOpen ? 1:0}}>
+              <ul className="submenu-items" style={{opacity: roomsOpen ? 1:0}}>
                 {roomChildren.map(child => {
                   const active = currentView === child.id;
                   const disabled = child.adminOnly && userRole !== 'admin';
@@ -155,13 +129,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                           setRoomsGroupSelected(true);
                         }}
                         disabled={disabled}
-                        className={`w-full flex items-center pl-11 pr-4 py-2 text-left rounded-md text-sm transition-colors ${
-                          disabled
-                            ? 'text-gray-300 cursor-not-allowed'
-                            : active
-                              ? 'text-blue-700 font-medium'
-                              : 'text-gray-600 hover:text-blue-600'
-                        }`}
+                        className={`submenu-item-btn ${active ? 'submenu-item-btn--active' : ''} ${disabled ? 'is-disabled' : ''}`}
                       >
                         <span>{child.label}</span>
                       </button>
@@ -176,14 +144,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
           <li>
             <button
               onClick={() => { onViewChange('patients'); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); }}
-              className={`w-full flex items-center px-4 py-3 text-left rounded-lg transition-all duration-200 ${
-                currentView === 'patients' && !roomsGroupSelected && !employeesGroupSelected
-                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              }`}
+              className={`nav-btn ${currentView === 'patients' && !roomsGroupSelected && !employeesGroupSelected ? 'nav-btn--active' : ''}`}
             >
-              <User className={`mr-3 h-5 w-5 ${currentView === 'patients' && !roomsGroupSelected && !employeesGroupSelected ? 'text-blue-700' : 'text-gray-400'}`} />
-              <span className="font-medium">Podopieczni</span>
+              <User className="nav-btn__icon" />
+              <span>Podopieczni</span>
             </button>
           </li>
 
@@ -194,14 +158,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
               <li key={item.id}>
                 <button
                   onClick={() => { onViewChange(item.id); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); }}
-                  className={`w-full flex items-center px-4 py-3 text-left rounded-lg transition-all duration-200 ${
-                    isActive
-                      ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
-                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                  }`}
+                  className={`nav-btn ${isActive ? 'nav-btn--active' : ''}`}
                 >
-                  <Icon className={`mr-3 h-5 w-5 ${isActive ? 'text-blue-700' : 'text-gray-400'}`} />
-                  <span className="font-medium">{item.label}</span>
+                  <Icon className="nav-btn__icon" />
+                  <span>{item.label}</span>
                 </button>
               </li>
             );
@@ -209,20 +169,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
         </ul>
       </nav>
 
-      <div className="p-4 border-t border-gray-200">
-        <div className="text-xs text-gray-500">
-          <div className="flex items-center space-x-2 mb-2">
-            <div className="w-3 h-3 bg-green-500 rounded"></div>
-            <span>Obecny</span>
-          </div>
-          <div className="flex items-center space-x-2 mb-2">
-            <div className="w-3 h-3 bg-yellow-500 rounded"></div>
-            <span>W toku</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 bg-red-500 rounded"></div>
-            <span>Odwołany</span>
-          </div>
+      <div className="sidebar__footer">
+        <div className="status-legend">
+          <div className="status-row"><div className="status-dot status-dot--green"></div><span>Obecny</span></div>
+          <div className="status-row"><div className="status-dot status-dot--yellow"></div><span>W toku</span></div>
+          <div className="status-row"><div className="status-dot status-dot--red"></div><span>Odwołany</span></div>
         </div>
       </div>
     </div>

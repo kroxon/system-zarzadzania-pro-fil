@@ -164,54 +164,53 @@ function App() {
       case 'settings':
         return (
           <div className="space-y-6">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Ustawienia kalendarza</h3>
-              <div className="flex items-start space-x-3 mb-6">
+            <div className="card">
+              <h3 className="card__title">Ustawienia kalendarza</h3>
+              <div className="form-inline mb-6">
                 <input
                   id="showWeekends"
                   type="checkbox"
                   checked={showWeekends}
                   onChange={(e) => setShowWeekends(e.target.checked)}
-                  className="mt-1 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  className="form-checkbox mt-1"
                 />
-                <label htmlFor="showWeekends" className="text-sm text-gray-700">
+                <label htmlFor="showWeekends" className="checkbox-label">
                   Pokazuj soboty i niedziele w widoku tygodnia oraz uwzględniaj je przy nawigacji dni (domyślnie ukryte)
                 </label>
               </div>
-              <div className="grid gap-4 md:grid-cols-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Godzina otwarcia</label>
+              <div className="form-grid" style={{gridTemplateColumns:'repeat(3,1fr)', gap:'16px'}}>
+                <div className="form-group">
+                  <label className="form-label">Godzina otwarcia</label>
                   <input
                     type="number"
                     min={0}
                     max={23}
                     value={startHour}
                     onChange={(e) => setStartHour(Math.min(Math.max(0, Number(e.target.value)), endHour-1))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    className="form-input"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Godzina zamknięcia</label>
+                <div className="form-group">
+                  <label className="form-label">Godzina zamknięcia</label>
                   <input
                     type="number"
                     min={startHour+1}
                     max={24}
                     value={endHour}
                     onChange={(e) => setEndHour(Math.max(startHour+1, Math.min(24, Number(e.target.value))))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    className="form-input"
                   />
                 </div>
-                <div className="flex items-end">
-                  <div className="text-xs text-gray-500 leading-snug">
+                <div className="form-group" style={{display:'flex', alignItems:'flex-end'}}>
+                  <div className="small-muted" style={{lineHeight:'1.3'}}>
                     Zakres generuje sloty co 30 min. Ostatni slot kończy się dokładnie o godzinie zamknięcia.
                   </div>
                 </div>
               </div>
-              <div className="mt-8 border-t pt-6 space-y-4">
+              <div className="divider-t space-y-4">
                 <h4 className="text-sm font-semibold text-gray-800">Dane demonstracyjne</h4>
-                <div className="flex flex-wrap gap-3">
+                <div className="demo-actions">
                   <button onClick={()=>{
-                    // Only generate if no data yet (prevent accidental overwrite)
                     const existingUsers = loadUsers();
                     const existingRooms = loadRooms();
                     const existingMeetings = loadMeetings();
@@ -223,7 +222,7 @@ function App() {
                     setRoomsState(rooms);
                     setPatientsState(patients);
                     setMeetings(ms);
-                  }} className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition">Wygeneruj dane (3 tygodnie)</button>
+                  }} className="btn btn-primary">Wygeneruj dane (3 tygodnie)</button>
                   <button onClick={()=>{
                     if(!confirm('Usunąć wszystkie dane demonstracyjne?')) return;
                     purgeDemo();
@@ -232,13 +231,13 @@ function App() {
                     setUsersState([] as any);
                     setPatientsState([] as any);
                     localStorage.removeItem('schedule_current_user');
-                  }} className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition">Wyczyść dane</button>
+                  }} className="btn btn-danger">Wyczyść dane</button>
                 </div>
-                <p className="text-xs text-gray-500">Generuje 5 sal, 7 terapeutów, 20 podopiecznych i spotkania (pon-pt) dla ubiegłego, bieżącego i przyszłego tygodnia. Dane można następnie edytować.</p>
+                <p className="small-muted">Generuje 5 sal, 7 terapeutów, 20 podopiecznych i spotkania (pon-pt) dla ubiegłego, bieżącego i przyszłego tygodnia. Dane można następnie edytować.</p>
               </div>
             </div>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <p className="text-gray-500 text-center py-8">Dodatkowe ustawienia będą dostępne w przyszłych wersjach</p>
+            <div className="card">
+              <p className="text-gray-500" style={{textAlign:'center', padding:'32px 0'}}>Dodatkowe ustawienia będą dostępne w przyszłych wersjach</p>
             </div>
           </div>
         );
@@ -248,22 +247,20 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="app-shell">
       <Sidebar
         currentView={currentView}
         onViewChange={setCurrentView}
         userRole={currentUser!.role}
       />
-      
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="main">
         <TopBar
           currentUser={currentUser!}
           onLogout={handleLogout}
           pageTitle={(viewMeta[currentView]?.title) || ''}
           pageIcon={viewMeta[currentView]?.icon}
         />
-        
-        <main className="flex-1 flex flex-col overflow-hidden">
+        <main className="main__scroll">
           <div className={`p-6 flex-1 flex flex-col ${currentView==='room-calendar' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
             {renderCurrentView()}
           </div>

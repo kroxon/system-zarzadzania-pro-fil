@@ -1,0 +1,18 @@
+/* Minimal custom utilities (keep lean) */
+.hidden { display:none !important; }
+.transition { transition: all var(--transition) ease; }
+.transition-colors { transition: color var(--transition-fast) ease, background-color var(--transition-fast) ease, border-color var(--transition-fast) ease; }
+.overflow-hidden { overflow:hidden; }
+.overflow-y-auto { overflow-y:auto; }
+.flex-1 { flex:1; }
+
+/* Layout helpers */
+.full-height { height:100%; }
+.p-6 { padding: var(--space-6); }
+
+/* Form sizing */
+.w-8 { width:32px; }
+.h-8 { height:32px; }
+
+/* Buttons spacing reused */
+.btn-space { display:inline-flex; align-items:center; gap: var(--space-2); }
