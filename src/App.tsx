@@ -9,6 +9,9 @@ import LoginForm from './components/Auth/LoginForm';
 import EmployeesManage from './components/Views/EmployeesManage';
 import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
+import QuizzesPage from './components/Quizes/QuizList';
+import TasksPage from './components/Tasks/TasksPage';
+import PowerCardsPage from './components/PowerCards/PowerCards';
 import { User, Meeting, Room } from './types';
 import { 
   saveMeetings, 
@@ -119,7 +122,10 @@ function App() {
     'room-calendar': { title: 'Rezerwacje sal', icon: <MapPin className="h-6 w-6" /> },
     'employees-manage': { title: 'Zarządzaj pracownikami', icon: <Users className="h-6 w-6" /> },
     'patients': { title: 'Podopieczni', icon: <UserIcon className="h-6 w-6" /> },
-    'settings': { title: 'Ustawienia', icon: <SettingsIcon className="h-6 w-6" /> }
+    'settings': { title: 'Ustawienia', icon: <SettingsIcon className="h-6 w-6" /> },
+    'quizes': { title: 'Quizy', icon: <Users className="h-6 w-6" /> },
+    'tasks': { title: 'Zadania', icon: <Users className="h-6 w-6" /> },
+    'power-cards': { title: 'Karty Mocy', icon: <BarChart3 className="h-6 w-6" /> }
   };
 
   if (!currentUser) {
@@ -229,8 +235,8 @@ function App() {
                     purgeDemo();
                     setMeetings([]);
                     setRoomsState([]);
-                    setUsersState([] as any);
-                    setPatientsState([] as any);
+                    setUsersState([]);
+                    setPatientsState([]);
                     localStorage.removeItem('schedule_current_user');
                   }} className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition">Wyczyść dane</button>
                 </div>
@@ -242,6 +248,12 @@ function App() {
             </div>
           </div>
         );
+      case 'power-cards':
+        return <PowerCardsPage />;
+      case 'quizes':
+        return <QuizzesPage />;
+      case 'tasks':
+        return <TasksPage />;
       default:
         return <Dashboard users={usersState} rooms={roomsState} meetings={meetings} />;
     }
