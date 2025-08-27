@@ -11,6 +11,13 @@ function seedRandom(seed:number){
 const roomPalette = ['#facc15', /* żółta */ '#93c5fd', /* jasnoniebieska */ '#ef4444', /* czerwona */ '#f97316', /* pomarańczowa */ '#10b981' /* zielona */];
 
 export interface DemoDataBundle { users: User[]; rooms: Room[]; patients: Patient[]; meetings: Meeting[]; assignments: Record<string,string[]>; }
+export interface DemoTask {
+  id: string;
+  title: string;
+  assignedTo: string;
+  dueDate: string;
+  status: 'Ukończone' | 'Do zrobienia';
+}
 
 export interface DemoQuiz {
   id: string;
@@ -135,7 +142,14 @@ export function generateDemoData(seed:number = Date.now()): DemoDataBundle & { q
   });
 
   const quizzes = generateDemoQuizzes();
-  return { users, rooms, patients, meetings, assignments, quizzes };
+  const tasks: DemoTask[] = [
+    { id: 't1', title: 'Ukończ kartę mocy "Uczucia"', assignedTo: users[1]?.name || '', dueDate: '2025-08-28', status: 'Ukończone' },
+    { id: 't2', title: 'Ćwicz quiz "Dzielenie się"', assignedTo: users[2]?.name || '', dueDate: '2025-08-29', status: 'Do zrobienia' },
+    { id: 't3', title: 'Codzienne zameldowanie', assignedTo: users[3]?.name || '', dueDate: '2025-08-30', status: 'Do zrobienia' },
+    { id: 't4', title: 'Ćwiczenie słuchania', assignedTo: users[4]?.name || '', dueDate: '2025-08-31', status: 'Do zrobienia' },
+    { id: 't5', title: 'Ćwiczenie powitań', assignedTo: users[5]?.name || '', dueDate: '2025-09-01', status: 'Do zrobienia' },
+  ];
+  return { users, rooms, patients, meetings, assignments, quizzes, tasks } as DemoDataBundle & { quizzes: DemoQuiz[]; tasks: DemoTask[] };
 }
 
 export function generateDemoQuizzes(): DemoQuiz[] {
@@ -203,11 +217,11 @@ export function generateDemoQuizzes(): DemoQuiz[] {
 }
 
 export function loadAndApplyDemo(seed?:number){
-  const { users, rooms, patients, meetings, assignments, quizzes } = generateDemoData(seed);
+  const { users, rooms, patients, meetings, assignments, quizzes, tasks } = generateDemoData(seed) as DemoDataBundle & { quizzes: DemoQuiz[]; tasks: DemoTask[] };
   saveUsers(users); saveRooms(rooms); savePatients(patients); saveMeetings(meetings); saveTherapistAssignments(assignments); markDemoLoaded();
-  // Optionally: save quizzes to localStorage or provide export
   localStorage.setItem('schedule_quizzes', JSON.stringify(quizzes));
-  return { users, rooms, patients, meetings, assignments, quizzes };
+  localStorage.setItem('schedule_tasks', JSON.stringify(tasks));
+  return { users, rooms, patients, meetings, assignments, quizzes, tasks };
 }
 
 export function purgeDemo(){

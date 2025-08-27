@@ -9,43 +9,20 @@ interface Task {
   status: 'Ukończone' | 'Do zrobienia';
 }
 
-const tasks: Task[] = [
-  {
-    id: 't1',
-    title: 'Ukończ kartę mocy "Uczucia"',
-    assignedTo: 'Leon Nowak',
-    dueDate: '2023-11-15',
-  status: 'Ukończone',
-  },
-  {
-    id: 't2',
-    title: 'Ćwicz quiz "Dzielenie się"',
-    assignedTo: 'Maria Wiśniewska',
-    dueDate: '2023-11-18',
-  status: 'Do zrobienia',
-  },
-  {
-    id: 't3',
-    title: 'Codzienne zameldowanie',
-    assignedTo: 'Antek Zieliński',
-    dueDate: '2023-11-12',
-  status: 'Do zrobienia',
-  },
-  {
-    id: 't4',
-    title: 'Ćwiczenie słuchania',
-    assignedTo: 'Zofia Król',
-    dueDate: '2023-11-20',
-  status: 'Do zrobienia',
-  },
-   {
-    id: 't5',
-    title: 'Ćwiczenie powitań',
-    assignedTo: 'Wilhelm Prawy',
-    dueDate: '2023-11-14',
-  status: 'Do zrobienia',
-  },
-];
+function loadTasks(): Task[] {
+  const stored = localStorage.getItem('schedule_tasks');
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch (err) {
+      console.error('Błąd ładowania zadań z localStorage:', err);
+    }
+  }
+  return [];
+}
 const StatusBadge = ({ status }: { status: string }) => {
   if (status === 'Ukończone') {
     return (
@@ -66,7 +43,7 @@ const StatusBadge = ({ status }: { status: string }) => {
 
 
 export default function TasksPage() {
-  const [taskList, setTaskList] = useState<Task[]>(tasks);
+  const [taskList, setTaskList] = useState<Task[]>(() => loadTasks());
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [formData, setFormData] = useState<Task | null>(null);
 
@@ -137,39 +114,45 @@ export default function TasksPage() {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {taskList.map((task) => (
-              <tr key={task.id}>
-                <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{task.title}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{task.assignedTo}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{task.dueDate}</td>
-                <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={task.status} /></td>
-                <td className="px-6 py-4 whitespace-nowrap text-right">
-                  <button
-                    className="p-2 rounded hover:bg-gray-100"
-                    aria-label="Edytuj zadanie"
-                    onClick={() => handleEditTask(task)}
-                  >
-                    <MoreHorizontal className="h-4 w-4" />
-                  </button>
-                  <button
-                    className="ml-2 p-2 rounded hover:bg-gray-100"
-                    aria-label="Usuń zadanie"
-                    onClick={() => handleDeleteTask(task.id)}
-                  >
-                    <span className="sr-only">Usuń</span>
-                    🗑️
-                  </button>
-                  <button
-                    className="ml-2 p-2 rounded hover:bg-gray-100"
-                    aria-label="Oznacz jako ukończone"
-                    onClick={() => handleCompleteTask(task.id)}
-                  >
-                    <span className="sr-only">Ukończ</span>
-                    ✔️
-                  </button>
-                </td>
+            {taskList.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Brak zadań do wyświetlenia.</td>
               </tr>
-            ))}
+            ) : (
+              taskList.map((task) => (
+                <tr key={task.id}>
+                  <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{task.title}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{task.assignedTo}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{task.dueDate}</td>
+                  <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={task.status} /></td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right">
+                    <button
+                      className="p-2 rounded hover:bg-gray-100"
+                      aria-label="Edytuj zadanie"
+                      onClick={() => handleEditTask(task)}
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="ml-2 p-2 rounded hover:bg-gray-100"
+                      aria-label="Usuń zadanie"
+                      onClick={() => handleDeleteTask(task.id)}
+                    >
+                      <span className="sr-only">Usuń</span>
+                      🗑️
+                    </button>
+                    <button
+                      className="ml-2 p-2 rounded hover:bg-gray-100"
+                      aria-label="Oznacz jako ukończone"
+                      onClick={() => handleCompleteTask(task.id)}
+                    >
+                      <span className="sr-only">Ukończ</span>
+                      ✔️
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
