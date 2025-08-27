@@ -1,4 +1,4 @@
-import { MoreHorizontal, Plus, CheckCircle2, Circle, Clock } from 'lucide-react';
+import { MoreHorizontal, Plus, CheckCircle2, Circle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 interface Task {
@@ -6,7 +6,7 @@ interface Task {
   title: string;
   assignedTo: string;
   dueDate: string;
-  status: 'Ukończone' | 'W toku' | 'Do zrobienia';
+  status: 'Ukończone' | 'Do zrobienia';
 }
 
 const tasks: Task[] = [
@@ -15,35 +15,35 @@ const tasks: Task[] = [
     title: 'Ukończ kartę mocy "Uczucia"',
     assignedTo: 'Leon Nowak',
     dueDate: '2023-11-15',
-    status: 'Ukończone',
+  status: 'Ukończone',
   },
   {
     id: 't2',
     title: 'Ćwicz quiz "Dzielenie się"',
     assignedTo: 'Maria Wiśniewska',
     dueDate: '2023-11-18',
-    status: 'W toku',
+  status: 'Do zrobienia',
   },
   {
     id: 't3',
     title: 'Codzienne zameldowanie',
     assignedTo: 'Antek Zieliński',
     dueDate: '2023-11-12',
-    status: 'Do zrobienia',
+  status: 'Do zrobienia',
   },
   {
     id: 't4',
     title: 'Ćwiczenie słuchania',
     assignedTo: 'Zofia Król',
     dueDate: '2023-11-20',
-    status: 'W toku',
+  status: 'Do zrobienia',
   },
    {
     id: 't5',
     title: 'Ćwiczenie powitań',
     assignedTo: 'Wilhelm Prawy',
     dueDate: '2023-11-14',
-    status: 'Do zrobienia',
+  status: 'Do zrobienia',
   },
 ];
 const StatusBadge = ({ status }: { status: string }) => {
@@ -55,14 +55,7 @@ const StatusBadge = ({ status }: { status: string }) => {
       </span>
     );
   }
-  if (status === 'W toku') {
-    return (
-      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-semibold text-blue-600 border border-blue-300 bg-blue-50">
-        <Clock className="mr-2 h-4 w-4" />
-        {status}
-      </span>
-    );
-  }
+  // 'Do zrobienia'
   return (
     <span className="inline-flex items-center px-2 py-1 rounded text-xs font-semibold text-gray-600 border border-gray-300 bg-gray-50">
       <Circle className="mr-2 h-4 w-4" />
