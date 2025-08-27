@@ -12,7 +12,15 @@ const roomPalette = ['#facc15', /* żółta */ '#93c5fd', /* jasnoniebieska */ '
 
 export interface DemoDataBundle { users: User[]; rooms: Room[]; patients: Patient[]; meetings: Meeting[]; assignments: Record<string,string[]>; }
 
-export function generateDemoData(seed:number = Date.now()): DemoDataBundle {
+export interface DemoQuiz {
+  id: string;
+  title: string;
+  questions: { question: string; answers: string[]; correct: number }[];
+  status: string;
+  date: string;
+}
+
+export function generateDemoData(seed:number = Date.now()): DemoDataBundle & { quizzes: DemoQuiz[] } {
   const rand = seedRandom(seed);
   // Add realistic session note templates (Polish)
   const sessionNoteTemplates = [
@@ -114,7 +122,7 @@ export function generateDemoData(seed:number = Date.now()): DemoDataBundle {
           }
         } else if(status === 'cancelled') {
           if(rand()>0.5) note = 'Odwołane – informacja od opiekuna (choroba).';
-          else if(rand()>0.5) note = 'Odwołane – kolizja z innym wydarzeniem.';
+          else note = 'Odwołane – kolizja z innym wydarzeniem.';
         } else if(status === 'present') { // future planned marked as present in model
           if(rand()>0.85) note = 'Planowana sesja – przygotować materiały sensoryczne.';
         } else if(status === 'in-progress') {
@@ -126,15 +134,80 @@ export function generateDemoData(seed:number = Date.now()): DemoDataBundle {
     }
   });
 
-  // No global fallback needed now; zero-meeting patients allowed by spec.
+  const quizzes = generateDemoQuizzes();
+  return { users, rooms, patients, meetings, assignments, quizzes };
+}
 
-  return { users, rooms, patients, meetings, assignments };
+export function generateDemoQuizzes(): DemoQuiz[] {
+  return [
+    {
+      id: 'quiz1',
+      title: 'Emocje i uczucia',
+      status: 'Opublikowany',
+      date: '2025-08-01',
+      questions: [
+        {
+          question: 'Jaką emocję wyraża uśmiech?',
+          answers: ['Smutek', 'Radość', 'Złość', 'Strach'],
+          correct: 1,
+        },
+        {
+          question: 'Co możesz zrobić, gdy jesteś zdenerwowany?',
+          answers: ['Krzyczeć', 'Policzyć do 10', 'Nic', 'Płakać'],
+          correct: 1,
+        },
+        {
+          question: 'Która z poniższych to pozytywna emocja?',
+          answers: ['Radość', 'Złość', 'Strach', 'Smutek'],
+          correct: 0,
+        },
+      ],
+    },
+    {
+      id: 'quiz2',
+      title: 'Sygnały społeczne',
+      status: 'Szkic',
+      date: '2025-08-02',
+      questions: [
+        {
+          question: 'Co oznacza machanie ręką?',
+          answers: ['Pożegnanie', 'Złość', 'Strach', 'Radość'],
+          correct: 0,
+        },
+        {
+          question: 'Jak reagujesz, gdy ktoś płacze?',
+          answers: ['Ignorujesz', 'Pytasz co się stało', 'Śmiejesz się', 'Uciekasz'],
+          correct: 1,
+        },
+      ],
+    },
+    {
+      id: 'quiz3',
+      title: 'Codzienne rutyny',
+      status: 'Opublikowany',
+      date: '2025-08-03',
+      questions: [
+        {
+          question: 'Co robisz rano po przebudzeniu?',
+          answers: ['Idziesz spać', 'Myjesz zęby', 'Jesz obiad', 'Oglądasz TV'],
+          correct: 1,
+        },
+        {
+          question: 'Co należy zrobić przed wyjściem z domu?',
+          answers: ['Założyć buty', 'Nic', 'Zjeść kolację', 'Położyć się spać'],
+          correct: 0,
+        },
+      ],
+    },
+  ];
 }
 
 export function loadAndApplyDemo(seed?:number){
-  const { users, rooms, patients, meetings, assignments } = generateDemoData(seed);
+  const { users, rooms, patients, meetings, assignments, quizzes } = generateDemoData(seed);
   saveUsers(users); saveRooms(rooms); savePatients(patients); saveMeetings(meetings); saveTherapistAssignments(assignments); markDemoLoaded();
-  return { users, rooms, patients, meetings, assignments };
+  // Optionally: save quizzes to localStorage or provide export
+  localStorage.setItem('schedule_quizzes', JSON.stringify(quizzes));
+  return { users, rooms, patients, meetings, assignments, quizzes };
 }
 
 export function purgeDemo(){
