@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, Users, MapPin, Settings, BarChart3, User, ListChecks, ClipboardList } from 'lucide-react';
+import { Calendar, Users, MapPin, Settings, BarChart3, User, ListChecks, ClipboardList, Sparkle } from 'lucide-react';
 
 interface SidebarProps {
   currentView: string;
@@ -18,7 +18,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
     { id: 'shared-calendar', label: 'Kalendarz wspólny', icon: Calendar, roles: ['admin', 'employee'] },
     { id: 'quizes', label: 'Quizy', icon: ListChecks, roles: ['admin', 'employee'] },
     { id: 'tasks', label: 'Zadania', icon: ClipboardList, roles: ['admin', 'employee'] },
-    { id: 'power-cards', label: 'Karty Mocy', icon: BarChart3, roles: ['admin', 'employee'] },
+  { id: 'power-cards', label: 'Karty Mocy', icon: Sparkle, roles: ['admin', 'employee'] },
     { id: 'settings', label: 'Ustawienia', icon: Settings, roles: ['admin'] }
   ];
   const availableOther = otherItems.filter(i => i.roles.includes(userRole));

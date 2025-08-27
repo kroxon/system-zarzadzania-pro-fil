@@ -29,7 +29,7 @@ import {
   savePatients
 } from './utils/storage';
 import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
-import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
+import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon, ListChecks, ClipboardList, Sparkle } from 'lucide-react';
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -123,9 +123,9 @@ function App() {
     'employees-manage': { title: 'Zarządzaj pracownikami', icon: <Users className="h-6 w-6" /> },
     'patients': { title: 'Podopieczni', icon: <UserIcon className="h-6 w-6" /> },
     'settings': { title: 'Ustawienia', icon: <SettingsIcon className="h-6 w-6" /> },
-    'quizes': { title: 'Quizy', icon: <Users className="h-6 w-6" /> },
-    'tasks': { title: 'Zadania', icon: <Users className="h-6 w-6" /> },
-    'power-cards': { title: 'Karty Mocy', icon: <BarChart3 className="h-6 w-6" /> }
+  'quizes': { title: 'Quizy', icon: <ListChecks className="h-6 w-6" /> },
+  'tasks': { title: 'Zadania', icon: <ClipboardList className="h-6 w-6" /> },
+  'power-cards': { title: 'Karty Mocy', icon: <Sparkle className="h-6 w-6" /> }
   };
 
   if (!currentUser) {
