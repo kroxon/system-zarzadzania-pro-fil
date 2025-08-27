@@ -148,7 +148,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
   // Auto-hide conflict UI after 1 second
   useEffect(()=>{
     if(conflictMessage){
-      const t = setTimeout(()=> setConflictMessage(null), 1000);
+      const t = setTimeout(()=> setConflictMessage(null), 1500);
       return ()=> clearTimeout(t);
     }
   },[conflictMessage]);
@@ -357,14 +357,15 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                 const nameFontClass = enlarged ? (isShort ? 'text-[12px]' : 'text-[12px]') : 'text-[10px]';
                 const paddingClass = enlarged ? 'px-1.5 py-1' : 'px-1.5';
                 const marginClass = enlarged ? 'm-0.5' : '';
+                const conflictOverride = (conflictFlashId===m.id) ? { backgroundColor:'#dc2626', borderColor:'#b91c1c', color:'#fff' } : {};
                 return (
                   <div key={m.id+"_orig"}
                     onMouseDown={(e)=>{ e.preventDefault(); if(e.button!==0) return; if(resizingMeetingId) return; setPointerDownMeeting({ id:m.id, y:e.clientY, t:Date.now(), dateStr, roomId:m.roomId }); }}
                     onMouseEnter={(e)=> scheduleTooltip(`${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}`, e.clientX, e.clientY+14)}
                     onMouseMove={(e)=> updateTooltipPosition(e.clientX, e.clientY+14)}
                     onMouseLeave={cancelTooltip}
-                    className={`meeting-block group ${paddingClass} ${marginClass} text-[11px] ${(conflictFlashId===m.id)?'conflict-flash':''} ${m.status==='cancelled'?'cancelled':''}`}
-                    style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, zIndex:5, ...roomStyle }}
+                    className={`meeting-block group ${paddingClass} ${marginClass} text-[11px] ${(conflictFlashId===m.id)?'conflict-flash':''} ${m.status==='cancelled'?'cancelled':''} ${isShort?'is-short':''}`}
+                    style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, zIndex:5, ...roomStyle, ...conflictOverride }}
                   >
                     <div className="meeting-block__handle" onMouseDown={(e)=>{ e.preventDefault(); startResize(e,m,'end'); }}>
                       <span className="meeting-block__handle-bar" />
@@ -529,8 +530,9 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                  const roomStyle = getRoomStyle(room);
                  const enlarged = slots>1;
                  const paddingClass = enlarged ? 'px-1.5 py-1' : 'px-1.5';
+                 const conflictOverride = (conflictFlashId===m.id) ? { backgroundColor:'#dc2626', borderColor:'#b91c1c', color:'#fff' } : {};
                  return (
-                   <div key={m.id+"_orig"} onMouseDown={(e)=>{ e.preventDefault(); if(e.button!==0) return; if(resizingMeetingId) return; setPointerDownMeeting({ id:m.id, y:e.clientY, t:Date.now(), dateStr, roomId: room.id }); }} onMouseEnter={(e)=> scheduleTooltip(`${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}`, e.clientX, e.clientY+14)} onMouseMove={(e)=> updateTooltipPosition(e.clientX, e.clientY+14)} onMouseLeave={cancelTooltip} className={`meeting-block group ${paddingClass} text-[11px] ${(resizingMeetingId===m.id)?'ring-2 ring-blue-400':''} ${conflictFlashId===m.id? 'conflict-flash':''} ${m.status==='cancelled'?'cancelled':''}`} style={{top, height, left:0, right:0, opacity:isResizing||isMoving?0.25:1, zIndex:5, ...roomStyle}}>
+                   <div key={m.id+"_orig"} onMouseDown={(e)=>{ e.preventDefault(); if(e.button!==0) return; if(resizingMeetingId) return; setPointerDownMeeting({ id:m.id, y:e.clientY, t:Date.now(), dateStr, roomId: room.id }); }} onMouseEnter={(e)=> scheduleTooltip(`${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}`, e.clientX, e.clientY+14)} onMouseMove={(e)=> updateTooltipPosition(e.clientX, e.clientY+14)} onMouseLeave={cancelTooltip} className={`meeting-block group ${paddingClass} text-[11px] ${(resizingMeetingId===m.id)?'ring-2 ring-blue-400':''} ${conflictFlashId===m.id? 'conflict-flash':''} ${m.status==='cancelled'?'cancelled':''}`} style={{top, height, left:0, right:0, opacity:isResizing||isMoving?0.25:1, zIndex:5, ...roomStyle, ...conflictOverride}}>
                      <div className="meeting-block__handle" onMouseDown={(e)=>{ e.preventDefault(); startResize(e,m,'end'); }}><span className="meeting-block__handle-bar" /></div>
                      <div className={`pointer-events-none select-none flex ${slots===1?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
                        <div className={`${slots===1?'text-[12px]':'text-[11px] mb-2'} font-semibold opacity-80`}>{timeRange}</div>
@@ -624,7 +626,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const firstOfMonth = new Date(year, month, 1);
-    const startWeekday = (firstOfMonth.getDay()+6)%7;
+    const startWeekday = (firstOfMonth.getDay()+6)%7; // Monday=0
     const gridStart = new Date(firstOfMonth); gridStart.setDate(firstOfMonth.getDate() - startWeekday);
     const weeks: Date[][] = [];
     for(let w=0; w<6; w++){
@@ -634,30 +636,46 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
       const lastDay = week[6]; if(lastDay.getMonth() !== month && lastDay.getDate() >= 7) break;
     }
     const formatLocalDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
-    const now = new Date(); const todayStr = formatLocalDate(now);
-    const dayMeetingsMap: Record<string, Meeting[]> = {}; meetings.forEach(m => { (dayMeetingsMap[m.date] ||= []).push(m); });
+    const todayStr = formatLocalDate(new Date());
+    const meetingsByDay: Record<string, Meeting[]> = {}; meetings.forEach(m=>{ (meetingsByDay[m.date] ||= []).push(m); });
     const weekdayLabels = ['Pon','Wt','Śr','Cz','Pt','So','Nd'];
+
     return (
       <div className="month-shell">
         <div className="month-weekday-row">
           {weekdayLabels.map(l=> <div key={l} className="month-weekday-cell">{l}</div>)}
         </div>
         <div className="month-weeks" style={{gridTemplateRows:`repeat(${weeks.length},1fr)`}}>
-          {weeks.map((week, wi)=> (
+          {weeks.map((week, wi)=>(
             <div key={wi} className="month-week-row">
-              {week.map(day=>{ const dateStr = formatLocalDate(day); const inMonth = day.getMonth()===month; const isToday = dateStr===todayStr; const isWeekend = day.getDay()===0 || day.getDay()===6; const dayMeetings = (dayMeetingsMap[dateStr]||[]).sort((a,b)=> a.startTime.localeCompare(b.startTime)); return (
-                <div key={dateStr} className="month-day-wrapper">
-                  <button onClick={()=>{ setCurrentDate(day); setViewType('day'); }} className={`month-day-btn ${inMonth?'':'is-out'} ${isWeekend && inMonth?'is-weekend':''} ${isToday?'is-today':''}`}>\n                    <div className="month-day-head"><span className="month-day-number">{day.getDate()}</span></div>
-                    <div className="month-day-body">
-                      <div className="month-meetings-dots">
-                        {dayMeetings.map(m=>{ const room = rooms.find(r=>r.id===m.roomId); const rc=getRoomStyle(room); const specialist=users.find(u=>u.id===m.specialistId); const specName=specialist?specialist.name:'Specjalista'; const tooltipTxt=`${m.startTime}-${m.endTime}\n${specName}\n${room?room.name:''}`; return (
-                          <span key={m.id+"_dot"} onMouseEnter={(e)=> scheduleTooltip(tooltipTxt, e.clientX, e.clientY+16)} onMouseMove={(e)=> updateTooltipPosition(e.clientX, e.clientY+16)} onMouseLeave={cancelTooltip} onClick={(e)=>{ e.stopPropagation(); handleTimeSlotClick(m.date, m.startTime, m, m.roomId); }} className="month-dot" style={{backgroundColor: rc.backgroundColor, borderColor: rc.borderColor}} />
-                        ); })}
+              {week.map(day=>{
+                const dateStr = formatLocalDate(day);
+                const inMonth = day.getMonth()===month;
+                const isToday = dateStr===todayStr;
+                const isWeekend = day.getDay()===0 || day.getDay()===6;
+                const dayMeetings = (meetingsByDay[dateStr]||[]).sort((a,b)=> a.startTime.localeCompare(b.startTime));
+                return (
+                  <div key={dateStr} className="month-day-wrapper">
+                    <button className={`month-day-btn ${inMonth?'' :'is-out'} ${isWeekend && inMonth? 'is-weekend':''} ${isToday? 'is-today':''}`}
+                      onClick={()=>{ setCurrentDate(day); setViewType('day'); }}
+                    >
+                      <div className="month-day-head">
+                        <span className="month-day-number">{day.getDate()}</span>
                       </div>
-                    </div>
-                  </button>
-                </div>
-              ); })}
+                      <div className="month-day-body">
+                        <div className="month-meetings-dots">
+                          {dayMeetings.slice(0,36).map(m=>{ const room=rooms.find(r=>r.id===m.roomId); const rc=getRoomStyle(room); const specialist=users.find(u=>u.id===m.specialistId); const specName=specialist?specialist.name:'Specjalista'; const lines=[`${m.startTime}-${m.endTime}`, specName, room?room.name:null].filter(Boolean) as string[]; return (
+                            <div key={m.id} className="month-dot" style={{background:rc.backgroundColor}} data-cancelled={m.status==='cancelled'}>
+                              <div className="month-dot__tooltip">{lines.map((ln,i)=><span key={i} className="month-dot__tooltip-line">{ln}</span>)}</div>
+                            </div>
+                          ); })}
+                          {dayMeetings.length>36 && <span style={{fontSize:10, fontWeight:600, color:'var(--color-text-muted)'}}>+{dayMeetings.length-36}</span>}
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
@@ -673,10 +691,19 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
       <div className="flex-none"><CalendarHeader currentDate={currentDate} viewType={viewType} onDateChange={setCurrentDate} onViewTypeChange={setViewType} /></div>
       <div className="flex-1 min-h-0">{viewType==='day' && renderDayViewMultiRoom()}{viewType==='week' && renderWeekView()}{viewType==='month' && renderMonthView()}</div>
       <MeetingForm isOpen={showMeetingForm} onClose={()=>{ setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); }} onSubmit={handleMeetingFormSubmit} users={users} rooms={rooms} meetings={meetings} selectedDate={formatDateForComparison(currentDate)} selectedTime={selectedTime} currentUser={currentUser} editingMeeting={editingMeeting} initialRoomId={formRoomId} selectedEndTime={selectedEndTime} />
-      {conflictMessage && <div className="calendar-conflict-toast">{conflictMessage}</div>}
+      {conflictMessage && (
+        <>
+          <div className="calendar-conflict-overlay" onClick={()=>setConflictMessage(null)} />
+          <div className="calendar-conflict-modal" role="alertdialog" aria-modal="true">
+            <div className="calendar-conflict-modal__icon" aria-hidden="true">!</div>
+            <div className="calendar-conflict-modal__body">{conflictMessage}</div>
+            <button className="btn btn-primary calendar-conflict-modal__close" onClick={()=>setConflictMessage(null)}>OK</button>
+          </div>
+        </>
+      )}
       {hoverTooltip && (
-        <div className="fixed z-[200] pointer-events-none -translate-x-1/2" style={{ left: hoverTooltip!.x, top: hoverTooltip!.y }}>
-          <div className="bg-white text-black text-[11px] font-medium px-3 py-1.5 rounded-lg shadow-[0_10px_28px_-4px_rgba(0,0,0,0.45),0_4px_10px_-2px_rgba(0,0,0,0.35)] border border-gray-300/80 ring-1 ring-black/5 whitespace-pre-line leading-tight">{hoverTooltip!.text}</div>
+        <div className="calendar-tooltip" style={{ left: hoverTooltip!.x, top: hoverTooltip!.y, transform:'translate(-50%, 6px)' }}>
+          {hoverTooltip!.text}
         </div>
       )}
     </div>

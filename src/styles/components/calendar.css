@@ -45,11 +45,58 @@
 .meeting-block__handle-bar { width:32px; height:3px; border-radius:2px; background: rgba(0,0,0,0.25); margin-bottom:3px; transition: background var(--transition-fast); }
 .meeting-block:hover .meeting-block__handle-bar { background: rgba(0,0,0,0.45); }
 
+/* Truncation for compact meeting blocks (week view) */
+.meeting-block .truncate { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; max-width:100%; min-width:0; }
+.meeting-block.compact, .meeting-block.is-short { --meeting-line-clamp:1; }
+
 .meeting-ghost { position:absolute; border:1px dashed; border-radius: var(--radius-md); pointer-events:none; display:flex; align-items:center; justify-content:center; font-size:11px; }
 .meeting-move-ghost, .meeting-resize-ghost { position:absolute; border:1px solid; border-radius: var(--radius-md); box-shadow: var(--shadow-lg); opacity:0.85; font-size:11px; display:flex; align-items:center; justify-content:center; }
 
 .calendar-select-none { user-select:none; }
-.calendar-tooltip { position:fixed; z-index:200; background: #111827; color:#fff; font-size:11px; padding:4px 8px; border-radius:6px; pointer-events:none; box-shadow: var(--shadow-lg); white-space:nowrap; }
+.calendar-tooltip { position:fixed; z-index:200; background:#ffffff; color:#111827; font-size:11px; padding:6px 10px; border-radius:10px; pointer-events:none; box-shadow:0 10px 28px -6px rgba(0,0,0,0.45), 0 4px 12px -4px rgba(0,0,0,0.35); white-space:pre-line; border:1px solid rgba(0,0,0,0.18); font-weight:500; line-height:1.25; }
 
 .conflict-flash { animation: conflict-pulse 1s ease; }
 @keyframes conflict-pulse { 0% { box-shadow:0 0 0 0 rgba(239,68,68,0.6); } 70% { box-shadow:0 0 0 6px rgba(239,68,68,0); } 100% { box-shadow:0 0 0 0 rgba(239,68,68,0); } }
+
+/* Month view */
+.month-shell { display:flex; flex-direction:column; gap:8px; background: var(--color-white); border:1px solid var(--color-border); border-radius: var(--radius-xl); box-shadow: var(--shadow-sm); padding:8px 8px 12px; }
+.month-weekday-row { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; padding:0 4px; }
+.month-weekday-cell { font-size:11px; font-weight:600; text-transform:uppercase; text-align:center; color: var(--color-text-muted); letter-spacing:.5px; padding:4px 0 2px; }
+.month-weeks { display:grid; flex:1; gap:4px; }
+.month-week-row { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; min-height:120px; }
+.month-day-wrapper { position:relative; }
+.month-day-btn { position:relative; width:100%; height:100%; background: var(--color-bg-alt); border:1px solid var(--color-border); border-radius:12px; padding:4px 6px 6px; display:flex; flex-direction:column; align-items:stretch; cursor:pointer; transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast); }
+.month-day-btn:hover { background: var(--color-white); box-shadow: var(--shadow-xs); }
+.month-day-btn.is-out { opacity:.45; background: var(--color-bg-alt); }
+.month-day-btn.is-weekend:not(.is-out) { background: #f1f5f9; }
+.month-day-btn.is-today { border-color: var(--color-primary); box-shadow:0 0 0 2px rgba(59,130,246,0.35); }
+.month-day-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:2px; }
+.month-day-number { font-size:12px; font-weight:600; color: var(--color-text); line-height:1; }
+.month-day-body { flex:1; display:flex; flex-direction:column; gap:2px; /* overflow:hidden; removed to allow tooltips to show */ }
+.month-meetings-dots { display:flex; flex-wrap:wrap; gap:4px; align-items:flex-start; position:relative; overflow:visible; }
+.month-dot { width:16px; height:16px; border-radius:6px; box-shadow:0 0 0 1px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.14); position:relative; }
+.month-dot[data-cancelled='true'] { filter:grayscale(.5) brightness(.85); }
+.month-dot__tooltip { position:absolute; left:50%; top:0; transform:translate(-50%, -115%) scale(.92); background:#ffffff; color:#111827; padding:6px 10px; font-size:11px; font-weight:500; border-radius:10px; line-height:1.25; white-space:normal; pointer-events:none; opacity:0; transition:opacity .18s ease, transform .18s cubic-bezier(.16,.8,.3,1); z-index:10; border:1px solid rgba(0,0,0,0.18); box-shadow:0 10px 28px -6px rgba(0,0,0,0.45), 0 4px 12px -4px rgba(0,0,0,0.35); display:flex; flex-direction:column; gap:2px; }
+.month-dot__tooltip-line { white-space:nowrap; }
+.month-dot__tooltip::after { content:""; position:absolute; left:50%; top:100%; transform:translateX(-50%); width:10px; height:6px; background:transparent; }
+.month-dot__tooltip::before { content:""; position:absolute; left:50%; top:100%; transform:translate(-50%,-2px); width:12px; height:12px; background:#ffffff; border:1px solid rgba(0,0,0,0.18); border-top:none; border-left:none; transform-origin:50% 0; rotate:45deg; box-shadow:2px 2px 4px -2px rgba(0,0,0,0.25); border-bottom-right-radius:3px; }
+@media (prefers-reduced-motion:reduce){ .month-dot__tooltip { transition:none; } }
+.month-dot:hover .month-dot__tooltip { opacity:1; transform:translate(-50%, -120%) scale(1); }
+
+/* Fallback minimal utility classes to support legacy markup (will be removed after semantic refactor) */
+.flex { display:flex; }
+.flex-row { flex-direction:row; }
+.flex-col { flex-direction:column; }
+.items-center { align-items:center; }
+.justify-center { justify-content:center; }
+.gap-2 { gap:0.5rem; }
+.leading-tight { line-height:1.1; }
+.w-full { width:100%; }
+.text-center { text-align:center; }
+.px-1 { padding-left:0.25rem; padding-right:0.25rem; }
+.px-1\.5 { padding-left:0.375rem; padding-right:0.375rem; }
+.py-1 { padding-top:0.25rem; padding-bottom:0.25rem; }
+.mb-1 { margin-bottom:0.25rem; }
+.text-\[12px\] { font-size:12px; }
+.text-\[11px\] { font-size:11px; }
+.text-\[10px\] { font-size:10px; }
