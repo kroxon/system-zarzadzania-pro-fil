@@ -46,6 +46,39 @@ export default function TasksPage() {
   const [taskList, setTaskList] = useState<Task[]>(() => loadTasks());
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [formData, setFormData] = useState<Task | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newTask, setNewTask] = useState<Task>({
+    id: '',
+    title: '',
+    assignedTo: '',
+    dueDate: '',
+    status: 'Do zrobienia',
+  });
+
+  const handleOpenCreateModal = () => {
+    setNewTask({ id: '', title: '', assignedTo: '', dueDate: '', status: 'Do zrobienia' });
+    setShowCreateModal(true);
+  };
+
+  const handleCloseCreateModal = () => {
+    setShowCreateModal(false);
+  };
+
+  const handleChangeNewTask = (field: keyof Task, value: string) => {
+    setNewTask((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveCreateTask = () => {
+    if (!newTask.title.trim() || !newTask.assignedTo.trim() || !newTask.dueDate.trim()) return;
+    const taskToAdd = {
+      ...newTask,
+      id: 't' + (Date.now() + Math.floor(Math.random() * 10000)),
+    };
+    const updatedTasks = [...taskList, taskToAdd];
+    setTaskList(updatedTasks);
+    localStorage.setItem('schedule_tasks', JSON.stringify(updatedTasks));
+    setShowCreateModal(false);
+  };
 
   const handleEditTask = (task: Task) => {
     setEditingTask(task);
@@ -88,127 +121,117 @@ export default function TasksPage() {
 
   return (
     <>
-    <div className="flex-1 space-y-8 p-4 md:p-8">
-      <div className="flex items-center justify-between space-y-2">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight font-headline">Zadania</h2>
-          <p className="text-muted-foreground">
-            Zarządzaj i monitoruj działania terapeutyczne.
-          </p>
+      <div className="flex-1 space-y-8 p-4 md:p-8">
+        <div className="flex items-center justify-between space-y-2">
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight font-headline">Zadania</h2>
+            <p className="text-muted-foreground">Zarządzaj i monitoruj działania terapeutyczne.</p>
+          </div>
+          <div className="flex items-center space-x-2">
+            <button className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={handleOpenCreateModal}>
+              <Plus className="mr-2 h-4 w-4" /> Dodaj zadanie
+            </button>
+          </div>
         </div>
-        <div className="flex items-center space-x-2">
-          <button className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors">
-            <Plus className="mr-2 h-4 w-4" /> Dodaj zadanie
-          </button>
-        </div>
-      </div>
-      <div className="rounded-lg border shadow-sm overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Zadanie</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Przypisane do</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Termin</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"><span className="sr-only">Akcje</span></th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {taskList.length === 0 ? (
+        <div className="rounded-lg border shadow-sm overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
               <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Brak zadań do wyświetlenia.</td>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Zadanie</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Przypisane do</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Termin</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"><span className="sr-only">Akcje</span></th>
               </tr>
-            ) : (
-              taskList.map((task) => (
-                <tr key={task.id}>
-                  <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{task.title}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">{task.assignedTo}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">{task.dueDate}</td>
-                  <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={task.status} /></td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
-                    <button
-                      className="p-2 rounded hover:bg-gray-100"
-                      aria-label="Edytuj zadanie"
-                      onClick={() => handleEditTask(task)}
-                    >
-                      <MoreHorizontal className="h-4 w-4" />
-                    </button>
-                    <button
-                      className="ml-2 p-2 rounded hover:bg-gray-100"
-                      aria-label="Usuń zadanie"
-                      onClick={() => handleDeleteTask(task.id)}
-                    >
-                      <span className="sr-only">Usuń</span>
-                      🗑️
-                    </button>
-                    <button
-                      className="ml-2 p-2 rounded hover:bg-gray-100"
-                      aria-label="Oznacz jako ukończone"
-                      onClick={() => handleCompleteTask(task.id)}
-                    >
-                      <span className="sr-only">Ukończ</span>
-                      ✔️
-                    </button>
-                  </td>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {taskList.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Brak zadań do wyświetlenia.</td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    {editingTask && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-        <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold">Edytuj zadanie</h3>
-            <p className="text-sm text-gray-500">Wprowadź zmiany w zadaniu.</p>
-          </div>
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-4 items-center gap-4">
-              <label htmlFor="title" className="text-right text-sm font-medium text-gray-700">
-                Zadanie
-              </label>
-              <input
-                id="title"
-                value={formData?.title || ''}
-                onChange={(e) => formData && setFormData({ ...formData, title: e.target.value })}
-                className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <label htmlFor="assignedTo" className="text-right text-sm font-medium text-gray-700">
-                Przypisane do
-              </label>
-              <input
-                id="assignedTo"
-                value={formData?.assignedTo || ''}
-                onChange={(e) => formData && setFormData({ ...formData, assignedTo: e.target.value })}
-                className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <label htmlFor="dueDate" className="text-right text-sm font-medium text-gray-700">
-                Termin
-              </label>
-              <input
-                id="dueDate"
-                value={formData?.dueDate || ''}
-                onChange={(e) => formData && setFormData({ ...formData, dueDate: e.target.value })}
-                className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                type="date"
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-6">
-            <button type="button" className="px-4 py-2 rounded border text-sm bg-gray-50 hover:bg-gray-100" onClick={() => setEditingTask(null)}>Anuluj</button>
-            <button type="button" className="px-4 py-2 rounded bg-blue-600 text-white text-sm hover:bg-blue-700" onClick={handleSaveEdit}>Zapisz</button>
-          </div>
+              ) : (
+                taskList.map((task) => (
+                  <tr key={task.id}>
+                    <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{task.title}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">{task.assignedTo}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">{task.dueDate}</td>
+                    <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={task.status} /></td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right">
+                      <button className="p-2 rounded hover:bg-gray-100" aria-label="Edytuj zadanie" onClick={() => handleEditTask(task)}>
+                        <MoreHorizontal className="h-4 w-4" />
+                      </button>
+                      <button className="ml-2 p-2 rounded hover:bg-gray-100" aria-label="Usuń zadanie" onClick={() => handleDeleteTask(task.id)}>
+                        <span className="sr-only">Usuń</span>🗑️
+                      </button>
+                      <button className="ml-2 p-2 rounded hover:bg-gray-100" aria-label="Oznacz jako ukończone" onClick={() => handleCompleteTask(task.id)}>
+                        <span className="sr-only">Ukończ</span>✔️
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
-    )}
+
+      {/* Modal dodawania nowego zadania */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
+            <form onSubmit={e => { e.preventDefault(); handleSaveCreateTask(); }}>
+              <h3 className="text-lg font-semibold mb-2">Dodaj nowe zadanie</h3>
+              <div className="mb-4">
+                <label className="block text-sm font-medium mb-1">Tytuł zadania</label>
+                <input type="text" className="w-full border px-3 py-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" value={newTask.title} onChange={e => handleChangeNewTask('title', e.target.value)} />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium mb-1">Przypisane do</label>
+                <input type="text" className="w-full border px-3 py-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" value={newTask.assignedTo} onChange={e => handleChangeNewTask('assignedTo', e.target.value)} />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium mb-1">Termin</label>
+                <input type="date" className="w-full border px-3 py-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" value={newTask.dueDate} onChange={e => handleChangeNewTask('dueDate', e.target.value)} />
+              </div>
+              <div className="flex justify-end gap-2 mt-6">
+                <button type="button" className="px-4 py-2 rounded border text-sm bg-gray-50 hover:bg-gray-100" onClick={handleCloseCreateModal}>Anuluj</button>
+                <button type="submit" className="px-4 py-2 rounded bg-blue-600 text-white text-sm hover:bg-blue-700">Dodaj zadanie</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal edycji zadania */}
+      {editingTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold">Edytuj zadanie</h3>
+              <p className="text-sm text-gray-500">Wprowadź zmiany w zadaniu.</p>
+            </div>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <label htmlFor="title" className="text-right text-sm font-medium text-gray-700">Zadanie</label>
+                <input id="title" value={formData?.title || ''} onChange={(e) => formData && setFormData({ ...formData, title: e.target.value })} className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <label htmlFor="assignedTo" className="text-right text-sm font-medium text-gray-700">Przypisane do</label>
+                <input id="assignedTo" value={formData?.assignedTo || ''} onChange={(e) => formData && setFormData({ ...formData, assignedTo: e.target.value })} className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <label htmlFor="dueDate" className="text-right text-sm font-medium text-gray-700">Termin</label>
+                <input id="dueDate" value={formData?.dueDate || ''} onChange={(e) => formData && setFormData({ ...formData, dueDate: e.target.value })} className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" type="date" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <button type="button" className="px-4 py-2 rounded border text-sm bg-gray-50 hover:bg-gray-100" onClick={() => setEditingTask(null)}>Anuluj</button>
+              <button type="button" className="px-4 py-2 rounded bg-blue-600 text-white text-sm hover:bg-blue-700" onClick={handleSaveEdit}>Zapisz</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
- );
+  );
 }
 
