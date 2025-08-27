@@ -17,99 +17,47 @@ const CalendarHeader: React.FC<CalendarHeaderProps> = ({
   centerContent
 }) => {
   const formatDate = (date: Date) => {
-    const options: Intl.DateTimeFormatOptions = {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    };
+    const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric' };
     return date.toLocaleDateString('pl-PL', options);
   };
-
   const formatRangeWeek = (date: Date) => {
-    const d = new Date(date);
-    const day = (d.getDay()+6)%7; // 0..6 (0=Mon)
-    const start = new Date(d); start.setDate(d.getDate()-day); // poniedziałek
-    const end = new Date(start); end.setDate(start.getDate()+6); // niedziela
+    const d = new Date(date); const day = (d.getDay()+6)%7; const start = new Date(d); start.setDate(d.getDate()-day); const end = new Date(start); end.setDate(start.getDate()+6);
     const sameMonth = start.getMonth()===end.getMonth() && start.getFullYear()===end.getFullYear();
-    if(sameMonth){
-      return `${start.getDate()}–${end.getDate()} ${end.toLocaleDateString('pl-PL', { month:'long', year:'numeric'})}`;
-    }
+    if(sameMonth){ return `${start.getDate()}–${end.getDate()} ${end.toLocaleDateString('pl-PL', { month:'long', year:'numeric'})}`; }
     const startStr = start.toLocaleDateString('pl-PL', { day:'numeric', month:'short' }).replace('.', '');
     const endStr = end.toLocaleDateString('pl-PL', { day:'numeric', month:'long', year:'numeric' });
     return `${startStr} – ${endStr}`;
   };
   const formatMonth = (date: Date) => date.toLocaleDateString('pl-PL', { month:'long', year:'numeric' });
-
   const displayLabel = viewType==='week' ? formatRangeWeek(currentDate) : viewType==='month' ? formatMonth(currentDate) : formatDate(currentDate);
-
   const navigateDate = (direction: 'prev' | 'next') => {
     const newDate = new Date(currentDate);
-    
-    switch (viewType) {
-      case 'day':
-        newDate.setDate(newDate.getDate() + (direction === 'next' ? 1 : -1));
-        break;
-      case 'week':
-        newDate.setDate(newDate.getDate() + (direction === 'next' ? 7 : -7));
-        break;
-      case 'month':
-        newDate.setMonth(newDate.getMonth() + (direction === 'next' ? 1 : -1));
-        break;
-    }
-    
+    switch (viewType) { case 'day': newDate.setDate(newDate.getDate() + (direction === 'next' ? 1 : -1)); break; case 'week': newDate.setDate(newDate.getDate() + (direction === 'next' ? 7 : -7)); break; case 'month': newDate.setMonth(newDate.getMonth() + (direction === 'next' ? 1 : -1)); break; }
     onDateChange(newDate);
   };
-
-  const goToToday = () => {
-    onDateChange(new Date());
-  };
+  const goToToday = () => { onDateChange(new Date()); };
 
   return (
-    <div className="flex items-center justify-between mb-6 gap-4">
-      <div className="flex items-center space-x-4">
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={() => navigateDate('prev')}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <ChevronLeft className="h-5 w-5 text-gray-600" />
+    <div className="calendar-header">
+      <div className="calendar-header__left">
+        <div className="btn-group">
+          <button onClick={() => navigateDate('prev')} className="icon-btn" aria-label="Poprzedni">
+            <ChevronLeft className="icon" />
           </button>
-          <button
-            onClick={() => navigateDate('next')}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <ChevronRight className="h-5 w-5 text-gray-600" />
+          <button onClick={() => navigateDate('next')} className="icon-btn" aria-label="Następny">
+            <ChevronRight className="icon" />
           </button>
         </div>
-        
-        <h2 className="text-xl font-semibold text-gray-900 capitalize">{displayLabel}</h2>
-        
-        <button
-          onClick={goToToday}
-          className="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
-        >
-          Dziś
-        </button>
+        <h2 className="calendar-header__title">{displayLabel}</h2>
+        <button onClick={goToToday} className="btn btn-outline btn-today">Dziś</button>
       </div>
-      {centerContent && (
-        <div className="hidden md:flex items-center justify-center gap-8 flex-1">
-          {centerContent}
+      {centerContent && <div className="calendar-header__center">{centerContent}</div>}
+      <div className="calendar-header__right">
+        <div className="segmented">
+          {(['day','week','month'] as const).map(type=> (
+            <button key={type} onClick={()=>onViewTypeChange(type)} className={`segmented__btn ${viewType===type? 'is-active':''}`}>{type==='day'? 'Dzień' : type==='week'? 'Tydzień':'Miesiąc'}</button>
+          ))}
         </div>
-      )}
-      <div className="flex items-center space-x-2">
-        {(['day', 'week', 'month'] as const).map((type) => (
-          <button
-            key={type}
-            onClick={() => onViewTypeChange(type)}
-            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-              viewType === type
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            {type === 'day' ? 'Dzień' : type === 'week' ? 'Tydzień' : 'Miesiąc'}
-          </button>
-        ))}
       </div>
     </div>
   );

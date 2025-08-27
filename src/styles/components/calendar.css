@@ -1,0 +1,55 @@
+:root { --calendar-slot-gap: 2px; }
+
+/* Calendar header controls */
+.calendar-header { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1.5rem; }
+.calendar-header__left { display:flex; align-items:center; gap:0.75rem; }
+.calendar-header__title { font-size:1.25rem; font-weight:600; color: var(--color-text); text-transform:capitalize; }
+.calendar-header__center { flex:1; display:flex; align-items:center; justify-content:center; gap:2rem; }
+.calendar-header__right { display:flex; align-items:center; gap:.75rem; }
+.btn-group { display:inline-flex; align-items:center; gap:.25rem; }
+.icon-btn { width:38px; height:38px; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--color-border); background: var(--color-white); border-radius: var(--radius-lg); box-shadow: var(--shadow-xs); transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast); }
+.icon-btn .icon { width:20px; height:20px; color: var(--color-text-muted); }
+.icon-btn:hover { background: var(--color-bg-alt); }
+.btn-today { font-size:12px; padding:0.5rem 0.9rem; font-weight:500; letter-spacing:.2px; }
+.btn-today { background: var(--color-primary-bg-subtle); color: var(--color-primary-darker); border-color: var(--color-primary-border); }
+.btn-today:hover { background: var(--color-primary-bg-hover); }
+
+.segmented { display:inline-flex; background: var(--color-bg-alt); padding:4px; border-radius: var(--radius-xl); border:1px solid var(--color-border); box-shadow: var(--shadow-xs); }
+.segmented__btn { position:relative; background:transparent; border:0; padding:0.45rem 1rem; font-size:13px; font-weight:500; border-radius: var(--radius-md); cursor:pointer; color: var(--color-text-secondary); transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast); }
+.segmented__btn:hover { background: var(--color-white); color: var(--color-text); }
+.segmented__btn.is-active { background: var(--color-primary); color:#fff; box-shadow:0 2px 6px -2px rgba(0,0,0,0.15); }
+.segmented__btn.is-active:hover { background: var(--color-primary-hover); }
+
+.calendar-shell { background: var(--color-white); border:1px solid var(--color-border); border-radius: var(--radius-xl); box-shadow: var(--shadow-sm); display:flex; flex-direction:column; height:100%; position:relative; }
+.calendar-scroll { flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable; }
+.calendar-grid { display:grid; }
+.calendar-time-col { position:relative; border-right:1px solid var(--color-border); background: var(--color-bg-alt); }
+.calendar-time-header { position:sticky; top:0; z-index:30; min-height:32px; background: rgba(255,255,255,0.8); backdrop-filter: blur(4px); border-bottom:1px solid var(--color-border); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:500; color: var(--color-text-muted); }
+.calendar-hour-label { position:absolute; left:0; right:0; display:flex; align-items:flex-start; justify-content:center; font-size:12px; font-weight:500; color: var(--color-text-secondary); padding-top:0; }
+
+.calendar-day-col { position:relative; border-right:1px solid var(--color-border); background: var(--color-white); }
+.calendar-day-col:last-child { border-right:0; }
+/* Provide slight horizontal inset for meeting blocks when using percentage widths */
+.calendar-day-col .meeting-block { margin-left:0; margin-right:0; }
+/* Slot base style (future refactor) */
+.calendar-slot { position:absolute; left:0; right:0; line-height:1; box-sizing:border-box; }
+.calendar-slot::after { content:""; position:absolute; left:0; right:0; bottom:0; height:1px; background: var(--color-border); pointer-events:none; }
+.calendar-slot.bg-gray-50 { background:var(--color-bg-alt); }
+/* Ensure time column slots share same visual baseline */
+.calendar-time-col .calendar-slot { border:none !important; }
+
+.meeting-block { position:absolute; border:1px solid; border-radius: var(--radius-md); font-size:11px; display:flex; align-items:center; justify-content:center; text-align:center; cursor:pointer; box-shadow: var(--shadow-sm); transition: filter var(--transition-fast), opacity var(--transition-fast); overflow:visible; /* ensure block aligns exactly to slot top/height math */ }
+.meeting-block:hover { filter:brightness(0.95); }
+.meeting-block.cancelled { text-decoration:line-through; opacity:0.7; }
+.meeting-block__handle { position:absolute; bottom:0; left:0; right:0; height:12px; cursor:s-resize; display:flex; align-items:flex-end; justify-content:center; }
+.meeting-block__handle-bar { width:32px; height:3px; border-radius:2px; background: rgba(0,0,0,0.25); margin-bottom:3px; transition: background var(--transition-fast); }
+.meeting-block:hover .meeting-block__handle-bar { background: rgba(0,0,0,0.45); }
+
+.meeting-ghost { position:absolute; border:1px dashed; border-radius: var(--radius-md); pointer-events:none; display:flex; align-items:center; justify-content:center; font-size:11px; }
+.meeting-move-ghost, .meeting-resize-ghost { position:absolute; border:1px solid; border-radius: var(--radius-md); box-shadow: var(--shadow-lg); opacity:0.85; font-size:11px; display:flex; align-items:center; justify-content:center; }
+
+.calendar-select-none { user-select:none; }
+.calendar-tooltip { position:fixed; z-index:200; background: #111827; color:#fff; font-size:11px; padding:4px 8px; border-radius:6px; pointer-events:none; box-shadow: var(--shadow-lg); white-space:nowrap; }
+
+.conflict-flash { animation: conflict-pulse 1s ease; }
+@keyframes conflict-pulse { 0% { box-shadow:0 0 0 0 rgba(239,68,68,0.6); } 70% { box-shadow:0 0 0 6px rgba(239,68,68,0); } 100% { box-shadow:0 0 0 0 rgba(239,68,68,0); } }

@@ -11,6 +11,14 @@
 .btn-outline { background: transparent; color: var(--color-text-secondary); border-color: var(--color-border); }
 .btn-outline:hover { background: var(--color-bg-alt); }
 
+.btn-secondary { background: var(--color-bg-alt); color: var(--color-text-secondary); }
+.btn-secondary:hover { background: var(--color-border); }
+
+.btn-gradient { background: linear-gradient(90deg,#4f46e5,#2563eb); color:#fff; box-shadow: var(--shadow-sm); }
+.btn-gradient:hover { background: linear-gradient(90deg,#6366f1,#1d4ed8); }
+
+.btn-small { padding: .5rem; font-size: var(--text-sm); }
+
 .icon-btn { padding: .5rem; background: transparent; color: var(--color-text-muted); border-radius: var(--radius-lg); border:1px solid transparent; }
 .icon-btn:hover { background: var(--color-bg-alt); color: var(--color-text); }
 .icon-btn--danger:hover { background: var(--color-danger-bg-subtle); color: var(--color-danger); }
