@@ -272,7 +272,7 @@ export default function QuizzesPage() {
 
       {(editingQuiz) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="mb-4">
               <h3 className="text-lg font-semibold">Edytuj Quiz</h3>
               <p className="text-sm text-gray-500">Edytuj pytania quizu i dodaj nowe.</p>
@@ -325,7 +325,7 @@ export default function QuizzesPage() {
 
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <form className="bg-white rounded-xl shadow-lg p-6 w-full max-w-lg" onSubmit={e=>{e.preventDefault();handleSaveCreate();}}>
+          <form className="bg-white rounded-xl shadow-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onSubmit={e=>{e.preventDefault();handleSaveCreate();}}>
             <h3 className="text-lg font-semibold mb-2">Dodaj nowy quiz</h3>
             <div className="mb-4">
               <label className="block text-sm font-medium mb-1">Tytuł quizu</label>
@@ -375,7 +375,7 @@ export default function QuizzesPage() {
 
       {previewQuiz && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-lg">
+          <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="mb-4">
               <h3 className="text-lg font-semibold">Podgląd quizu: {previewQuiz.title}</h3>
               <p className="text-sm text-gray-500">Pytania i odpowiedzi</p>
