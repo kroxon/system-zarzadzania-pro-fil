@@ -13,17 +13,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
   const [roomsOpen, setRoomsOpen] = useState(false);
   const [roomsGroupSelected, setRoomsGroupSelected] = useState(false);
   const [expanded, setExpanded] = useState(false); // sidebar hover state
-  const [showLabels, setShowLabels] = useState(false); // opóźnione wyświetlanie napisów
-
-  React.useEffect(() => {
-    let timeout: NodeJS.Timeout;
-    if (expanded) {
-  timeout = setTimeout(() => setShowLabels(true), 200); // czas animacji = 200ms
-    } else {
-      setShowLabels(false);
-    }
-    return () => clearTimeout(timeout);
-  }, [expanded]);
 
   // Base items excluding dashboard and groups
   const otherItems: { id: string; label: string; icon: React.ElementType; roles: Array<'admin' | 'employee'> }[] = [
@@ -52,10 +41,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
 
   return (
     <div
-      className={`transition-all duration-300 bg-white shadow-lg border-r border-gray-200 flex flex-col h-full ${expanded ? 'w-64' : 'w-16'}`}
+      className={`transition-all duration-300 bg-white shadow-lg border-r border-gray-200 flex flex-col h-full relative ${expanded ? 'w-64' : 'w-16'}`}
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
-      style={{ minWidth: expanded ? '16rem' : '4rem' }}
+      style={{ minWidth: expanded ? '16rem' : '4rem', overflow: 'hidden' }}
     >
       <div
         className={`flex items-center border-b border-gray-200 transition-all duration-300 justify-center`}
@@ -69,7 +58,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
       </div>
 
       <nav className={`flex-1 transition-all duration-300 ${expanded ? 'p-4' : 'p-2'}`}>
-        <ul className="space-y-2 flex flex-col">
+  <ul className="space-y-2 flex flex-col">
           {/* Panel główny */}
           <li>
             <button
@@ -78,10 +67,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                 currentView === 'dashboard' && !employeesGroupSelected && !roomsGroupSelected
                   ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
                   : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              } ${expanded ? 'px-4' : 'px-2'} items-center`}
+              } px-4 items-center`}
             >
-              <BarChart3 className={`h-5 w-5 ${currentView === 'dashboard' && !employeesGroupSelected && !roomsGroupSelected ? 'text-blue-700' : 'text-gray-400'}`} />
-              {showLabels && <span className="font-medium ml-3">Panel główny</span>}
+              <BarChart3 className={`h-5 w-5 flex-shrink-0 ${currentView === 'dashboard' && !employeesGroupSelected && !roomsGroupSelected ? 'text-blue-700' : 'text-gray-400'}`} />
+              <span
+                className={`font-medium ml-3 sidebar-label transition-all duration-300 flex-shrink-0 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
+                style={{ display: 'inline-block' }}
+              >Panel główny</span>
             </button>
           </li>
 
@@ -101,18 +93,19 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                 employeesActive
                   ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
                   : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              } ${expanded ? 'px-4' : 'px-2'} items-center`}
+              } px-4 items-center`}
             >
-              <Users className={`h-5 w-5 ${employeesActive ? 'text-blue-700' : 'text-gray-400'}`} />
-              {showLabels && <span className="font-medium flex-1 ml-3">Pracownicy Fundacji</span>}
+              <Users className={`h-5 w-5 flex-shrink-0 ${employeesActive ? 'text-blue-700' : 'text-gray-400'}`} />
+              <span
+                className={`font-medium flex-1 ml-3 sidebar-label transition-all duration-300 flex-shrink-0 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
+                style={{ display: 'inline-block' }}
+              >Pracownicy Fundacji</span>
             </button>
-              {showLabels && (
+                {expanded && (
               <div
-                className={`mt-1 overflow-hidden transition-all duration-300 ease-in-out ${
-                  employeesOpen ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0'
-                }`}
+                className={`mt-1 overflow-hidden transition-all duration-300 ease-in-out ${employeesOpen && expanded ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0'}`}
               >
-                <ul className={`space-y-1 pl-0 transition-all duration-300 ${employeesOpen ? 'opacity-100' : 'opacity-0'}`}>
+                <ul className={`space-y-1 pl-0 transition-all duration-300 ${employeesOpen && expanded ? 'opacity-100' : 'opacity-0'}`}>
                   {employeeChildren.map(child => {
                     const active = currentView === child.id;
                     const disabled = child.adminOnly && userRole !== 'admin';
@@ -159,18 +152,19 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                 roomsActive
                   ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
                   : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              } ${expanded ? 'px-4' : 'px-2'} items-center`}
+              } px-4 items-center`}
             >
-              <MapPin className={`h-5 w-5 ${roomsActive ? 'text-blue-700' : 'text-gray-400'}`} />
-              {showLabels && <span className="font-medium flex-1 ml-3">Rezerwacje sal</span>}
+              <MapPin className={`h-5 w-5 flex-shrink-0 ${roomsActive ? 'text-blue-700' : 'text-gray-400'}`} />
+              <span
+                className={`font-medium flex-1 ml-3 sidebar-label transition-all duration-300 flex-shrink-0 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
+                style={{ display: 'inline-block' }}
+              >Rezerwacje sal</span>
             </button>
             {expanded && (
               <div
-                className={`mt-1 overflow-hidden transition-all duration-300 ease-in-out ${
-                  roomsOpen ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0'
-                }`}
+                className={`mt-1 overflow-hidden transition-all duration-300 ease-in-out ${roomsOpen && expanded ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0'}`}
               >
-                <ul className={`space-y-1 pl-0 transition-all duration-300 ${roomsOpen ? 'opacity-100' : 'opacity-0'}`}>
+                <ul className={`space-y-1 pl-0 transition-all duration-300 ${roomsOpen && expanded ? 'opacity-100' : 'opacity-0'}`}>
                   {roomChildren.map(child => {
                     const active = currentView === child.id;
                     const disabled = child.adminOnly && userRole !== 'admin';
@@ -209,10 +203,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                 currentView === 'patients' && !roomsGroupSelected && !employeesGroupSelected
                   ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
                   : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              } ${expanded ? 'px-4' : 'px-2'} items-center`}
+              } px-4 items-center`}
             >
-              <User className={`h-5 w-5 ${currentView === 'patients' && !roomsGroupSelected && !employeesGroupSelected ? 'text-blue-700' : 'text-gray-400'}`} />
-              {showLabels && <span className="font-medium ml-3">Podopieczni</span>}
+              <User className={`h-5 w-5 flex-shrink-0 ${currentView === 'patients' && !roomsGroupSelected && !employeesGroupSelected ? 'text-blue-700' : 'text-gray-400'}`} />
+              <span
+                className={`font-medium ml-3 sidebar-label transition-all duration-300 flex-shrink-0 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
+                style={{ display: 'inline-block' }}
+              >Podopieczni</span>
             </button>
           </li>
 
@@ -227,10 +224,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                     isActive
                       ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
                       : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                  } ${expanded ? 'px-4' : 'px-2'} items-center`}
+                  } px-4 items-center`}
                 >
-                  <Icon className={`h-5 w-5 ${isActive ? 'text-blue-700' : 'text-gray-400'}`} />
-                  {showLabels && <span className="font-medium ml-3">{item.label}</span>}
+                  <Icon className={`h-5 w-5 flex-shrink-0 ${isActive ? 'text-blue-700' : 'text-gray-400'}`} />
+                  <span
+                    className={`font-medium ml-3 sidebar-label transition-all duration-300 flex-shrink-0 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
+                    style={{ display: 'inline-block' }}
+                  >{item.label}</span>
                 </button>
               </li>
             );
@@ -242,15 +242,24 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
         <div className="text-xs text-gray-500">
           <div className="flex items-center space-x-2 mb-2">
             <div className="w-3 h-3 bg-green-500 rounded"></div>
-            {showLabels && <span>Obecny</span>}
+            <span
+              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
+              style={{ display: 'inline-block' }}
+            >Obecny</span>
           </div>
           <div className="flex items-center space-x-2 mb-2">
             <div className="w-3 h-3 bg-yellow-500 rounded"></div>
-            {showLabels && <span>W toku</span>}
+            <span
+              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
+              style={{ display: 'inline-block' }}
+            >W toku</span>
           </div>
           <div className="flex items-center space-x-2">
             <div className="w-3 h-3 bg-red-500 rounded"></div>
-            {showLabels && <span>Odwołany</span>}
+            <span
+              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
+              style={{ display: 'inline-block' }}
+            >Odwołany</span>
           </div>
         </div>
       </div>
