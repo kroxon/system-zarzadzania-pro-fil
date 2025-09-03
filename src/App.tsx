@@ -249,7 +249,7 @@ function App() {
       case 'quizes':
         return <QuizzesPage />;
       case 'tasks':
-        return <TasksPage />;
+        return <TasksPage userRole={currentUser!.role} />;
       default:
         return <Dashboard users={usersState} rooms={roomsState} meetings={meetings} />;
     }
