@@ -51,7 +51,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
         style={{ height: expanded ? '112px' : '112px' }} // 112px = 7rem, stała wysokość
       >
         <img
-          src="src/assets/logo/PRO-FIL-removebg-preview.png"
+          src="/assets/logo/PRO-FIL-removebg-preview.png"
           alt="profil logo"
           className={`transition-all duration-300 ${expanded ? 'w-20' : 'w-10'}`}
         />
