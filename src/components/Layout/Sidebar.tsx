@@ -243,22 +243,19 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
           <div className="flex items-center space-x-2 mb-2">
             <div className="w-3 h-3 bg-green-500 rounded"></div>
             <span
-              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
-              style={{ display: 'inline-block' }}
+              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100' : 'opacity-0'} w-24 whitespace-nowrap inline-block`}
             >Obecny</span>
           </div>
           <div className="flex items-center space-x-2 mb-2">
             <div className="w-3 h-3 bg-yellow-500 rounded"></div>
             <span
-              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
-              style={{ display: 'inline-block' }}
+              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100' : 'opacity-0'} w-24 whitespace-nowrap inline-block`}
             >W toku</span>
           </div>
           <div className="flex items-center space-x-2">
             <div className="w-3 h-3 bg-red-500 rounded"></div>
             <span
-              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100 max-w-xs' : 'opacity-0 max-w-0'} whitespace-nowrap`}
-              style={{ display: 'inline-block' }}
+              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100' : 'opacity-0'} w-24 whitespace-nowrap inline-block`}
             >Odwołany</span>
           </div>
         </div>
