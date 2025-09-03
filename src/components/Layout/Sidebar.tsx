@@ -41,8 +41,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
   return (
     <div className="w-64 bg-white shadow-lg border-r border-gray-200 flex flex-col">
       <div className="p-6 border-b border-gray-200">
-        <h1 className="text-xl font-bold text-gray-800">Grafik Pracowników</h1>
-        <p className="text-sm text-gray-500 mt-1">System zarządzania</p>
+        <img src="src/assets/logo/PRO-FIL-removebg-preview.png" alt="profil logo" className="w-20 h-auto mx-auto" />
       </div>
 
       <nav className="flex-1 p-4">
