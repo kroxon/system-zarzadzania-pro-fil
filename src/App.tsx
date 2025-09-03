@@ -28,7 +28,7 @@ import {
   savePatients
 } from './utils/storage';
 import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
-import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon, ListChecks, ClipboardList, Sparkle } from 'lucide-react';
+import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon, ListChecks, ClipboardList } from 'lucide-react';
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
