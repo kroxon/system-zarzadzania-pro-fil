@@ -42,7 +42,7 @@ const StatusBadge = ({ status }: { status: string }) => {
 };
 
 
-export default function TasksPage() {
+export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee' }) {
   const [taskList, setTaskList] = useState<Task[]>(() => loadTasks());
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [formData, setFormData] = useState<Task | null>(null);
@@ -59,6 +59,10 @@ export default function TasksPage() {
     setNewTask({ id: '', title: '', assignedTo: '', dueDate: '', status: 'Do zrobienia' });
     setShowCreateModal(true);
   };
+
+  const headerDescription = userRole === 'admin'
+    ? 'Zarządzaj zadaniami dla pracowników'
+    : 'Zarządzaj swoimi zadaniami';
 
   const handleCloseCreateModal = () => {
     setShowCreateModal(false);
@@ -125,7 +129,7 @@ export default function TasksPage() {
         <div className="flex items-center justify-between space-y-2">
           <div>
             <h2 className="text-3xl font-bold tracking-tight font-headline">Zadania</h2>
-            <p className="text-muted-foreground">Zarządzaj i monitoruj działania terapeutyczne.</p>
+            <p className="text-muted-foreground"> {headerDescription} </p>
           </div>
           <div className="flex items-center space-x-2">
             <button className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={handleOpenCreateModal}>
