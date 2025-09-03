@@ -11,7 +11,6 @@ import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
 import QuizzesPage from './components/Quizes/QuizList';
 import TasksPage from './components/Tasks/TasksPage';
-import PowerCardsPage from './components/PowerCards/PowerCards';
 import { User, Meeting, Room } from './types';
 import { 
   saveMeetings, 
@@ -125,7 +124,6 @@ function App() {
     'settings': { title: 'Ustawienia', icon: <SettingsIcon className="h-6 w-6" /> },
   'quizes': { title: 'Quizy', icon: <ListChecks className="h-6 w-6" /> },
   'tasks': { title: 'Zadania', icon: <ClipboardList className="h-6 w-6" /> },
-  'power-cards': { title: 'Karty Mocy', icon: <Sparkle className="h-6 w-6" /> }
   };
 
   if (!currentUser) {
@@ -248,8 +246,6 @@ function App() {
             </div>
           </div>
         );
-      case 'power-cards':
-        return <PowerCardsPage />;
       case 'quizes':
         return <QuizzesPage />;
       case 'tasks':
