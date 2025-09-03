@@ -83,7 +83,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   // load therapistAssignments (single source of truth)
   const therapistAssignments: Record<string,string[]> = React.useMemo(()=> {
     try { const raw = localStorage.getItem(ASSIGN_KEY); return raw? JSON.parse(raw): {}; } catch { return {}; }
-  }, [isOpen]);
+  }, []);
 
   // UNION pacjentów przypisanych do któregokolwiek z wybranych specjalistów (therapistAssignments: patientId -> [therapistIds])
   const assignedPatientIds = React.useMemo(()=>{
@@ -380,7 +380,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Status</label>
-                  <select value={formData.status} onChange={e=> setFormData({...formData, status: e.target.value as any})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                  <select value={formData.status} onChange={e=> setFormData({...formData, status: e.target.value as 'present' | 'in-progress' | 'cancelled'})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
                     <option value="present">Obecny</option>
                     <option value="in-progress">W toku</option>
                     <option value="cancelled">Odwołany</option>
