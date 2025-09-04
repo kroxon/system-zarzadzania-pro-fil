@@ -239,33 +239,27 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   return (
     <div className="space-y-6">
       {/* Wybór pracownika */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-        <div className="space-y-3">
-          <div>
-            <div className="flex flex-wrap gap-2">
-              {sortedEmployees.map(emp => {
-                const active = selectedEmployee === emp.id;
-                return (
-                  <button
-                    key={emp.id}
-                    type="button"
-                    onClick={() => setSelectedEmployee(emp.id)}
-                    className={`px-3 py-1.5 text-xs rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
-                      active
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    {emp.name}
-                  </button>
-                );
-              })}
-              {sortedEmployees.length === 0 && (
-                <span className="text-xs text-gray-400 italic">Brak pracowników</span>
-              )}
-            </div>
-          </div>
-        </div>
+      <div className="flex flex-wrap gap-2">
+        {sortedEmployees.map(emp => {
+          const active = selectedEmployee === emp.id;
+          return (
+            <button
+              key={emp.id}
+              type="button"
+              onClick={() => setSelectedEmployee(emp.id)}
+              className={`px-3 py-1.5 text-xs rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
+                active
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {emp.name}
+            </button>
+          );
+        })}
+        {sortedEmployees.length === 0 && (
+          <span className="text-xs text-gray-400 italic">Brak pracowników</span>
+        )}
       </div>
 
       {selectedEmployee ? (
