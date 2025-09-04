@@ -318,18 +318,18 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     const totalSlotsLocal = totalSlots; // alias
 
     return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full">
+      <div className="rounded-xl shadow-sm border border-gray-200 flex flex-col h-full bg-transparent">{/* transparent calendar body */}
         <div className="flex-1 overflow-hidden select-none">
           <div className="h-full flex flex-col">
             {/* Header */}
-            <div className="grid divide-x divide-gray-200 bg-emerald-50 sticky top-0 z-10" style={gridTemplate}>
-              <div className="px-1 py-1 bg-emerald-50 flex items-center justify-center">{/* centered header */}
+            <div className="grid divide-x divide-gray-200 bg-white sticky top-0 z-10" style={gridTemplate}>
+              <div className="px-1 py-0.5 bg-white flex items-center justify-center">{/* centered header - reduced height */}
                 <div className="text-[12px] font-semibold text-gray-600 leading-tight text-center">Godzina</div>
               </div>
               {weekDays.map((day, idx) => (
-                <div key={idx} className="p-2 bg-emerald-50 text-center">
-                  <div className="text-sm font-medium text-gray-900">{day.toLocaleDateString('pl-PL', { weekday: 'short' })}</div>
-                  <div className="text-xs text-gray-600 mt-0.5">{day.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })}</div>
+                <div key={idx} className="px-2 py-1 bg-white text-center">{/* reduced vertical padding */}
+                  <div className="text-sm font-medium text-gray-900 leading-snug">{day.toLocaleDateString('pl-PL', { weekday: 'short' })}</div>
+                  <div className="text-xs text-gray-600 mt-0.5 leading-none">{day.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })}</div>
                 </div>
               ))}
             </div>
@@ -339,12 +339,14 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
               <div className="relative px-1" style={{height: '100%'}}> {/* added small horizontal padding */}
                 <div className="absolute inset-0 flex flex-col">
                   {timeSlots.map((t, i) => (
-                    <div key={i} className="flex-1 flex items-center justify-center">
+                    <div
+                      key={i}
+                      className={`flex-1 flex items-center justify-center ${i>0 ? 'border-t border-gray-200' : ''}`}
+                    >
                       <span className="text-[12px] font-medium text-gray-700 select-none leading-none tracking-tight">{t}</span>
                     </div>
                   ))}
-                  {/* Linie siatki bez zmiany wysokości */}
-                  <div className="pointer-events-none absolute inset-0" style={{backgroundImage:`repeating-linear-gradient(to bottom,#f1f5f9 0,#f1f5f9 1px,transparent 1px,transparent calc(100%/${timeSlots.length}))`}} />
+                  {/* Usunięto overlay z powtarzającym się gradientem; pojedyncze granice slotów */}
                 </div>
               </div>
               {weekDays.map((day, idx) => {
@@ -384,8 +386,11 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                         const meeting = slotMeetings[0];
                         const isSelectedSlot = isEditDay && slotIdx >= editStart && slotIdx < editEnd;
                         return (
-                          <div key={slotIdx} className={`day-slot relative flex-1 px-1 ${isSelectedSlot ? 'bg-gray-50' : 'bg-white hover:bg-slate-50'}`}> {/* brak border-b aby nie kumulować wysokości */}
-                            <span className={`absolute top-0 left-0 px-1 pt-0.5 text-[11px] font-semibold select-none ${isSelectedSlot ? 'text-gray-700' : 'text-gray-600'}`}>{t}</span>
+                          <div
+                            key={slotIdx}
+                            className={`day-slot relative flex-1 px-1 ${slotIdx>0 ? 'border-t border-gray-200' : ''} ${isSelectedSlot ? 'bg-gray-50' : ''}`}
+                          > {/* slot borders zamiast globalnej siatki */}
+                            <span className={`absolute inset-0 flex items-center justify-start pl-1 text-[11px] font-semibold select-none pointer-events-none ${isSelectedSlot ? 'text-gray-700' : 'text-gray-600'}`}>{t}</span>
                             {meeting && (slotIdx % 2 === 0) && (
                               <div className="relative z-30 text-[10px] leading-tight p-1 rounded bg-blue-50 border border-blue-200 overflow-hidden">
                                 <div className="font-medium truncate">{meeting.patientName}</div>
@@ -395,8 +400,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                           </div>
                         );
                       })}
-                      {/* Linie siatki bez zmiany wysokości */}
-                      <div className="pointer-events-none absolute inset-0" style={{backgroundImage:`repeating-linear-gradient(to bottom,#f1f5f9 0,#f1f5f9 1px,transparent 1px,transparent calc(100%/${timeSlots.length}))`}} />
+                      {/* Usunięto gradient overlay */}
                     </div>
                     {/* Availability blocks */}
                     <div className="absolute inset-0 z-0">
@@ -481,29 +485,44 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
 
   return (
     <div className="flex-1 flex flex-col pb-6">
-      {/* Wybór pracownika */}
+      {/* Wybór pracownika + Save button on same row */}
       <div className="flex-shrink-0 pt-1 pb-2">
-        <div className="flex flex-wrap gap-2">
-          {sortedEmployees.map(emp => {
-            const active = selectedEmployee === emp.id;
-            return (
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-wrap gap-2 flex-1">
+            {sortedEmployees.map(emp => {
+              const active = selectedEmployee === emp.id;
+              return (
+                <button
+                  key={emp.id}
+                  type="button"
+                  onClick={() => setSelectedEmployee(emp.id)}
+                  className={`px-3 py-1.5 text-xs rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
+                    active
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {emp.name}
+                </button>
+              );
+            })}
+            {sortedEmployees.length === 0 && (
+              <span className="text-xs text-gray-400 italic">Brak pracowników</span>
+            )}
+          </div>
+          {/* Save button area moved here (right aligned) */}
+          <div className="w-[140px] flex justify-end pr-1">
+            {(!pendingDeleteRange && (tempRanges.length > 0 || deletedRangeIds.length > 0)) ? (
               <button
-                key={emp.id}
-                type="button"
-                onClick={() => setSelectedEmployee(emp.id)}
-                className={`px-3 py-1.5 text-xs rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
-                  active
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                {emp.name}
-              </button>
-            );
-          })}
-          {sortedEmployees.length === 0 && (
-            <span className="text-xs text-gray-400 italic">Brak pracowników</span>
-          )}
+                onClick={saveAvailabilities}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >Zapisz zmiany</button>
+            ) : (!pendingDeleteRange && showSavedTick) ? (
+              <span className="inline-flex items-center text-green-600 text-sm font-medium animate-fade-in">✔ Zapisano</span>
+            ) : (
+              <span className="inline-block invisible px-4 py-2 text-sm">placeholder</span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -516,60 +535,48 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
               onDateChange={guardedSetCurrentDate}
               onViewTypeChange={(v)=>{ if(v==='week'||v==='month') setViewType(v); }}
               availableViews={['week','month']}
-              rightContent={
-                <div className="w-[140px] flex justify-center">{/* Save area before view buttons */}
-                  { (!pendingDeleteRange && (tempRanges.length > 0 || deletedRangeIds.length > 0)) ? (
+              centerContent={(
+                <div className="flex items-center gap-6">{/* custom controls centered; view toggles stay far right (save removed) */}
+                  <div className="flex items-center gap-4">
+                    <span className="text-sm font-medium text-gray-700">Powiel dostępność na:</span>
+                    <div className="relative copy-dropdown">
+                      <button
+                        onClick={() => setShowCopyDropdown(!showCopyDropdown)}
+                        className="flex items-center justify-between gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors w-44"
+                      >
+                        <span>{copyPeriod === 'week' ? 'kolejny tydzień' : 'kolejne 4 tygodnie'}</span>
+                        <ChevronDown className="h-4 w-4 text-gray-500" />
+                      </button>
+                      {showCopyDropdown && (
+                        <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+                          <button
+                            onClick={() => { setCopyPeriod('week'); setShowCopyDropdown(false); }}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
+                          >
+                            {copyPeriod === 'week' && <Check className="h-4 w-4 text-blue-600" />}
+                            <span className={copyPeriod === 'week' ? 'text-blue-600 font-medium' : 'text-gray-700'}>kolejny tydzień</span>
+                          </button>
+                          <button
+                            onClick={() => { setCopyPeriod('4weeks'); setShowCopyDropdown(false); }}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
+                          >
+                            {copyPeriod === '4weeks' && <Check className="h-4 w-4 text-blue-600" />}
+                            <span className={copyPeriod === '4weeks' ? 'text-blue-600 font-medium' : 'text-gray-700'}>kolejne 4 tygodnie</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <button
-                      onClick={saveAvailabilities}
-                      className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                    >Zapisz zmiany</button>
-                  ) : (!pendingDeleteRange && showSavedTick) ? (
-                    <span className="inline-flex items-center text-green-600 text-sm font-medium animate-fade-in">✔ Zapisano</span>
-                  ) : (
-                    <span className="inline-block invisible px-4 py-2 text-sm">placeholder</span>
-                  )}
-                </div>
-              }
-              centerContent={
-                <div className="flex items-center gap-4">
-                  <span className="text-sm font-medium text-gray-700">Powiel dostępność na:</span>
-                  <div className="relative copy-dropdown">
-                    <button
-                      onClick={() => setShowCopyDropdown(!showCopyDropdown)}
-                      className="flex items-center justify-between gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors w-44"
+                      onClick={handleCopyAvailability}
+                      disabled={!selectedEmployee}
+                      className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
                     >
-                      <span>{copyPeriod === 'week' ? 'kolejny tydzień' : 'kolejne 4 tygodnie'}</span>
-                      <ChevronDown className="h-4 w-4 text-gray-500" />
+                      <Copy className="h-4 w-4" />
+                      Zastosuj
                     </button>
-                    {showCopyDropdown && (
-                      <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
-                        <button
-                          onClick={() => { setCopyPeriod('week'); setShowCopyDropdown(false); }}
-                          className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
-                        >
-                          {copyPeriod === 'week' && <Check className="h-4 w-4 text-blue-600" />}
-                          <span className={copyPeriod === 'week' ? 'text-blue-600 font-medium' : 'text-gray-700'}>kolejny tydzień</span>
-                        </button>
-                        <button
-                          onClick={() => { setCopyPeriod('4weeks'); setShowCopyDropdown(false); }}
-                          className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
-                        >
-                          {copyPeriod === '4weeks' && <Check className="h-4 w-4 text-blue-600" />}
-                          <span className={copyPeriod === '4weeks' ? 'text-blue-600 font-medium' : 'text-gray-700'}>kolejne 4 tygodnie</span>
-                        </button>
-                      </div>
-                    )}
                   </div>
-                  <button
-                    onClick={handleCopyAvailability}
-                    disabled={!selectedEmployee}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <Copy className="h-4 w-4" />
-                    Zastosuj
-                  </button>
                 </div>
-              }
+              )}
             />
           </div>
           <div className="flex-1 min-h-0">
