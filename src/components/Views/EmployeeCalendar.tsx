@@ -4,6 +4,7 @@ import TimeSlot from '../Calendar/TimeSlot';
 import MeetingForm from '../Forms/MeetingForm';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { User, Room, Meeting } from '../../types';
+import { ChevronDown, Copy, Check } from 'lucide-react';
 
 interface EmployeeCalendarProps {
   users: User[];
@@ -29,13 +30,15 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   endHour
 }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewType, setViewType] = useState<'day' | 'week' | 'month'>('week');
+  const [viewType, setViewType] = useState<'week' | 'month'>('week');
   const [selectedEmployee, setSelectedEmployee] = useState(
     currentUser.role === 'employee' ? currentUser.id : ''
   );
   const [showMeetingForm, setShowMeetingForm] = useState(false);
   const [selectedTime, setSelectedTime] = useState('');
   const [editingMeeting, setEditingMeeting] = useState<Meeting | undefined>();
+  const [showCopyDropdown, setShowCopyDropdown] = useState(false);
+  const [copyPeriod, setCopyPeriod] = useState<'week' | '4weeks'>('week');
 
   const timeSlots = generateTimeSlots(startHour, endHour);
   const employees = users.filter(user => user.role === 'employee');
@@ -98,6 +101,45 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
       setSelectedEmployee(sortedEmployees[0].id);
     }
   }, [currentUser.role, selectedEmployee, sortedEmployees]);
+
+  // Zamknij dropdown przy kliknięciu poza nim
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Element;
+      // Sprawdź czy kliknięcie nie było w dropdown'ie
+      if (showCopyDropdown && !target.closest('.copy-dropdown')) {
+        setShowCopyDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showCopyDropdown]);
+
+  const handleViewTypeChange = (viewType: 'day' | 'week' | 'month') => {
+    if (viewType === 'week' || viewType === 'month') {
+      setViewType(viewType);
+    }
+  };
+
+  const handleCopyAvailability = () => {
+    if (!selectedEmployee) return;
+    
+    const periodText = copyPeriod === 'week' ? 'kolejny tydzień' : 'kolejne 4 tygodnie';
+    console.log(`Kopiowanie dostępności pracownika ${selectedEmployee} na ${periodText}`);
+    console.log('Aktualny copyPeriod:', copyPeriod);
+    
+    // TODO: Implementacja logiki kopiowania dostępności
+    
+    setShowCopyDropdown(false);
+  };
+
+  // Debug: sprawdź zmiany copyPeriod
+  React.useEffect(() => {
+    console.log('copyPeriod zmienił się na:', copyPeriod);
+  }, [copyPeriod]);
 
   const renderWeekView = () => {
     const weekDays = getWeekDays(currentDate);
@@ -194,43 +236,6 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     );
   };
 
-  const renderDayView = () => {
-    const dateStr = formatDateForComparison(currentDate);
-    const employeeMeetings = getEmployeeMeetings();
-    const dayMeetings = employeeMeetings.filter(meeting => meeting.date === dateStr);
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col">
-        <div className="p-6 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">
-            {currentDate.toLocaleDateString('pl-PL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </h3>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-6">
-          {timeSlots.map((time, index) => {
-            const meetingAtTime = dayMeetings.find(meeting => {
-              const startTime = parseInt(meeting.startTime.replace(':', ''));
-              const endTime = parseInt(meeting.endTime.replace(':', ''));
-              const currentTime = parseInt(time.replace(':', ''));
-              return currentTime >= startTime && currentTime < endTime;
-            });
-            const isAvailable = !meetingAtTime;
-            const canInteract = !selectedEmployee || currentUser.role === 'admin' || selectedEmployee === currentUser.id;
-            return (
-              <TimeSlot
-                key={index}
-                time={time}
-                isAvailable={isAvailable}
-                meeting={meetingAtTime}
-                onClick={() => canInteract && handleTimeSlotClick(dateStr, time, meetingAtTime)}
-                compact
-              />
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="space-y-6">
       {/* Wybór pracownika */}
@@ -269,19 +274,66 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
             currentDate={currentDate}
             viewType={viewType}
             onDateChange={setCurrentDate}
-            onViewTypeChange={setViewType}
+            onViewTypeChange={handleViewTypeChange}
+            availableViews={['week', 'month']}
             centerContent={
-              <>
-                <div className="flex items-center gap-8 text-xs text-gray-600">
-                  <div className="flex items-center gap-2"><span className="w-4 h-4 rounded bg-gray-50 border border-gray-300" /> Dostępny</div>
-                  <div className="flex items-center gap-2"><span className="w-4 h-4 rounded bg-red-50 border border-red-300" /> Niedostępny</div>
+              <div className="flex items-center gap-4">
+                <span className="text-sm font-medium text-gray-700">Powiel dostępność na:</span>
+                
+                <div className="relative copy-dropdown">
+                  <button
+                    onClick={() => setShowCopyDropdown(!showCopyDropdown)}
+                    className="flex items-center justify-between gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors w-44"
+                  >
+                    <span>{copyPeriod === 'week' ? 'kolejny tydzień' : 'kolejne 4 tygodnie'}</span>
+                    <ChevronDown className="h-4 w-4 text-gray-500" />
+                  </button>
+
+                  {showCopyDropdown && (
+                    <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+                      <button
+                        onClick={() => {
+                          console.log('Wybrano: week');
+                          setCopyPeriod('week');
+                          setShowCopyDropdown(false);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
+                      >
+                        {copyPeriod === 'week' && <Check className="h-4 w-4 text-blue-600" />}
+                        <span className={copyPeriod === 'week' ? 'text-blue-600 font-medium' : 'text-gray-700'}>
+                          kolejny tydzień
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          console.log('Wybrano: 4weeks');
+                          setCopyPeriod('4weeks');
+                          setShowCopyDropdown(false);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
+                      >
+                        {copyPeriod === '4weeks' && <Check className="h-4 w-4 text-blue-600" />}
+                        <span className={copyPeriod === '4weeks' ? 'text-blue-600 font-medium' : 'text-gray-700'}>
+                          kolejne 4 tygodnie
+                        </span>
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </>
+
+                <button
+                  onClick={handleCopyAvailability}
+                  disabled={!selectedEmployee}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Copy className="h-4 w-4" />
+                  Zastosuj
+                </button>
+              </div>
             }
           />
 
           {viewType === 'week' && renderWeekView()}
-          {viewType === 'day' && renderDayView()}
           {viewType === 'month' && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <p className="text-gray-500 text-center py-8">Widok miesięczny będzie dostępny w przyszłych wersjach</p>
