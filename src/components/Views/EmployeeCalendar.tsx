@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import CalendarHeader from '../Calendar/CalendarHeader';
-import TimeSlot from '../Calendar/TimeSlot';
 import MeetingForm from '../Forms/MeetingForm';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { User, Room, Meeting } from '../../types';
-import { ChevronDown, Copy, Check } from 'lucide-react';
+import { ChevronDown, Copy, Check, Trash2 } from 'lucide-react';
 
 interface EmployeeCalendarProps {
   users: User[];
@@ -35,10 +34,19 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     currentUser.role === 'employee' ? currentUser.id : ''
   );
   const [showMeetingForm, setShowMeetingForm] = useState(false);
-  const [selectedTime, setSelectedTime] = useState('');
   const [editingMeeting, setEditingMeeting] = useState<Meeting | undefined>();
   const [showCopyDropdown, setShowCopyDropdown] = useState(false);
   const [copyPeriod, setCopyPeriod] = useState<'week' | '4weeks'>('week');
+  // const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null); // replaced by pendingDeleteRange
+  const [deletedRangeIds, setDeletedRangeIds] = useState<string[]>([]); // NEW: pending deletions
+  
+  // ==== AVAILABILITY STATE (Stage 1) ====
+  interface AvailabilityRange { id: string; specialistId: string; start: string; end: string; }
+  const [pendingDeleteRange, setPendingDeleteRange] = useState<AvailabilityRange | null>(null); // NEW: holds range awaiting confirmation
+  const AVAIL_KEY = 'schedule_availabilities';
+  const [availabilities, setAvailabilities] = useState<AvailabilityRange[]>([]); // persisted for employee & week
+  const [tempRanges, setTempRanges] = useState<AvailabilityRange[]>([]); // unsaved new ranges
+  const [showSavedTick, setShowSavedTick] = useState(false);
 
   const timeSlots = generateTimeSlots(startHour, endHour);
   const employees = users.filter(user => user.role === 'employee');
@@ -62,23 +70,6 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
       week.push(day);
     }
     return week;
-  };
-
-  const handleTimeSlotClick = (date: string, time: string, meeting?: Meeting) => {
-    // Sprawdź uprawnienia
-    if (currentUser.role === 'employee' && meeting && meeting.specialistId !== currentUser.id) {
-      return; // Nie pozwalaj edytować cudzych spotkań
-    }
-
-    if (meeting) {
-      setEditingMeeting(meeting);
-      setSelectedTime(meeting.startTime);
-    } else {
-      setEditingMeeting(undefined);
-      setSelectedTime(time);
-    }
-    setCurrentDate(new Date(date));
-    setShowMeetingForm(true);
   };
 
   const handleMeetingFormSubmit = (meetingData: Omit<Meeting, 'id'>) => {
@@ -118,12 +109,6 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     };
   }, [showCopyDropdown]);
 
-  const handleViewTypeChange = (viewType: 'day' | 'week' | 'month') => {
-    if (viewType === 'week' || viewType === 'month') {
-      setViewType(viewType);
-    }
-  };
-
   const handleCopyAvailability = () => {
     if (!selectedEmployee) return;
     
@@ -141,91 +126,349 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     console.log('copyPeriod zmienił się na:', copyPeriod);
   }, [copyPeriod]);
 
+  // Helper: start of week (Mon) and end (Sun) for currentDate (even if weekends hidden)
+  const getWeekBounds = (date: Date) => {
+    const start = new Date(date);
+    start.setDate(date.getDate() - date.getDay() + 1); // Monday
+    start.setHours(0,0,0,0);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    end.setHours(23,59,59,999);
+    return { start, end };
+  };
+
+  const weekBounds = getWeekBounds(currentDate);
+
+  // Load persisted availabilities for selected employee + current week
+  React.useEffect(() => {
+    if(!selectedEmployee) return;
+    try {
+      const raw = localStorage.getItem(AVAIL_KEY);
+      const all: AvailabilityRange[] = raw ? JSON.parse(raw) : [];
+      const filtered = all.filter(a => a.specialistId === selectedEmployee && new Date(a.start) >= weekBounds.start && new Date(a.start) <= weekBounds.end);
+      setAvailabilities(filtered);
+      setTempRanges([]);
+    } catch(e){
+      console.warn('Load availabilities failed', e);
+    }
+  }, [selectedEmployee, weekBounds.start.getTime()]);
+
+  // Prevent week navigation if unsaved
+  const guardedSetCurrentDate = (d: Date) => {
+    const newBounds = getWeekBounds(d);
+    const sameWeek = weekBounds.start.getTime() === newBounds.start.getTime();
+    if(!sameWeek && tempRanges.length){
+      alert('Najpierw zapisz zmiany dostępności dla tego tygodnia.');
+      return;
+    }
+    setCurrentDate(d);
+  };
+
+  const dayKey = (iso: string) => iso.slice(0,10);
+
+  // Proste łączenie: scala gdy nachodzą lub stykają się (rStart <= lastEnd)
+  const mergeRangesAdjacency = (ranges: AvailabilityRange[]) => {
+    if(!ranges.length) return [] as AvailabilityRange[];
+    const sorted = [...ranges].sort((a,b)=> new Date(a.start).getTime() - new Date(b.start).getTime());
+    const out: AvailabilityRange[] = [];
+    for(const r of sorted){
+      if(!out.length){ out.push({...r}); continue; }
+      const last = out[out.length-1];
+      const rStart = new Date(r.start).getTime();
+      const lastEnd = new Date(last.end).getTime();
+      if(rStart <= lastEnd){ // overlap lub styk
+        const rEnd = new Date(r.end).getTime();
+        if(rEnd > lastEnd) last.end = r.end;
+      } else {
+        out.push({...r});
+      }
+    }
+    return out;
+  };
+
+  // Usunięto: złożony mechanizm opóźnionego łączenia + pulse
+  const saveAvailabilities = () => {
+    if(!selectedEmployee) return;
+    const raw = localStorage.getItem(AVAIL_KEY);
+    const all: AvailabilityRange[] = raw ? JSON.parse(raw) : [];
+    const merged = mergeRangesAdjacency([...availabilities, ...tempRanges].filter(r=> r.specialistId === selectedEmployee));
+    const keep = all.filter(a => a.specialistId !== selectedEmployee || new Date(a.start) < weekBounds.start || new Date(a.start) > weekBounds.end);
+    const nextAll = [...keep, ...merged];
+    localStorage.setItem(AVAIL_KEY, JSON.stringify(nextAll));
+    setAvailabilities(merged);
+    setTempRanges([]);
+    setDeletedRangeIds([]); // clear pending deletions
+    setShowSavedTick(true);
+    setTimeout(()=> setShowSavedTick(false), 1200);
+  };
+
+  const handleConfirmDelete = () => {
+    if(pendingDeleteRange){
+      const id = pendingDeleteRange.id;
+      setAvailabilities(a => a.filter(r => r.id !== id));
+      setTempRanges(t => t.filter(r => r.id !== id));
+      setDeletedRangeIds(ids => ids.includes(id) ? ids : [...ids, id]);
+      setPendingDeleteRange(null);
+    }
+  };
+
+  // === Floating availability block editing state ===
+  interface ActiveEditState { id: string; day: string; type: 'create' | 'move' | 'resize'; originalStartIndex: number; originalEndIndex: number; startIndex: number; endIndex: number; originY: number; slotHeight: number; isTemp: boolean; daySnapshot: AvailabilityRange[]; }
+  const [activeEdit, setActiveEdit] = useState<ActiveEditState | null>(null);
+  const dayColRefs = React.useRef<{ [day: string]: HTMLDivElement | null }>({});
+  const totalSlots = (endHour - startHour) * 2; // 30-min slots
+
+  const timeFromIndex = (idx: number) => timeSlots[idx];
+  const endTimeFromEndIndex = (endIdx: number) => {
+    // endIdx is exclusive; we take previous slot and add 30m
+    const base = timeSlots[endIdx - 1];
+    const [h, m] = base.split(':').map(Number);
+    const date = new Date();
+    date.setHours(h, m + 30, 0, 0);
+    return date.toTimeString().substring(0,5);
+  };
+
+  const toISO = (day: string, time: string) => new Date(`${day}T${time}:00`).toISOString();
+
+  // Global mouse move / up for editing blocks
+  React.useEffect(() => {
+    if(!activeEdit) return;
+    const handleMove = (e: MouseEvent) => {
+      setActiveEdit(prev => {
+        if(!prev) return prev;
+        const deltaY = e.clientY - prev.originY;
+        const slotH = prev.slotHeight;
+        if(!slotH) return prev;
+        const deltaSlots = Math.round(deltaY / slotH);
+        if(prev.type === 'move') {
+          const duration = prev.originalEndIndex - prev.originalStartIndex;
+          let newStart = prev.originalStartIndex + deltaSlots;
+          newStart = Math.max(0, Math.min(newStart, totalSlots - duration));
+          return { ...prev, startIndex: newStart, endIndex: newStart + duration };
+        } else if(prev.type === 'resize') {
+          let newEnd = prev.originalEndIndex + deltaSlots;
+            newEnd = Math.max(prev.originalStartIndex + 1, Math.min(newEnd, totalSlots));
+            return { ...prev, endIndex: newEnd };
+        } else if(prev.type === 'create') {
+          let newEnd = prev.originalEndIndex + deltaSlots;
+          if(newEnd < prev.originalStartIndex + 1) newEnd = prev.originalStartIndex + 1;
+          newEnd = Math.max(prev.originalStartIndex + 1, Math.min(newEnd, totalSlots));
+          return { ...prev, endIndex: newEnd };
+        }
+        return prev;
+      });
+    };
+    const handleUp = () => {
+      if(!activeEdit) return;
+      const prev = activeEdit;
+      const day = prev.day;
+      const startTime = timeFromIndex(prev.startIndex);
+      const endTime = endTimeFromEndIndex(prev.endIndex);
+      const startISO = toISO(day, startTime);
+      const endISO = toISO(day, endTime);
+      const updated: AvailabilityRange = { id: prev.id, specialistId: selectedEmployee || '', start: startISO, end: endISO };
+      const snapshot = prev.daySnapshot.filter(r => r.id !== updated.id);
+      const mergedDay = mergeRangesAdjacency([...snapshot, updated]);
+      setAvailabilities(a => a.filter(r => dayKey(r.start) !== day || r.specialistId !== selectedEmployee));
+      setTempRanges(t => {
+        const others = t.filter(r => dayKey(r.start) !== day || r.specialistId !== selectedEmployee);
+        return [...others, ...mergedDay];
+      });
+      setActiveEdit(null);
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp, { once: true });
+    return () => { window.removeEventListener('mousemove', handleMove); };
+  }, [activeEdit, selectedEmployee, totalSlots]);
+
+  // Helper to compute slot indices for a range
+  const rangeToIndices = (range: AvailabilityRange) => {
+    const startD = new Date(range.start);
+    const endD = new Date(range.end);
+    const startMinutes = startD.getHours()*60 + startD.getMinutes();
+    const endMinutes = endD.getHours()*60 + endD.getMinutes();
+    const rawStart = (startMinutes - startHour*60)/30;
+    const rawEnd = (endMinutes - startHour*60)/30;
+    const startIndex = Math.max(0, Math.min(totalSlots-1, Math.floor(rawStart))); // floor stabilizuje początek
+    const endIndex = Math.max(startIndex+1, Math.min(totalSlots, Math.ceil(rawEnd))); // ceil zapewnia pełne pokrycie
+    return { startIndex, endIndex };
+  };
+
+  // REPLACE previous renderWeekView implementation with floating blocks
   const renderWeekView = () => {
     const weekDays = getWeekDays(currentDate);
     const employeeMeetings = getEmployeeMeetings();
-    const gridTemplate = { gridTemplateColumns: `120px repeat(${weekDays.length}, 1fr)` };
-    const hourStarts = timeSlots.filter(t => t.endsWith(':00'));
+    // wysokość dostępna dla siatki (zachowujemy wcześniejszą kalkulację jeśli była – fallback do 100%)
+    const calendarHeight = 'calc(100vh - 292px)';
+    const hourColWidth = 56; // was 120px, reduced
+    const gridTemplate = { gridTemplateColumns: `${hourColWidth}px repeat(${weekDays.length}, 1fr)` };
+
+    // Build map of availability per day (excluding active editing one)
+    const activeId = activeEdit?.id;
+    const allRanges = [...availabilities, ...tempRanges].filter(r => r.specialistId === selectedEmployee);
+
+    const byDay: Record<string, AvailabilityRange[]> = {};
+    allRanges.forEach(r => {
+      if(r.id === activeId) return; // do not render while editing (we render ghost separately)
+      const dayStr = new Date(r.start).toISOString().split('T')[0];
+      if(!byDay[dayStr]) byDay[dayStr] = [];
+      byDay[dayStr].push(r);
+    });
+
+    const totalSlotsLocal = totalSlots; // alias
+
     return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col">
-        <div className="flex-1 max-h-[38rem] overflow-y-auto styled-scrollbar" style={{ scrollbarGutter: 'stable' }}>
-          <div className="min-w-full inline-block">
-            <div className="grid divide-x divide-gray-200 bg-gray-50 sticky top-0 z-10" style={gridTemplate}>
-              <div className="p-4 bg-gray-50">
-                <div className="text-sm font-medium text-gray-600">Godzina</div>
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full">
+        <div className="flex-1 overflow-hidden select-none">
+          <div className="h-full flex flex-col">
+            {/* Header */}
+            <div className="grid divide-x divide-gray-200 bg-emerald-50 sticky top-0 z-10" style={gridTemplate}>
+              <div className="px-1 py-1 bg-emerald-50 flex items-center justify-center">{/* centered header */}
+                <div className="text-[12px] font-semibold text-gray-600 leading-tight text-center">Godzina</div>
               </div>
-              {weekDays.map((day, index) => (
-                <div key={index} className="p-4 bg-gray-50 text-center">
+              {weekDays.map((day, idx) => (
+                <div key={idx} className="p-2 bg-emerald-50 text-center">
                   <div className="text-sm font-medium text-gray-900">{day.toLocaleDateString('pl-PL', { weekday: 'short' })}</div>
-                  <div className="text-sm text-gray-600 mt-1">{day.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })}</div>
+                  <div className="text-xs text-gray-600 mt-0.5">{day.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })}</div>
                 </div>
               ))}
             </div>
-            <div className="divide-y divide-gray-200">
-              {hourStarts.map(hour => {
-                const [hh] = hour.split(':');
-                const firstSlot = hour;        // HH:00
-                const secondSlot = `${hh}:30`; // HH:30
+            {/* Body */}
+            <div className="grid flex-1 divide-x divide-gray-200" style={{...gridTemplate, height: calendarHeight}}>
+              {/* Hours column */}
+              <div className="relative px-1" style={{height: '100%'}}> {/* added small horizontal padding */}
+                <div className="absolute inset-0 flex flex-col">
+                  {timeSlots.map((t, i) => (
+                    <div key={i} className="flex-1 flex items-center justify-center">
+                      <span className="text-[12px] font-medium text-gray-700 select-none leading-none tracking-tight">{t}</span>
+                    </div>
+                  ))}
+                  {/* Linie siatki bez zmiany wysokości */}
+                  <div className="pointer-events-none absolute inset-0" style={{backgroundImage:`repeating-linear-gradient(to bottom,#f1f5f9 0,#f1f5f9 1px,transparent 1px,transparent calc(100%/${timeSlots.length}))`}} />
+                </div>
+              </div>
+              {weekDays.map((day, idx) => {
+                const dayStr = formatDateForComparison(day);
+                const dayMeetings = employeeMeetings.filter(m => m.date === dayStr);
+                const dayRanges = byDay[dayStr] || [];
+                const isEditDay = activeEdit?.day === dayStr;
+                const editStart = activeEdit?.startIndex ?? -1;
+                const editEnd = activeEdit?.endIndex ?? -1;
+
                 return (
                   <div
-                    key={hour}
-                    className="grid divide-x divide-gray-200"
-                    style={{ ...gridTemplate, gridTemplateRows: 'repeat(2, minmax(0,1fr))' }}
+                    key={idx}
+                    ref={el => { dayColRefs.current[dayStr] = el; }}
+                    className="relative overflow-hidden"
+                    style={{height: '100%'}}
+                    onMouseDown={(e)=>{
+                      if(!(e.target as HTMLElement).closest('.avail-block')){
+                        const colEl = e.currentTarget as HTMLElement;
+                        const rect = colEl.getBoundingClientRect();
+                        const slotH = rect.height / totalSlotsLocal;
+                        const y = e.clientY - rect.top;
+                        const startIndex = Math.max(0, Math.min(totalSlotsLocal-1, Math.floor(y / slotH)));
+                        const currentDayRanges = [...availabilities, ...tempRanges].filter(r => r.specialistId === selectedEmployee && dayKey(r.start) === dayStr);
+                        setActiveEdit({ id: 'new-'+Date.now(), day: dayStr, type: 'create', originalStartIndex: startIndex, originalEndIndex: startIndex + 1, startIndex, endIndex: startIndex + 1, originY: e.clientY, slotHeight: slotH, isTemp: true, daySnapshot: currentDayRanges });
+                      }
+                    }}
                   >
-                    {/* scalona godzina */}
-                    <div className="row-span-2 p-3 bg-gray-50 flex items-start text-sm font-medium text-gray-600 border-r border-gray-200">
-                      {hour}
+                    <div className="absolute inset-0 flex flex-col">
+                      {timeSlots.map((t, slotIdx) => {
+                        const slotMeetings = dayMeetings.filter(meeting => {
+                          const startTime = parseInt(meeting.startTime.replace(':',''));
+                          const endTime = parseInt(meeting.endTime.replace(':',''));
+                          const current = parseInt(t.replace(':',''));
+                          return current >= startTime && current < endTime;
+                        });
+                        const meeting = slotMeetings[0];
+                        const isSelectedSlot = isEditDay && slotIdx >= editStart && slotIdx < editEnd;
+                        return (
+                          <div key={slotIdx} className={`day-slot relative flex-1 px-1 ${isSelectedSlot ? 'bg-gray-50' : 'bg-white hover:bg-slate-50'}`}> {/* brak border-b aby nie kumulować wysokości */}
+                            <span className={`absolute top-0 left-0 px-1 pt-0.5 text-[11px] font-semibold select-none ${isSelectedSlot ? 'text-gray-700' : 'text-gray-600'}`}>{t}</span>
+                            {meeting && (slotIdx % 2 === 0) && (
+                              <div className="relative z-30 text-[10px] leading-tight p-1 rounded bg-blue-50 border border-blue-200 overflow-hidden">
+                                <div className="font-medium truncate">{meeting.patientName}</div>
+                                <div className="text-[10px] opacity-70">{meeting.startTime}-{meeting.endTime}</div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {/* Linie siatki bez zmiany wysokości */}
+                      <div className="pointer-events-none absolute inset-0" style={{backgroundImage:`repeating-linear-gradient(to bottom,#f1f5f9 0,#f1f5f9 1px,transparent 1px,transparent calc(100%/${timeSlots.length}))`}} />
                     </div>
-                    {/* pierwsze 30 min */}
-                    {weekDays.map((day, dayIndex) => {
-                      const slotTime = firstSlot;
-                      const dateStr = formatDateForComparison(day);
-                      const dayMeetings = employeeMeetings.filter(m => m.date === dateStr);
-                      const meetingAtTime = dayMeetings.find(meeting => {
-                        const startTime = parseInt(meeting.startTime.replace(':', ''));
-                        const endTime = parseInt(meeting.endTime.replace(':', ''));
-                        const currentTime = parseInt(slotTime.replace(':', ''));
-                        return currentTime >= startTime && currentTime < endTime;
-                      });
-                      const isAvailable = !meetingAtTime;
-                      const canInteract = !selectedEmployee || currentUser.role === 'admin' || selectedEmployee === currentUser.id;
-                      return (
-                        <TimeSlot
-                          key={`${dayIndex}-${slotTime}-a`}
-                          time={slotTime}
-                          isAvailable={isAvailable}
-                          meeting={meetingAtTime}
-                          onClick={() => canInteract && handleTimeSlotClick(dateStr, slotTime, meetingAtTime)}
-                          className={`min-h-[32px] border-b border-gray-100 ${!canInteract ? 'cursor-not-allowed opacity-50' : ''}`}
-                          compact
-                        />
-                      );
-                    })}
-                    {/* drugie 30 min */}
-                    {weekDays.map((day, dayIndex) => {
-                      const slotTime = secondSlot;
-                      const dateStr = formatDateForComparison(day);
-                      const dayMeetings = employeeMeetings.filter(m => m.date === dateStr);
-                      const meetingAtTime = dayMeetings.find(meeting => {
-                        const startTime = parseInt(meeting.startTime.replace(':', ''));
-                        const endTime = parseInt(meeting.endTime.replace(':', ''));
-                        const currentTime = parseInt(slotTime.replace(':', ''));
-                        return currentTime >= startTime && currentTime < endTime;
-                      });
-                      const isAvailable = !meetingAtTime;
-                      const canInteract = !selectedEmployee || currentUser.role === 'admin' || selectedEmployee === currentUser.id;
-                      return (
-                        <TimeSlot
-                          key={`${dayIndex}-${slotTime}-b`}
-                          time={slotTime}
-                          isAvailable={isAvailable}
-                          meeting={meetingAtTime}
-                          onClick={() => canInteract && handleTimeSlotClick(dateStr, slotTime, meetingAtTime)}
-                          className={`min-h-[32px] ${!canInteract ? 'cursor-not-allowed opacity-50' : ''}`}
-                          compact
-                        />
-                      );
-                    })}
+                    {/* Availability blocks */}
+                    <div className="absolute inset-0 z-0">
+                      {dayRanges.map(r => {
+                        const { startIndex, endIndex } = rangeToIndices(r);
+                        const topPct = (startIndex / totalSlotsLocal) * 100;
+                        const heightPct = ((endIndex - startIndex) / totalSlotsLocal) * 100;
+                        return (
+                          <div
+                            key={r.id}
+                            className="group avail-block absolute left-1 right-1 rounded-md bg-green-100 hover:bg-green-200 shadow-sm text-[12px] md:text-[13px] flex flex-col cursor-move z-20 text-green-800 border border-green-300"
+                            style={{ top: `${topPct}%`, height: `${heightPct}%` }}
+                            onMouseDown={(e)=>{
+                              const target = e.target as HTMLElement;
+                              if (target.closest('.delete-btn') || target.closest('.avail-resize-handle')) {
+                                // let dedicated handlers handle these actions
+                                return;
+                              }
+                              e.stopPropagation();
+                              // initiate MOVE editing (remove block temporarily)
+                              const colEl = dayColRefs.current[dayStr];
+                              const rect = colEl ? colEl.getBoundingClientRect() : { height: 0 } as any;
+                              const slotH = rect.height / totalSlotsLocal;
+                              const { startIndex: sI, endIndex: eI } = rangeToIndices(r);
+                              const currentDayRanges = [...availabilities, ...tempRanges].filter(x => x.specialistId === selectedEmployee && dayKey(x.start) === dayStr && x.id !== r.id);
+                              setAvailabilities(a => a.filter(x => x.id !== r.id));
+                              setTempRanges(t => t.filter(x => x.id !== r.id));
+                              setActiveEdit({ id: r.id, day: dayStr, type: 'move', originalStartIndex: sI, originalEndIndex: eI, startIndex: sI, endIndex: eI, originY: e.clientY, slotHeight: slotH, isTemp: tempRanges.some(x => x.id === r.id), daySnapshot: currentDayRanges });
+                            }}
+                          >
+                            <div className="px-2 pt-1 pb-2 flex justify-between items-start font-semibold text-[12px] md:text-[13px] select-none h-full">
+                              <span className="leading-tight">{timeFromIndex(rangeToIndices(r).startIndex)} - {endTimeFromEndIndex(rangeToIndices(r).endIndex)}</span>
+                              <button
+                                type="button"
+                                aria-label="Usuń dostępność"
+                                onMouseDown={(e)=> e.stopPropagation()}
+                                onClick={(e)=>{ e.stopPropagation(); setPendingDeleteRange(r); }}
+                                className="delete-btn ml-2 shrink-0 h-7 w-7 flex items-center justify-center rounded-md bg-red-500 text-white hover:bg-red-600 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-400"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                            <div
+                              className="avail-resize-handle absolute left-1/2 -translate-x-1/2 bottom-1 h-1.5 w-14 bg-green-600 rounded cursor-ns-resize hover:bg-green-700"
+                              onMouseDown={(e)=>{
+                                e.stopPropagation();
+                                const colEl = dayColRefs.current[dayStr];
+                                const rect = colEl ? colEl.getBoundingClientRect() : { height: 0 } as any;
+                                const slotH = rect.height / totalSlotsLocal;
+                                const { startIndex: sI, endIndex: eI } = rangeToIndices(r);
+                                const currentDayRanges = [...availabilities, ...tempRanges].filter(x => x.specialistId === selectedEmployee && dayKey(x.start) === dayStr && x.id !== r.id);
+                                setAvailabilities(a => a.filter(x => x.id !== r.id));
+                                setTempRanges(t => t.filter(x => x.id !== r.id));
+                                setActiveEdit({ id: r.id, day: dayStr, type: 'resize', originalStartIndex: sI, originalEndIndex: eI, startIndex: sI, endIndex: eI, originY: e.clientY, slotHeight: slotH, isTemp: tempRanges.some(x => x.id === r.id), daySnapshot: currentDayRanges });
+                              }}
+                            />
+                          </div>
+                        );
+                      })}
+                      {activeEdit && activeEdit.day === dayStr && (()=>{
+                        const { startIndex, endIndex } = activeEdit;
+                        const topPct = (startIndex / totalSlotsLocal) * 100;
+                        const heightPct = ((endIndex - startIndex) / totalSlotsLocal) * 100;
+                        const startTime = timeFromIndex(startIndex);
+                        const endTime = endTimeFromEndIndex(endIndex);
+                        return (
+                          <div className="absolute left-1 right-1 rounded-md bg-green-200/80 text-[12px] md:text-[13px] flex flex-col pointer-events-none z-20 text-green-800 border border-green-300" style={{ top: `${topPct}%`, height: `${heightPct}%` }}>
+                            <div className="px-1 py-0.5 font-semibold select-none">{startTime} - {endTime}</div>
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
                 );
               })}
@@ -237,106 +480,110 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="flex-1 flex flex-col pb-6">
       {/* Wybór pracownika */}
-      <div className="flex flex-wrap gap-2">
-        {sortedEmployees.map(emp => {
-          const active = selectedEmployee === emp.id;
-          return (
-            <button
-              key={emp.id}
-              type="button"
-              onClick={() => setSelectedEmployee(emp.id)}
-              className={`px-3 py-1.5 text-xs rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
-                active
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              {emp.name}
-            </button>
-          );
-        })}
-        {sortedEmployees.length === 0 && (
-          <span className="text-xs text-gray-400 italic">Brak pracowników</span>
-        )}
+      <div className="flex-shrink-0 pt-1 pb-2">
+        <div className="flex flex-wrap gap-2">
+          {sortedEmployees.map(emp => {
+            const active = selectedEmployee === emp.id;
+            return (
+              <button
+                key={emp.id}
+                type="button"
+                onClick={() => setSelectedEmployee(emp.id)}
+                className={`px-3 py-1.5 text-xs rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
+                  active
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                {emp.name}
+              </button>
+            );
+          })}
+          {sortedEmployees.length === 0 && (
+            <span className="text-xs text-gray-400 italic">Brak pracowników</span>
+          )}
+        </div>
       </div>
 
       {selectedEmployee ? (
         <>
-          <CalendarHeader
-            currentDate={currentDate}
-            viewType={viewType}
-            onDateChange={setCurrentDate}
-            onViewTypeChange={handleViewTypeChange}
-            availableViews={['week', 'month']}
-            centerContent={
-              <div className="flex items-center gap-4">
-                <span className="text-sm font-medium text-gray-700">Powiel dostępność na:</span>
-                
-                <div className="relative copy-dropdown">
-                  <button
-                    onClick={() => setShowCopyDropdown(!showCopyDropdown)}
-                    className="flex items-center justify-between gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors w-44"
-                  >
-                    <span>{copyPeriod === 'week' ? 'kolejny tydzień' : 'kolejne 4 tygodnie'}</span>
-                    <ChevronDown className="h-4 w-4 text-gray-500" />
-                  </button>
-
-                  {showCopyDropdown && (
-                    <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
-                      <button
-                        onClick={() => {
-                          console.log('Wybrano: week');
-                          setCopyPeriod('week');
-                          setShowCopyDropdown(false);
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
-                      >
-                        {copyPeriod === 'week' && <Check className="h-4 w-4 text-blue-600" />}
-                        <span className={copyPeriod === 'week' ? 'text-blue-600 font-medium' : 'text-gray-700'}>
-                          kolejny tydzień
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          console.log('Wybrano: 4weeks');
-                          setCopyPeriod('4weeks');
-                          setShowCopyDropdown(false);
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
-                      >
-                        {copyPeriod === '4weeks' && <Check className="h-4 w-4 text-blue-600" />}
-                        <span className={copyPeriod === '4weeks' ? 'text-blue-600 font-medium' : 'text-gray-700'}>
-                          kolejne 4 tygodnie
-                        </span>
-                      </button>
-                    </div>
+          <div className="flex-shrink-0">{/* header container */}
+            <CalendarHeader
+              currentDate={currentDate}
+              viewType={viewType}
+              onDateChange={guardedSetCurrentDate}
+              onViewTypeChange={(v)=>{ if(v==='week'||v==='month') setViewType(v); }}
+              availableViews={['week','month']}
+              rightContent={
+                <div className="w-[140px] flex justify-center">{/* Save area before view buttons */}
+                  { (!pendingDeleteRange && (tempRanges.length > 0 || deletedRangeIds.length > 0)) ? (
+                    <button
+                      onClick={saveAvailabilities}
+                      className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                    >Zapisz zmiany</button>
+                  ) : (!pendingDeleteRange && showSavedTick) ? (
+                    <span className="inline-flex items-center text-green-600 text-sm font-medium animate-fade-in">✔ Zapisano</span>
+                  ) : (
+                    <span className="inline-block invisible px-4 py-2 text-sm">placeholder</span>
                   )}
                 </div>
-
-                <button
-                  onClick={handleCopyAvailability}
-                  disabled={!selectedEmployee}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                >
-                  <Copy className="h-4 w-4" />
-                  Zastosuj
-                </button>
+              }
+              centerContent={
+                <div className="flex items-center gap-4">
+                  <span className="text-sm font-medium text-gray-700">Powiel dostępność na:</span>
+                  <div className="relative copy-dropdown">
+                    <button
+                      onClick={() => setShowCopyDropdown(!showCopyDropdown)}
+                      className="flex items-center justify-between gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors w-44"
+                    >
+                      <span>{copyPeriod === 'week' ? 'kolejny tydzień' : 'kolejne 4 tygodnie'}</span>
+                      <ChevronDown className="h-4 w-4 text-gray-500" />
+                    </button>
+                    {showCopyDropdown && (
+                      <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+                        <button
+                          onClick={() => { setCopyPeriod('week'); setShowCopyDropdown(false); }}
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
+                        >
+                          {copyPeriod === 'week' && <Check className="h-4 w-4 text-blue-600" />}
+                          <span className={copyPeriod === 'week' ? 'text-blue-600 font-medium' : 'text-gray-700'}>kolejny tydzień</span>
+                        </button>
+                        <button
+                          onClick={() => { setCopyPeriod('4weeks'); setShowCopyDropdown(false); }}
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
+                        >
+                          {copyPeriod === '4weeks' && <Check className="h-4 w-4 text-blue-600" />}
+                          <span className={copyPeriod === '4weeks' ? 'text-blue-600 font-medium' : 'text-gray-700'}>kolejne 4 tygodnie</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={handleCopyAvailability}
+                    disabled={!selectedEmployee}
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Copy className="h-4 w-4" />
+                    Zastosuj
+                  </button>
+                </div>
+              }
+            />
+          </div>
+          <div className="flex-1 min-h-0">
+            {viewType === 'week' && renderWeekView()}
+            {viewType === 'month' && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-full flex items-center justify-center">
+                <p className="text-gray-500 text-center">Widok miesięczny będzie dostępny w przyszłych wersjach</p>
               </div>
-            }
-          />
-
-          {viewType === 'week' && renderWeekView()}
-          {viewType === 'month' && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <p className="text-gray-500 text-center py-8">Widok miesięczny będzie dostępny w przyszłych wersjach</p>
-            </div>
-          )}
+            )}
+          </div>
         </>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <p className="text-gray-500 text-center py-8">Wybierz pracownika, aby wyświetlić jego grafik</p>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex-1 flex items-center justify-center">
+          <p className="text-gray-500 text-center">Wybierz pracownika, aby wyświetlić jego grafik</p>
         </div>
       )}
 
@@ -351,13 +598,43 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
         rooms={rooms}
         meetings={meetings}
         selectedDate={formatDateForComparison(currentDate)}
-        selectedTime={selectedTime}
+        selectedTime={''}
         currentUser={currentUser}
         editingMeeting={editingMeeting}
       />
 
       {/* Nowa legenda na dole strony */}
       {/* legenda przeniesiona do nagłówka */}
+
+      {/* Modal potwierdzenia usunięcia */}
+      {pendingDeleteRange && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-sm overflow-hidden animate-scale-in">
+            <div className="p-6">
+              <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="h-6 w-6 text-red-600" />
+              </div>
+              <h3 className="text-base font-semibold text-gray-900 mb-2 text-center">Usuń dostępność?</h3>
+              <p className="text-sm text-gray-600 mb-6 leading-relaxed text-center">
+                Czy na pewno chcesz usunąć ten zakres dostępności?
+                Zmiana zostanie zapisana dopiero po kliknięciu "Zapisz zmiany".
+              </p>
+              <div className="flex justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={()=> setPendingDeleteRange(null)}
+                  className="px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >Anuluj</button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDelete}
+                  className="px-4 py-2.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400"
+                >Usuń</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
