@@ -111,14 +111,78 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
 
   const handleCopyAvailability = () => {
     if (!selectedEmployee) return;
-    
-    const periodText = copyPeriod === 'week' ? 'kolejny tydzień' : 'kolejne 4 tygodnie';
-    console.log(`Kopiowanie dostępności pracownika ${selectedEmployee} na ${periodText}`);
-    console.log('Aktualny copyPeriod:', copyPeriod);
-    
-    // TODO: Implementacja logiki kopiowania dostępności
-    
-    setShowCopyDropdown(false);
+
+    // Jeśli są niezapisane zmiany – najpierw zapisz aktualny tydzień, aby kopiować stan spójny
+    if (tempRanges.length > 0 || deletedRangeIds.length > 0) {
+      saveAvailabilities();
+    }
+
+    try {
+      const raw = localStorage.getItem(AVAIL_KEY);
+      const all: AvailabilityRange[] = raw ? JSON.parse(raw) : [];
+
+      // Zakres bieżącego tygodnia
+      const currentWeekStart = weekBounds.start;
+      const currentWeekEnd = weekBounds.end;
+
+      // Bazowe zakresy z bieżącego tygodnia (już po ewentualnym zapisie powyżej)
+      const baseWeekRanges = all.filter(r =>
+        r.specialistId === selectedEmployee && new Date(r.start) >= currentWeekStart && new Date(r.start) <= currentWeekEnd
+      );
+
+      if (!baseWeekRanges.length) {
+        console.log('Brak dostępności do skopiowania.');
+        setShowCopyDropdown(false);
+        return;
+      }
+
+      const weeksToCopy = copyPeriod === 'week' ? 1 : 4; // 1 tydzień lub 4 kolejne tygodnie
+      const newRanges: AvailabilityRange[] = [];
+      let counter = 0;
+
+      for (let w = 1; w <= weeksToCopy; w++) {
+        const dayOffset = w * 7; // dni do przesunięcia
+        for (const r of baseWeekRanges) {
+          const startDate = new Date(r.start);
+            startDate.setDate(startDate.getDate() + dayOffset);
+          const endDate = new Date(r.end);
+            endDate.setDate(endDate.getDate() + dayOffset);
+          // Pomijaj jeśli wychodzi poza obserwowany zakres godzin (opcjonalnie można sprawdzić, ale zostawiamy jak jest)
+          newRanges.push({
+            id: `copy-${Date.now()}-${counter++}`,
+            specialistId: r.specialistId,
+            start: startDate.toISOString(),
+            end: endDate.toISOString()
+          });
+        }
+      }
+
+      if (!newRanges.length) {
+        setShowCopyDropdown(false);
+        return;
+      }
+
+      // Wszystkie zakresy tego specjalisty (przed scaleniem)
+      const existingForEmployee = all.filter(r => r.specialistId === selectedEmployee);
+      const others = all.filter(r => r.specialistId !== selectedEmployee);
+
+      // Scalaj istniejące + nowe
+      const mergedEmployee = mergeRangesAdjacency([...existingForEmployee, ...newRanges]);
+      const finalAll = [...others, ...mergedEmployee];
+      localStorage.setItem(AVAIL_KEY, JSON.stringify(finalAll));
+
+      console.log(`Skopiowano ${baseWeekRanges.length} zakresów na ${weeksToCopy} tydz.`);
+      // Jeśli obecnie oglądamy któryś z przyszłych tygodni (mało prawdopodobne) – odśwież pozycję; w przeciwnym razie brak zmian w UI
+      // Pozostawiamy bieżący tydzień bez zmian – użytkownik może nawigować, aby zobaczyć wynik.
+
+      setShowCopyDropdown(false);
+      // Krótkie potwierdzenie (wykorzystujemy istniejący znacznik zapisu)
+      setShowSavedTick(true);
+      setTimeout(()=> setShowSavedTick(false), 1500);
+    } catch (e) {
+      console.error('Błąd kopiowania dostępności', e);
+      setShowCopyDropdown(false);
+    }
   };
 
   // Debug: sprawdź zmiany copyPeriod
@@ -200,6 +264,23 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     setDeletedRangeIds([]); // clear pending deletions
     setShowSavedTick(true);
     setTimeout(()=> setShowSavedTick(false), 1200);
+  };
+
+  // NEW: discard unsaved changes (revert to persisted week state)
+  const discardChanges = () => {
+    if(!selectedEmployee) return;
+    try {
+      const raw = localStorage.getItem(AVAIL_KEY);
+      const all: AvailabilityRange[] = raw ? JSON.parse(raw) : [];
+      const filtered = all.filter(a => a.specialistId === selectedEmployee && new Date(a.start) >= weekBounds.start && new Date(a.start) <= weekBounds.end);
+      setAvailabilities(filtered);
+      setTempRanges([]);
+      setDeletedRangeIds([]);
+      setPendingDeleteRange(null);
+      setActiveEdit(null);
+    } catch(e){
+      console.warn('Discard changes failed', e);
+    }
   };
 
   const handleConfirmDelete = () => {
@@ -289,10 +370,34 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     const endMinutes = endD.getHours()*60 + endD.getMinutes();
     const rawStart = (startMinutes - startHour*60)/30;
     const rawEnd = (endMinutes - startHour*60)/30;
-    const startIndex = Math.max(0, Math.min(totalSlots-1, Math.floor(rawStart))); // floor stabilizuje początek
-    const endIndex = Math.max(startIndex+1, Math.min(totalSlots, Math.ceil(rawEnd))); // ceil zapewnia pełne pokrycie
+    const startIndex = Math.max(0, Math.min(totalSlots-1, Math.floor(rawStart)));
+    const endIndex = Math.max(startIndex+1, Math.min(totalSlots, Math.ceil(rawEnd)));
     return { startIndex, endIndex };
   };
+
+  // NEW: helper do przeliczenia spotkań na indeksy slotów
+  const meetingToIndices = (meeting: Meeting) => {
+    const [sh, sm] = meeting.startTime.split(':').map(Number);
+    const [eh, em] = meeting.endTime.split(':').map(Number);
+    const startMinutes = sh*60 + sm;
+    const endMinutes = eh*60 + em;
+    const rawStart = (startMinutes - startHour*60)/30;
+    const rawEnd = (endMinutes - startHour*60)/30;
+    const startIndex = Math.max(0, Math.min(totalSlots-1, Math.floor(rawStart)));
+    const endIndex = Math.max(startIndex+1, Math.min(totalSlots, Math.ceil(rawEnd)));
+    return { startIndex, endIndex };
+  };
+
+  // NEW: tooltip state for meetings
+  const [hoveredMeeting, setHoveredMeeting] = useState<{meeting: Meeting; x: number; y: number} | null>(null);
+  const roomMap = React.useMemo(()=> Object.fromEntries(rooms.map(r=> [r.id, r.name])), [rooms]);
+  const handleMeetingEnter = (e: React.MouseEvent, meeting: Meeting) => {
+    setHoveredMeeting({ meeting, x: e.clientX, y: e.clientY });
+  };
+  const handleMeetingMove = (e: React.MouseEvent) => {
+    setHoveredMeeting(prev => prev ? { ...prev, x: e.clientX, y: e.clientY } : prev);
+  };
+  const handleMeetingLeave = () => setHoveredMeeting(null);
 
   // REPLACE previous renderWeekView implementation with floating blocks
   const renderWeekView = () => {
@@ -377,26 +482,14 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                   >
                     <div className="absolute inset-0 flex flex-col">
                       {timeSlots.map((t, slotIdx) => {
-                        const slotMeetings = dayMeetings.filter(meeting => {
-                          const startTime = parseInt(meeting.startTime.replace(':',''));
-                          const endTime = parseInt(meeting.endTime.replace(':',''));
-                          const current = parseInt(t.replace(':',''));
-                          return current >= startTime && current < endTime;
-                        });
-                        const meeting = slotMeetings[0];
+                        // spotkania nie są już renderowane per slot
                         const isSelectedSlot = isEditDay && slotIdx >= editStart && slotIdx < editEnd;
                         return (
                           <div
                             key={slotIdx}
                             className={`day-slot relative flex-1 px-1 ${slotIdx>0 ? 'border-t border-gray-200' : ''} ${isSelectedSlot ? 'bg-gray-50' : ''}`}
-                          > {/* slot borders zamiast globalnej siatki */}
+                          >
                             <span className={`absolute inset-0 flex items-center justify-start pl-1 text-[11px] font-semibold select-none pointer-events-none ${isSelectedSlot ? 'text-gray-700' : 'text-gray-600'}`}>{t}</span>
-                            {meeting && (slotIdx % 2 === 0) && (
-                              <div className="relative z-30 text-[10px] leading-tight p-1 rounded bg-blue-50 border border-blue-200 overflow-hidden">
-                                <div className="font-medium truncate">{meeting.patientName}</div>
-                                <div className="text-[10px] opacity-70">{meeting.startTime}-{meeting.endTime}</div>
-                              </div>
-                            )}
                           </div>
                         );
                       })}
@@ -416,11 +509,9 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                             onMouseDown={(e)=>{
                               const target = e.target as HTMLElement;
                               if (target.closest('.delete-btn') || target.closest('.avail-resize-handle')) {
-                                // let dedicated handlers handle these actions
                                 return;
                               }
                               e.stopPropagation();
-                              // initiate MOVE editing (remove block temporarily)
                               const colEl = dayColRefs.current[dayStr];
                               const rect = colEl ? colEl.getBoundingClientRect() : { height: 0 } as any;
                               const slotH = rect.height / totalSlotsLocal;
@@ -473,6 +564,27 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                         );
                       })()}
                     </div>
+                    {/* Meeting blocks (NEW layered absolute overlay) */}
+                    <div className="absolute inset-0 z-40 pointer-events-none">
+                      {dayMeetings.map(m => {
+                        const { startIndex, endIndex } = meetingToIndices(m);
+                        const topPct = (startIndex / totalSlotsLocal) * 100;
+                        const heightPct = ((endIndex - startIndex) / totalSlotsLocal) * 100;
+                        return (
+                          <div
+                            key={m.id}
+                            className="absolute left-2 right-2 rounded-md bg-yellow-100/90 text-yellow-900 shadow-md text-[10px] leading-tight px-2 py-1 flex flex-col pointer-events-auto"
+                            style={{ top: `${topPct}%`, height: `${heightPct}%` }}
+                            onMouseEnter={(e)=> handleMeetingEnter(e, m)}
+                            onMouseMove={handleMeetingMove}
+                            onMouseLeave={handleMeetingLeave}
+                          >
+                            <div className="font-semibold truncate">{m.patientName}</div>
+                            <div className="text-[11px] opacity-80 tracking-tight">{m.startTime}-{m.endTime}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 );
               })}
@@ -511,16 +623,25 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
             )}
           </div>
           {/* Save button area moved here (right aligned) */}
-          <div className="w-[140px] flex justify-end pr-1">
+          <div className="w-[270px] flex justify-end pr-1">
             {(!pendingDeleteRange && (tempRanges.length > 0 || deletedRangeIds.length > 0)) ? (
-              <button
-                onClick={saveAvailabilities}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-              >Zapisz zmiany</button>
+              <div className="flex gap-2">
+                <button
+                  onClick={saveAvailabilities}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+                >Zapisz zmiany</button>
+                <button
+                  onClick={discardChanges}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+                >Odrzuć</button>
+              </div>
             ) : (!pendingDeleteRange && showSavedTick) ? (
               <span className="inline-flex items-center text-green-600 text-sm font-medium animate-fade-in">✔ Zapisano</span>
             ) : (
-              <span className="inline-block invisible px-4 py-2 text-sm">placeholder</span>
+              <div className="invisible flex gap-2">
+                <button className="px-3 py-1.5 text-xs rounded-md border">Zapisz zmiany</button>
+                <button className="px-3 py-1.5 text-xs rounded-md border">Odrzuć</button>
+              </div>
             )}
           </div>
         </div>
@@ -642,8 +763,24 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
           </div>
         </div>
       )}
+
+      {hoveredMeeting && (
+        <div
+          className="fixed z-[100] pointer-events-none"
+          style={{ top: hoveredMeeting.y + 14, left: hoveredMeeting.x + 12 }}
+        >
+          <div className="bg-white border border-yellow-300 shadow-lg rounded-md px-3 py-2 text-xs text-gray-700 min-w-[160px]">
+            <div className="font-semibold text-yellow-800 mb-1 leading-tight">{hoveredMeeting.meeting.patientName}</div>
+            <div className="leading-tight text-gray-600">Sala: <span className="text-gray-800 font-medium">{roomMap[hoveredMeeting.meeting.roomId] || hoveredMeeting.meeting.roomId}</span></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
+// NEW: tooltip portal (simple) inside same component file AFTER component definition not allowed; we integrate inside return above. Moved below.
+
 export default EmployeeCalendar;
+
+// Inject tooltip render just before export inside component return earlier (handled).
