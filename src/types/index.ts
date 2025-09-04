@@ -60,6 +60,14 @@ export interface PatientVisit {
   notes?: string;
 }
 
+export interface Availability {
+  id: string;
+  specialistId: string; // ID specjalisty do którego przypisana jest dostępność
+  startDate: string; // YYYY-MM-DD HH:mm (data i godzina rozpoczęcia dostępności)
+  endDate: string;   // YYYY-MM-DD HH:mm (data i godzina zakończenia dostępności)
+  notes?: string;    // opcjonalne notatki dotyczące dostępności
+}
+
 export interface CalendarView {
   type: 'day' | 'week' | 'month';
   date: Date;
