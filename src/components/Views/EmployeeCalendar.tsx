@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import CalendarHeader from '../Calendar/CalendarHeader';
-import MeetingForm from '../Forms/MeetingForm';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { User, Room, Meeting } from '../../types';
 import { ChevronDown, Copy, Check, Trash2 } from 'lucide-react';
@@ -10,8 +9,6 @@ interface EmployeeCalendarProps {
   rooms: Room[];
   meetings: Meeting[];
   currentUser: User;
-  onMeetingCreate: (meeting: Omit<Meeting, 'id'>) => void;
-  onMeetingUpdate: (meetingId: string, updates: Partial<Meeting>) => void;
   showWeekends: boolean; // new
   startHour: number; // NEW
   endHour: number;   // NEW
@@ -22,8 +19,6 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   rooms,
   meetings,
   currentUser,
-  onMeetingCreate,
-  onMeetingUpdate,
   showWeekends,
   startHour,
   endHour
@@ -33,8 +28,6 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   const [selectedEmployee, setSelectedEmployee] = useState(
     currentUser.role === 'employee' ? currentUser.id : ''
   );
-  const [showMeetingForm, setShowMeetingForm] = useState(false);
-  const [editingMeeting, setEditingMeeting] = useState<Meeting | undefined>();
   const [showCopyDropdown, setShowCopyDropdown] = useState(false);
   const [copyPeriod, setCopyPeriod] = useState<'week' | '4weeks'>('week');
   // const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null); // replaced by pendingDeleteRange
@@ -47,6 +40,152 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   const [availabilities, setAvailabilities] = useState<AvailabilityRange[]>([]); // persisted for employee & week
   const [tempRanges, setTempRanges] = useState<AvailabilityRange[]>([]); // unsaved new ranges
   const [showSavedTick, setShowSavedTick] = useState(false);
+
+  // === CAŁODNIOWE NIEDOSTĘPNOŚCI (widok miesiąca) ===
+  interface DayOff { id: string; specialistId: string; date: string; note?: string; }
+  const DAY_OFF_KEY = 'schedule_day_offs';
+  const [dayOffs, setDayOffs] = useState<DayOff[]>([]);
+
+  // === MONTH RANGE DRAG SELECTION (niedostępności jako spotkania bez sali) ===
+  interface MonthDragState { active: boolean; start: string; current: string; moved: boolean; editExisting?: boolean; }
+  const [monthDrag, setMonthDrag] = useState<MonthDragState>({ active: false, start: '', current: '', moved: false, editExisting: false });
+  // Nowy modal tworzenia / edycji niedostępności
+  const [showUnavailabilityModal, setShowUnavailabilityModal] = useState(false);
+  const [unavailabilityRange, setUnavailabilityRange] = useState<{ start: string; end: string; dates: string[] } | null>(null);
+  const [unavailabilityEmployees, setUnavailabilityEmployees] = useState<string[]>([]);
+  const [unavailabilityNotes, setUnavailabilityNotes] = useState('');
+  const [editingUnavailability, setEditingUnavailability] = useState(false);
+  const [originalRangeDates, setOriginalRangeDates] = useState<string[]>([]);
+  const [originalEmployees, setOriginalEmployees] = useState<string[]>([]);
+
+  const buildDateRange = (a: string, b: string) => {
+    if(!a || !b) return [] as string[];
+    const d1 = new Date(a);
+    const d2 = new Date(b);
+    const from = d1 < d2 ? d1 : d2;
+    const to = d1 < d2 ? d2 : d1;
+    const out: string[] = [];
+    const cur = new Date(from);
+    while(cur <= to){ out.push(cur.toISOString().split('T')[0]); cur.setDate(cur.getDate()+1); }
+    return out;
+  };
+
+  const selectedDragDates = monthDrag.active ? buildDateRange(monthDrag.start, monthDrag.current) : [];
+
+  // addDayOffs teraz przyjmuje wielu pracowników + notatkę
+  const addDayOffs = (dates: string[], employeeIds: string[], note: string) => {
+    if(!employeeIds.length || !dates.length) return;
+    try {
+      const raw = localStorage.getItem(DAY_OFF_KEY);
+      const all: DayOff[] = raw ? JSON.parse(raw) : [];
+      const existingKeys = new Set(all.map(d=> d.specialistId + '|' + d.date));
+      const toAdd: DayOff[] = [];
+      employeeIds.forEach(emp => {
+        dates.forEach(dateStr => {
+          const key = emp + '|' + dateStr;
+          if(!existingKeys.has(key)) {
+            toAdd.push({ id: 'dayoff-'+emp+'-'+dateStr, specialistId: emp, date: dateStr, note: note || undefined });
+          }
+        });
+      });
+      if(!toAdd.length) return;
+      const next = [...all, ...toAdd];
+      localStorage.setItem(DAY_OFF_KEY, JSON.stringify(next));
+      // odśwież jeśli aktualnie wybrany pracownik jest wśród zaznaczonych
+      if(selectedEmployee && employeeIds.includes(selectedEmployee)) {
+        setDayOffs(next.filter(d=> d.specialistId === selectedEmployee));
+      }
+    } catch(e){ console.warn('addDayOffs failed', e); }
+  };
+
+  React.useEffect(()=> {
+    const handleMouseUp = () => {
+      setMonthDrag(prev => {
+        if(!prev.active) return prev;
+        const dates = buildDateRange(prev.start, prev.current);
+        if(prev.editExisting && !prev.moved){
+          // edit existing contiguous block
+            const block = getContiguousDayOffRange(prev.start, selectedEmployee || undefined);
+            setUnavailabilityRange({ start: block.start, end: block.end, dates: block.dates });
+            setUnavailabilityEmployees(selectedEmployee ? [selectedEmployee] : []);
+            setUnavailabilityNotes(block.note || '');
+            setEditingUnavailability(true);
+            setOriginalRangeDates(block.dates);
+            setOriginalEmployees(selectedEmployee ? [selectedEmployee] : []);
+            setShowUnavailabilityModal(true);
+        } else if(dates.length){
+          // create new
+          const start = dates[0];
+          const end = dates[dates.length-1];
+          setUnavailabilityRange({ start, end, dates });
+          setUnavailabilityEmployees(selectedEmployee ? [selectedEmployee] : []);
+          setUnavailabilityNotes('');
+          setEditingUnavailability(false);
+          setOriginalRangeDates([]);
+          setOriginalEmployees([]);
+          setShowUnavailabilityModal(true);
+        }
+        return { active: false, start: '', current: '', moved: false, editExisting: false };
+      });
+    };
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => window.removeEventListener('mouseup', handleMouseUp);
+  }, [selectedEmployee]);
+
+  // === MONTH VIEW DYNAMIC TILE HEIGHT ===
+  const monthContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const [monthTileHeight, setMonthTileHeight] = useState<number>(80); // start nieco większy
+  React.useEffect(() => {
+    const recalcMonthTileHeight = () => {
+      if (!monthContainerRef.current) return;
+      const rect = monthContainerRef.current.getBoundingClientRect();
+      const viewportH = window.innerHeight;
+      const bottomBuffer = viewportH < 760 ? 28 : viewportH < 900 ? 34 : 40; // mniejszy niż 80, adaptacyjny
+      const available = viewportH - rect.top - bottomBuffer; // ile miejsca od góry kontenera do dołu
+      const headerRowHeight = 30; // wiersz dni tygodnia
+      const gapY = 10; // gap między wierszami
+      const rows = 6;
+      const totalGaps = (rows - 1) * gapY;
+      const inner = available - headerRowHeight - 8 - totalGaps; // 8 = mb-2 pod nagłówkiem
+      // Szerokość siatki dla ograniczenia proporcji (nie chcemy ekstremalnie wysokich słupków na szerokich monitorach)
+      const gridGap = 10;
+      const containerWidth = monthContainerRef.current.clientWidth;
+      const tileWidth = (containerWidth - gridGap * 6) / 7; // 7 kolumn, 6 przerw
+      const rawTile = inner / rows;
+      // Ogranicz przez szerokość (max 1.25 * szerokość kafelka)
+      const maxByWidth = tileWidth * 1.25;
+      let candidate = Math.min(rawTile, maxByWidth);
+      const clamped = Math.max(54, Math.min(110, Math.floor(candidate))); // nowe widełki 54–110
+      if (!Number.isNaN(clamped)) setMonthTileHeight(clamped);
+    };
+    recalcMonthTileHeight();
+    window.addEventListener('resize', recalcMonthTileHeight);
+    return () => window.removeEventListener('resize', recalcMonthTileHeight);
+  }, []);
+
+  React.useEffect(()=> {
+    if(!selectedEmployee) return;
+    try {
+      const raw = localStorage.getItem(DAY_OFF_KEY);
+      const all: DayOff[] = raw ? JSON.parse(raw) : [];
+      setDayOffs(all.filter(d=> d.specialistId === selectedEmployee));
+    } catch(e){ console.warn('Load dayOffs failed', e); }
+  }, [selectedEmployee]);
+
+  // Helper: miesiąc (6 tygodni) start poniedziałek
+  const getMonthGrid = (date: Date): Date[] => {
+    const first = new Date(date.getFullYear(), date.getMonth(), 1);
+    const isoDow = first.getDay() === 0 ? 7 : first.getDay(); // 1..7 (Mon..Sun)
+    const gridStart = new Date(first);
+    gridStart.setDate(first.getDate() - (isoDow - 1));
+    const days: Date[] = [];
+    for(let i=0;i<42;i++) {
+      const d = new Date(gridStart);
+      d.setDate(gridStart.getDate() + i);
+      days.push(d);
+    }
+    return days;
+  };
 
   const timeSlots = generateTimeSlots(startHour, endHour);
   const employees = users.filter(user => user.role === 'employee');
@@ -70,16 +209,6 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
       week.push(day);
     }
     return week;
-  };
-
-  const handleMeetingFormSubmit = (meetingData: Omit<Meeting, 'id'>) => {
-    if (editingMeeting) {
-      onMeetingUpdate(editingMeeting.id, meetingData);
-    } else {
-      onMeetingCreate(meetingData);
-    }
-    setShowMeetingForm(false);
-    setEditingMeeting(undefined);
   };
 
   const getEmployeeMeetings = () => {
@@ -196,7 +325,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     start.setDate(date.getDate() - date.getDay() + 1); // Monday
     start.setHours(0,0,0,0);
     const end = new Date(start);
-    end.setDate(start.getDate() + 6);
+    end.setDate(end.getDate() + 6);
     end.setHours(23,59,59,999);
     return { start, end };
   };
@@ -314,7 +443,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   // Global mouse move / up for editing blocks
   React.useEffect(() => {
     if(!activeEdit) return;
-    const handleMove = (e: MouseEvent) => {
+    const handleEditMove = (e: MouseEvent) => {
       setActiveEdit(prev => {
         if(!prev) return prev;
         const deltaY = e.clientY - prev.originY;
@@ -339,7 +468,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
         return prev;
       });
     };
-    const handleUp = () => {
+    const handleEditUp = () => {
       if(!activeEdit) return;
       const prev = activeEdit;
       const day = prev.day;
@@ -357,9 +486,9 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
       });
       setActiveEdit(null);
     };
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp, { once: true });
-    return () => { window.removeEventListener('mousemove', handleMove); };
+    window.addEventListener('mousemove', handleEditMove);
+    window.addEventListener('mouseup', handleEditUp, { once: true });
+    return () => { window.removeEventListener('mousemove', handleEditMove); };
   }, [activeEdit, selectedEmployee, totalSlots]);
 
   // Helper to compute slot indices for a range
@@ -398,6 +527,37 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     setHoveredMeeting(prev => prev ? { ...prev, x: e.clientX, y: e.clientY } : prev);
   };
   const handleMeetingLeave = () => setHoveredMeeting(null);
+
+  // helper do pobrania ciągłego bloku niedostępności dla daty (PRZENIESIONY aby istniał przed użyciem)
+  const getContiguousDayOffRange = (dateStr: string, empId?: string) => {
+    const employeeId = empId || selectedEmployee;
+    if(!employeeId) return { start: dateStr, end: dateStr, dates: [dateStr], note: '' };
+    try {
+      const raw = localStorage.getItem(DAY_OFF_KEY);
+      const all: DayOff[] = raw ? JSON.parse(raw) : [];
+      const empDays = new Set(all.filter(d=> d.specialistId === employeeId).map(d=> d.date));
+      let cur = new Date(dateStr);
+      // backward
+      while(true){
+        const prev = new Date(cur); prev.setDate(prev.getDate()-1);
+        const prevStr = prev.toISOString().split('T')[0];
+        if(empDays.has(prevStr)) cur = prev; else break;
+      }
+      const start = cur.toISOString().split('T')[0];
+      cur = new Date(dateStr);
+      // forward
+      while(true){
+        const nxt = new Date(cur); nxt.setDate(nxt.getDate()+1);
+        const nxtStr = nxt.toISOString().split('T')[0];
+        if(empDays.has(nxtStr)) cur = nxt; else break;
+      }
+      const end = cur.toISOString().split('T')[0];
+      const dates = buildDateRange(start, end);
+      const notes = all.filter(d=> d.specialistId===employeeId && dates.includes(d.date) && d.note).map(d=> d.note as string);
+      const note = notes.length ? notes[0] : '';
+      return { start, end, dates, note };
+    } catch { return { start: dateStr, end: dateStr, dates: [dateStr], note: '' }; }
+  };
 
   // REPLACE previous renderWeekView implementation with floating blocks
   const renderWeekView = () => {
@@ -468,17 +628,6 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                     ref={el => { dayColRefs.current[dayStr] = el; }}
                     className="relative overflow-hidden"
                     style={{height: '100%'}}
-                    onMouseDown={(e)=>{
-                      if(!(e.target as HTMLElement).closest('.avail-block')){
-                        const colEl = e.currentTarget as HTMLElement;
-                        const rect = colEl.getBoundingClientRect();
-                        const slotH = rect.height / totalSlotsLocal;
-                        const y = e.clientY - rect.top;
-                        const startIndex = Math.max(0, Math.min(totalSlotsLocal-1, Math.floor(y / slotH)));
-                        const currentDayRanges = [...availabilities, ...tempRanges].filter(r => r.specialistId === selectedEmployee && dayKey(r.start) === dayStr);
-                        setActiveEdit({ id: 'new-'+Date.now(), day: dayStr, type: 'create', originalStartIndex: startIndex, originalEndIndex: startIndex + 1, startIndex, endIndex: startIndex + 1, originY: e.clientY, slotHeight: slotH, isTemp: true, daySnapshot: currentDayRanges });
-                      }
-                    }}
                   >
                     <div className="absolute inset-0 flex flex-col">
                       {timeSlots.map((t, slotIdx) => {
@@ -595,6 +744,8 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     );
   };
 
+  // USUNIĘTO nieużywaną funkcję renderMonthView (render inline)
+
   return (
     <div className="flex-1 flex flex-col pb-6">
       {/* Wybór pracownika + Save button on same row */}
@@ -703,8 +854,42 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
           <div className="flex-1 min-h-0">
             {viewType === 'week' && renderWeekView()}
             {viewType === 'month' && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-full flex items-center justify-center">
-                <p className="text-gray-500 text-center">Widok miesięczny będzie dostępny w przyszłych wersjach</p>
+              <div ref={monthContainerRef} className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex flex-col mb-4">{/* zmniejszony dolny margines */}
+                {/* Usunięto legendę niedostępność/dzień roboczy aby kalendarz był wyżej */}
+                <div className="grid grid-cols-7 gap-px bg-gray-200 rounded overflow-hidden text-[11px] font-medium text-gray-600 mb-2">
+                  {['Pon','Wt','Śr','Czw','Pt','Sob','Nd'].map(d=> <div key={d} className="bg-white py-1 text-center">{d}</div>)}
+                </div>
+                <div className="grid grid-cols-7 gap-[10px] flex-1">
+                  {getMonthGrid(currentDate).map((d: Date, i: number)=> {
+                    const inMonth = d.getMonth() === currentDate.getMonth();
+                    const dateStr = d.toISOString().split('T')[0];
+                    const isDayOff = dayOffs.some(off=> off.date === dateStr);
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    const isToday = dateStr === todayStr;
+                    const selectedDrag = selectedDragDates.includes(dateStr) && monthDrag.moved;
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        disabled={!inMonth}
+                        onMouseDown={() => { if(!inMonth) return; setMonthDrag({ active: true, start: dateStr, current: dateStr, moved: false, editExisting: isDayOff }); }}
+                        onMouseEnter={() => { setMonthDrag(prev => prev.active ? { ...prev, current: dateStr, moved: prev.moved || dateStr !== prev.start } : prev); }}
+                        className={`relative group text-left pt-5 px-2 pb-2 transition-colors outline-none rounded-lg shadow-sm select-none ${inMonth ? '' : 'opacity-40 cursor-not-allowed'}
+                          ${selectedDrag ? 'bg-red-200/80 border border-red-400 ring-2 ring-red-400' : isDayOff ? 'bg-red-200/80 border border-red-400' : 'bg-white border border-gray-200'}
+                          ${!selectedDrag && !isDayOff && !monthDrag.active ? 'hover:bg-gray-50' : ''}
+                          ${isToday && inMonth ? 'ring-2 ring-blue-500' : ''}`}
+                        aria-current={isToday ? 'date' : undefined}
+                        style={{ height: monthTileHeight, cursor: 'pointer' }}
+                      >
+                        <span className={`absolute top-1 left-2 text-[11px] font-semibold ${isDayOff || selectedDrag ? 'text-red-700' : 'text-gray-700'}`}>{d.getDate()}</span>
+                        {(isDayOff || selectedDrag) && (
+                          <span className="absolute bottom-1 left-1 right-1 text-[10px] text-red-700 font-medium truncate">Niedostępny</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* Usunięto opis pod kalendarzem */}
               </div>
             )}
           </div>
@@ -714,25 +899,6 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
           <p className="text-gray-500 text-center">Wybierz pracownika, aby wyświetlić jego grafik</p>
         </div>
       )}
-
-      <MeetingForm
-        isOpen={showMeetingForm}
-        onClose={() => {
-          setShowMeetingForm(false);
-          setEditingMeeting(undefined);
-        }}
-        onSubmit={handleMeetingFormSubmit}
-        users={users}
-        rooms={rooms}
-        meetings={meetings}
-        selectedDate={formatDateForComparison(currentDate)}
-        selectedTime={''}
-        currentUser={currentUser}
-        editingMeeting={editingMeeting}
-      />
-
-      {/* Nowa legenda na dole strony */}
-      {/* legenda przeniesiona do nagłówka */}
 
       {/* Modal potwierdzenia usunięcia */}
       {pendingDeleteRange && (
@@ -770,8 +936,165 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
           style={{ top: hoveredMeeting.y + 14, left: hoveredMeeting.x + 12 }}
         >
           <div className="bg-white border border-yellow-300 shadow-lg rounded-md px-3 py-2 text-xs text-gray-700 min-w-[160px]">
-            <div className="font-semibold text-yellow-800 mb-1 leading-tight">{hoveredMeeting.meeting.patientName}</div>
-            <div className="leading-tight text-gray-600">Sala: <span className="text-gray-800 font-medium">{roomMap[hoveredMeeting.meeting.roomId] || hoveredMeeting.meeting.roomId}</span></div>
+            <div className="font-semibold text-yellow-800 mb-1 leading-tight">{hoveredMeeting.meeting.patientName || 'Spotkanie'}</div>
+            <div className="leading-tight text-gray-600">Sala: <span className="text-gray-800 font-medium">{roomMap[hoveredMeeting.meeting.roomId] || hoveredMeeting.meeting.roomId || 'Brak sali'}</span></div>
+          </div>
+        </div>
+      )}
+
+      {showUnavailabilityModal && unavailabilityRange && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-lg overflow-hidden animate-scale-in">
+            <div className="p-6 space-y-5">
+              <div className="flex items-start justify-between gap-4">
+                <h3 className="text-lg font-semibold text-gray-900">{editingUnavailability ? 'Edytuj niedostępność' : 'Nowa niedostępność'}</h3>
+                {editingUnavailability && (
+                  <button
+                    type="button"
+                    onClick={()=> {
+                      if(!unavailabilityRange) return;
+                      if(!confirm('Usunąć całą niedostępność dla wybranych pracowników w tym zakresie?')) return;
+                      try {
+                        const raw = localStorage.getItem(DAY_OFF_KEY);
+                        const all: DayOff[] = raw ? JSON.parse(raw) : [];
+                        const toDeleteSet = new Set<string>();
+                        originalRangeDates.forEach(dStr => { originalEmployees.concat(unavailabilityEmployees).forEach(emp => toDeleteSet.add(emp+'|'+dStr)); });
+                        const next = all.filter(d=> !toDeleteSet.has(d.specialistId+'|'+d.date));
+                        localStorage.setItem(DAY_OFF_KEY, JSON.stringify(next));
+                        if(selectedEmployee) setDayOffs(next.filter(d=> d.specialistId === selectedEmployee));
+                      } catch(e){ console.warn('Delete unavailability failed', e); }
+                      setShowUnavailabilityModal(false);
+                      setEditingUnavailability(false);
+                      setUnavailabilityRange(null);
+                      setUnavailabilityEmployees([]);
+                      setUnavailabilityNotes('');
+                      setOriginalRangeDates([]);
+                      setOriginalEmployees([]);
+                    }}
+                    className="px-3 py-1.5 text-xs font-medium rounded-md bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400"
+                  >Usuń</button>
+                )}
+              </div>
+              {editingUnavailability ? (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Data od</label>
+                    <input
+                      type="date"
+                      value={unavailabilityRange.start}
+                      onChange={e=> {
+                        const newStart = e.target.value;
+                        setUnavailabilityRange(prev => prev ? (()=>{
+                          let start = newStart;
+                          let end = prev.end;
+                          if(new Date(start) > new Date(end)) end = start;
+                          return { start, end, dates: buildDateRange(start, end) };
+                        })() : prev);
+                      }}
+                      className="w-full border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Data do</label>
+                    <input
+                      type="date"
+                      value={unavailabilityRange.end}
+                      onChange={e=> {
+                        const newEnd = e.target.value;
+                        setUnavailabilityRange(prev => prev ? (()=>{
+                          let end = newEnd;
+                          let start = prev.start;
+                          if(new Date(end) < new Date(start)) start = end;
+                          return { start, end, dates: buildDateRange(start, end) };
+                        })() : prev);
+                      }}
+                      className="w-full border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-gray-700 font-medium">
+                  Zakres: <span className="font-semibold">{new Date(unavailabilityRange.start).toLocaleDateString('pl-PL')} – {new Date(unavailabilityRange.end).toLocaleDateString('pl-PL')}</span>
+                  {unavailabilityRange.dates.length > 1 && <span className="ml-2 text-gray-500">({unavailabilityRange.dates.length} dni)</span>}
+                </div>
+              )}
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-2">Pracownicy:</p>
+                <div className="flex flex-wrap gap-2 max-h-40 overflow-auto pr-1">
+                  {sortedEmployees.map(emp => {
+                    const active = unavailabilityEmployees.includes(emp.id);
+                    return (
+                      <button
+                        key={emp.id}
+                        type="button"
+                        onClick={()=> setUnavailabilityEmployees(prev => prev.includes(emp.id) ? prev.filter(id=> id!==emp.id) : [...prev, emp.id])}
+                        className={`px-3 py-1.5 text-xs rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                      >
+                        {emp.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Notatki (opcjonalnie)</label>
+                <textarea
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y min-h-[90px]"
+                  value={unavailabilityNotes}
+                  onChange={e=> setUnavailabilityNotes(e.target.value)}
+                  placeholder="Powód / dodatkowe informacje"
+                />
+              </div>
+              {editingUnavailability && unavailabilityRange && (
+                <div className="text-[11px] text-gray-500 -mt-2">Łącznie dni: {unavailabilityRange.dates.length}</div>
+              )}
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={()=> { setShowUnavailabilityModal(false); setUnavailabilityRange(null); setUnavailabilityEmployees([]); setUnavailabilityNotes(''); setEditingUnavailability(false); setOriginalRangeDates([]); setOriginalEmployees([]); }}
+                  className="px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >Anuluj</button>
+                <button
+                  type="button"
+                  disabled={!unavailabilityEmployees.length}
+                  onClick={()=> {
+                    if(unavailabilityRange){
+                      if(editingUnavailability){
+                        // update existing: remove old (originalEmployees) for originalRangeDates, then add new for current selected employees & dates
+                        try {
+                          const raw = localStorage.getItem(DAY_OFF_KEY);
+                          const all: DayOff[] = raw ? JSON.parse(raw) : [];
+                          const removeSet = new Set<string>();
+                          originalRangeDates.forEach(dStr => { originalEmployees.forEach((emp)=> removeSet.add(emp+'|'+dStr)); });
+                          const filtered = all.filter(d=> !removeSet.has(d.specialistId+'|'+d.date));
+                          const existingKeys = new Set(filtered.map(d=> d.specialistId+'|'+d.date));
+                          const toAdd: DayOff[] = [];
+                          unavailabilityEmployees.forEach(emp => {
+                            unavailabilityRange.dates.forEach(ds => {
+                              const key = emp+'|'+ds;
+                              if(!existingKeys.has(key)) toAdd.push({ id: 'dayoff-'+emp+'-'+ds, specialistId: emp, date: ds, note: unavailabilityNotes.trim() || undefined });
+                            });
+                          });
+                          const next = [...filtered, ...toAdd];
+                          localStorage.setItem(DAY_OFF_KEY, JSON.stringify(next));
+                          if(selectedEmployee) setDayOffs(next.filter(d=> d.specialistId === selectedEmployee));
+                        } catch(e){ console.warn('Update unavailability failed', e); }
+                      } else {
+                        addDayOffs(unavailabilityRange.dates, unavailabilityEmployees, unavailabilityNotes.trim());
+                      }
+                    }
+                    setShowUnavailabilityModal(false);
+                    setUnavailabilityRange(null);
+                    setUnavailabilityEmployees([]);
+                    setUnavailabilityNotes('');
+                    setEditingUnavailability(false);
+                    setOriginalRangeDates([]);
+                    setOriginalEmployees([]);
+                  }}
+                  className={`px-5 py-2.5 text-sm font-medium rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${unavailabilityEmployees.length ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300 cursor-not-allowed'}`}
+                >Zatwierdź</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
