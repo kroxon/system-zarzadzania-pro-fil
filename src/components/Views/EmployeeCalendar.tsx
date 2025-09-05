@@ -42,7 +42,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   const [showSavedTick, setShowSavedTick] = useState(false);
 
   // === CAŁODNIOWE NIEDOSTĘPNOŚCI (widok miesiąca) ===
-  interface DayOff { id: string; specialistId: string; date: string; note?: string; }
+  interface DayOff { id: string; specialistId: string; date: string; note?: string; groupId?: string; }
   const DAY_OFF_KEY = 'schedule_day_offs';
   const [dayOffs, setDayOffs] = useState<DayOff[]>([]);
 
@@ -57,6 +57,9 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   const [editingUnavailability, setEditingUnavailability] = useState(false);
   const [originalRangeDates, setOriginalRangeDates] = useState<string[]>([]);
   const [originalEmployees, setOriginalEmployees] = useState<string[]>([]);
+  const [pendingDeleteUnav, setPendingDeleteUnav] = useState<{ groupId: string; dates: string[]; employees: string[] }|null>(null);
+  const [unavailabilityError, setUnavailabilityError] = useState<string>('');
+  const [currentEditingGroupId, setCurrentEditingGroupId] = useState<string | null>(null);
 
   const buildDateRange = (a: string, b: string) => {
     if(!a || !b) return [] as string[];
@@ -70,8 +73,6 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
     return out;
   };
 
-  const selectedDragDates = monthDrag.active ? buildDateRange(monthDrag.start, monthDrag.current) : [];
-
   // addDayOffs teraz przyjmuje wielu pracowników + notatkę
   const addDayOffs = (dates: string[], employeeIds: string[], note: string) => {
     if(!employeeIds.length || !dates.length) return;
@@ -79,12 +80,13 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
       const raw = localStorage.getItem(DAY_OFF_KEY);
       const all: DayOff[] = raw ? JSON.parse(raw) : [];
       const existingKeys = new Set(all.map(d=> d.specialistId + '|' + d.date));
+      const groupId = 'unav-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);
       const toAdd: DayOff[] = [];
       employeeIds.forEach(emp => {
         dates.forEach(dateStr => {
           const key = emp + '|' + dateStr;
           if(!existingKeys.has(key)) {
-            toAdd.push({ id: 'dayoff-'+emp+'-'+dateStr, specialistId: emp, date: dateStr, note: note || undefined });
+            toAdd.push({ id: 'dayoff-'+emp+'-'+dateStr, specialistId: emp, date: dateStr, note: note || undefined, groupId });
           }
         });
       });
@@ -112,6 +114,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
             setEditingUnavailability(true);
             setOriginalRangeDates(block.dates);
             setOriginalEmployees(selectedEmployee ? [selectedEmployee] : []);
+            (block as any).groupId && setCurrentEditingGroupId((block as any).groupId);
             setShowUnavailabilityModal(true);
         } else if(dates.length){
           // create new
@@ -425,22 +428,40 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   // === Floating availability block editing state ===
   interface ActiveEditState { id: string; day: string; type: 'create' | 'move' | 'resize'; originalStartIndex: number; originalEndIndex: number; startIndex: number; endIndex: number; originY: number; slotHeight: number; isTemp: boolean; daySnapshot: AvailabilityRange[]; }
   const [activeEdit, setActiveEdit] = useState<ActiveEditState | null>(null);
+  const activeEditRef = React.useRef<ActiveEditState | null>(null);
+  React.useEffect(()=> { activeEditRef.current = activeEdit; }, [activeEdit]);
+  // Przywrócone referencje kolumn dnia oraz liczba slotów (30m) – były usunięte
   const dayColRefs = React.useRef<{ [day: string]: HTMLDivElement | null }>({});
-  const totalSlots = (endHour - startHour) * 2; // 30-min slots
+  const totalSlots = (endHour - startHour) * 2;
 
   const timeFromIndex = (idx: number) => timeSlots[idx];
   const endTimeFromEndIndex = (endIdx: number) => {
-    // endIdx is exclusive; we take previous slot and add 30m
     const base = timeSlots[endIdx - 1];
     const [h, m] = base.split(':').map(Number);
     const date = new Date();
     date.setHours(h, m + 30, 0, 0);
     return date.toTimeString().substring(0,5);
   };
-
   const toISO = (day: string, time: string) => new Date(`${day}T${time}:00`).toISOString();
 
-  // Global mouse move / up for editing blocks
+  const finalizeActiveEdit = React.useCallback(() => {
+    const prev = activeEditRef.current; if(!prev) return;
+    const day = prev.day;
+    const startTime = timeFromIndex(prev.startIndex);
+    const endTime = endTimeFromEndIndex(prev.endIndex);
+    const startISO = toISO(day, startTime);
+    const endISO = toISO(day, endTime);
+    const updated: AvailabilityRange = { id: prev.id, specialistId: selectedEmployee || '', start: startISO, end: endISO };
+    const snapshot = prev.daySnapshot.filter(r => r.id !== updated.id);
+    const mergedDay = mergeRangesAdjacency([...snapshot, updated]);
+    setAvailabilities(a => a.filter(r => dayKey(r.start) !== day || r.specialistId !== selectedEmployee));
+    setTempRanges(t => {
+      const others = t.filter(r => dayKey(r.start) !== day || r.specialistId !== selectedEmployee);
+      return [...others, ...mergedDay];
+    });
+    setActiveEdit(null);
+  }, [selectedEmployee]);
+
   React.useEffect(() => {
     if(!activeEdit) return;
     const handleEditMove = (e: MouseEvent) => {
@@ -449,47 +470,38 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
         const deltaY = e.clientY - prev.originY;
         const slotH = prev.slotHeight;
         if(!slotH) return prev;
-        const deltaSlots = Math.round(deltaY / slotH);
         if(prev.type === 'move') {
           const duration = prev.originalEndIndex - prev.originalStartIndex;
-          let newStart = prev.originalStartIndex + deltaSlots;
-          newStart = Math.max(0, Math.min(newStart, totalSlots - duration));
+            let newStart = prev.originalStartIndex + Math.round(deltaY / slotH);
+          const maxSlots = (endHour - startHour) * 2;
+          newStart = Math.max(0, Math.min(newStart, maxSlots - duration));
           return { ...prev, startIndex: newStart, endIndex: newStart + duration };
         } else if(prev.type === 'resize') {
-          let newEnd = prev.originalEndIndex + deltaSlots;
-            newEnd = Math.max(prev.originalStartIndex + 1, Math.min(newEnd, totalSlots));
-            return { ...prev, endIndex: newEnd };
-        } else if(prev.type === 'create') {
-          let newEnd = prev.originalEndIndex + deltaSlots;
-          if(newEnd < prev.originalStartIndex + 1) newEnd = prev.originalStartIndex + 1;
-          newEnd = Math.max(prev.originalStartIndex + 1, Math.min(newEnd, totalSlots));
+          let newEnd = prev.originalEndIndex + Math.round(deltaY / slotH);
+          const maxSlots = (endHour - startHour) * 2;
+          newEnd = Math.max(prev.originalStartIndex + 1, Math.min(newEnd, maxSlots));
           return { ...prev, endIndex: newEnd };
+        } else if(prev.type === 'create') {
+          // NOWE: oblicz slot wg pozycji kursora względem kolumny dnia – dwukierunkowe zaznaczanie
+          const colEl = dayColRefs.current[prev.day];
+          if(!colEl) return prev;
+          const rect = colEl.getBoundingClientRect();
+          const relY = Math.min(Math.max(e.clientY - rect.top, 0), rect.height - 1);
+          const currentIdx = Math.min((endHour - startHour)*2 - 1, Math.max(0, Math.floor(relY / (rect.height / ((endHour - startHour)*2)))));
+          const anchor = prev.originalStartIndex;
+          const newStart = Math.min(anchor, currentIdx);
+          const newEnd = Math.max(anchor, currentIdx) + 1; // exclusive
+          if(newStart === prev.startIndex && newEnd === prev.endIndex) return prev;
+          return { ...prev, startIndex: newStart, endIndex: newEnd };
         }
         return prev;
       });
     };
-    const handleEditUp = () => {
-      if(!activeEdit) return;
-      const prev = activeEdit;
-      const day = prev.day;
-      const startTime = timeFromIndex(prev.startIndex);
-      const endTime = endTimeFromEndIndex(prev.endIndex);
-      const startISO = toISO(day, startTime);
-      const endISO = toISO(day, endTime);
-      const updated: AvailabilityRange = { id: prev.id, specialistId: selectedEmployee || '', start: startISO, end: endISO };
-      const snapshot = prev.daySnapshot.filter(r => r.id !== updated.id);
-      const mergedDay = mergeRangesAdjacency([...snapshot, updated]);
-      setAvailabilities(a => a.filter(r => dayKey(r.start) !== day || r.specialistId !== selectedEmployee));
-      setTempRanges(t => {
-        const others = t.filter(r => dayKey(r.start) !== day || r.specialistId !== selectedEmployee);
-        return [...others, ...mergedDay];
-      });
-      setActiveEdit(null);
-    };
+    const handleEditUp = () => { finalizeActiveEdit(); };
     window.addEventListener('mousemove', handleEditMove);
     window.addEventListener('mouseup', handleEditUp, { once: true });
     return () => { window.removeEventListener('mousemove', handleEditMove); };
-  }, [activeEdit, selectedEmployee, totalSlots]);
+  }, [activeEdit, finalizeActiveEdit, startHour, endHour]);
 
   // Helper to compute slot indices for a range
   const rangeToIndices = (range: AvailabilityRange) => {
@@ -531,11 +543,19 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
   // helper do pobrania ciągłego bloku niedostępności dla daty (PRZENIESIONY aby istniał przed użyciem)
   const getContiguousDayOffRange = (dateStr: string, empId?: string) => {
     const employeeId = empId || selectedEmployee;
-    if(!employeeId) return { start: dateStr, end: dateStr, dates: [dateStr], note: '' };
+    if(!employeeId) return { start: dateStr, end: dateStr, dates: [dateStr], note: '', groupId: undefined };
     try {
       const raw = localStorage.getItem(DAY_OFF_KEY);
       const all: DayOff[] = raw ? JSON.parse(raw) : [];
-      const empDays = new Set(all.filter(d=> d.specialistId === employeeId).map(d=> d.date));
+      const match = all.find(d=> d.specialistId===employeeId && d.date===dateStr);
+      if(match && match.groupId){
+        const groupDates = all.filter(d=> d.specialistId===employeeId && d.groupId===match.groupId).map(d=> d.date).sort();
+        const start = groupDates[0];
+        const end = groupDates[groupDates.length-1];
+        return { start, end, dates: groupDates, note: match.note || '', groupId: match.groupId };
+      }
+      // fallback contiguous (legacy entries without groupId)
+      const empDays = new Set(all.filter(d=> d.specialistId === employeeId && !d.groupId).map(d=> d.date));
       let cur = new Date(dateStr);
       // backward
       while(true){
@@ -553,10 +573,8 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
       }
       const end = cur.toISOString().split('T')[0];
       const dates = buildDateRange(start, end);
-      const notes = all.filter(d=> d.specialistId===employeeId && dates.includes(d.date) && d.note).map(d=> d.note as string);
-      const note = notes.length ? notes[0] : '';
-      return { start, end, dates, note };
-    } catch { return { start: dateStr, end: dateStr, dates: [dateStr], note: '' }; }
+      return { start, end, dates, note: '', groupId: undefined };
+    } catch { return { start: dateStr, end: dateStr, dates: [dateStr], note: '', groupId: undefined }; }
   };
 
   // REPLACE previous renderWeekView implementation with floating blocks
@@ -629,23 +647,51 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                     className="relative overflow-hidden"
                     style={{height: '100%'}}
                   >
-                    <div className="absolute inset-0 flex flex-col">
+                    <div className="absolute inset-0 flex flex-col"
+                      onMouseDown={(e)=>{
+                        // rozpoczęcie tworzenia nowego zakresu dostępności przez drag po pustym tle kolumny
+                        if(e.button!==0) return;
+                        if(!selectedEmployee) return;
+                        // jeśli klik w istniejący blok / meeting zostanie przechwycony wcześniej
+                      }}
+                    >
                       {timeSlots.map((t, slotIdx) => {
-                        // spotkania nie są już renderowane per slot
                         const isSelectedSlot = isEditDay && slotIdx >= editStart && slotIdx < editEnd;
                         return (
                           <div
                             key={slotIdx}
                             className={`day-slot relative flex-1 px-1 ${slotIdx>0 ? 'border-t border-gray-200' : ''} ${isSelectedSlot ? 'bg-gray-50' : ''}`}
+                            onMouseDown={(e)=>{
+                              if(e.button!==0) return; // tylko LMB
+                              if(!selectedEmployee) return;
+                              if(activeEdit) return; // nie zaczynaj jeśli coś edytujemy
+                              const colEl = dayColRefs.current[dayStr];
+                              const rect = colEl ? colEl.getBoundingClientRect() : { height: 0 } as any;
+                              const slotH = rect.height / totalSlotsLocal;
+                              const newId = 'new-'+Date.now()+'-'+Math.random().toString(36).slice(2,7);
+                              setActiveEdit({
+                                id: newId,
+                                day: dayStr,
+                                type: 'create',
+                                originalStartIndex: slotIdx,
+                                originalEndIndex: slotIdx+1,
+                                startIndex: slotIdx,
+                                endIndex: slotIdx+1,
+                                originY: e.clientY,
+                                slotHeight: slotH,
+                                isTemp: true,
+                                daySnapshot: [...(availabilities.filter(r => dayKey(r.start)===dayStr && r.specialistId===selectedEmployee)), ...(tempRanges.filter(r => dayKey(r.start)===dayStr && r.specialistId===selectedEmployee))]
+                              });
+                            }}
+                            // Usunięto onMouseEnter (global mousemove liczy zakres)
                           >
                             <span className={`absolute inset-0 flex items-center justify-start pl-1 text-[11px] font-semibold select-none pointer-events-none ${isSelectedSlot ? 'text-gray-700' : 'text-gray-600'}`}>{t}</span>
                           </div>
                         );
                       })}
-                      {/* Usunięto gradient overlay */}
                     </div>
                     {/* Availability blocks */}
-                    <div className="absolute inset-0 z-0">
+                    <div className="absolute inset-0 z-0 pointer-events-none">{/* availability container now lets empty space pass events */}
                       {dayRanges.map(r => {
                         const { startIndex, endIndex } = rangeToIndices(r);
                         const topPct = (startIndex / totalSlotsLocal) * 100;
@@ -653,7 +699,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                         return (
                           <div
                             key={r.id}
-                            className="group avail-block absolute left-1 right-1 rounded-md bg-green-100 hover:bg-green-200 shadow-sm text-[12px] md:text-[13px] flex flex-col cursor-move z-20 text-green-800 border border-green-300"
+                            className="group avail-block pointer-events-auto absolute left-1 right-1 rounded-md bg-green-100 hover:bg-green-200 shadow-sm text-[12px] md:text-[13px] flex flex-col cursor-move z-20 text-green-800 border border-green-300"
                             style={{ top: `${topPct}%`, height: `${heightPct}%` }}
                             onMouseDown={(e)=>{
                               const target = e.target as HTMLElement;
@@ -863,10 +909,34 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                   {getMonthGrid(currentDate).map((d: Date, i: number)=> {
                     const inMonth = d.getMonth() === currentDate.getMonth();
                     const dateStr = d.toISOString().split('T')[0];
-                    const isDayOff = dayOffs.some(off=> off.date === dateStr);
+                    const dayOffEntry = dayOffs.find(off=> off.date === dateStr);
+                    const isDayOff = !!dayOffEntry;
+                    const groupId = dayOffEntry?.groupId;
                     const todayStr = new Date().toISOString().split('T')[0];
                     const isToday = dateStr === todayStr;
-                    const selectedDrag = selectedDragDates.includes(dateStr) && monthDrag.moved;
+                    const selectedDrag = monthDrag.active && monthDrag.moved && buildDateRange(monthDrag.start, monthDrag.current).includes(dateStr);
+                    // indeks dnia tygodnia 0..6 (Pon=0)
+                    const weekdayIdx = ((d.getDay()===0?7:d.getDay())-1);
+                    // Poprzedni dzień
+                    const prevDate = new Date(d); prevDate.setDate(d.getDate()-1);
+                    const prevStr = prevDate.toISOString().split('T')[0];
+                    const prevWeekdayIdx = ((prevDate.getDay()===0?7:prevDate.getDay())-1);
+                    const prevSameRow = prevWeekdayIdx < weekdayIdx; // ensures not wrap
+                    const prevEntry = dayOffs.find(off=> off.date===prevStr);
+                    const leftConnected = !!(groupId && prevSameRow && prevEntry && prevEntry.groupId===groupId);
+                    // Następny dzień
+                    const nextDate = new Date(d); nextDate.setDate(d.getDate()+1);
+                    const nextStr = nextDate.toISOString().split('T')[0];
+                    const nextWeekdayIdx = ((nextDate.getDay()===0?7:nextDate.getDay())-1);
+                    const nextSameRow = nextWeekdayIdx > weekdayIdx; // nadal ten sam rząd (nie zawinęliśmy)
+                    const nextEntry = dayOffs.find(off=> off.date===nextStr);
+                    const rightConnected = !!(groupId && nextSameRow && nextEntry && nextEntry.groupId===groupId);
+                    const groupShapeClasses = isDayOff ? (
+                      leftConnected && rightConnected ? 'rounded-none border-l-0' :
+                      leftConnected ? 'rounded-r-md rounded-l-none border-l-0' :
+                      rightConnected ? 'rounded-l-md rounded-r-none' : 'rounded-md'
+                    ) : 'rounded-lg';
+
                     return (
                       <button
                         key={i}
@@ -874,13 +944,15 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                         disabled={!inMonth}
                         onMouseDown={() => { if(!inMonth) return; setMonthDrag({ active: true, start: dateStr, current: dateStr, moved: false, editExisting: isDayOff }); }}
                         onMouseEnter={() => { setMonthDrag(prev => prev.active ? { ...prev, current: dateStr, moved: prev.moved || dateStr !== prev.start } : prev); }}
-                        className={`relative group text-left pt-5 px-2 pb-2 transition-colors outline-none rounded-lg shadow-sm select-none ${inMonth ? '' : 'opacity-40 cursor-not-allowed'}
+                        className={`relative group text-left pt-5 px-2 pb-2 transition-colors outline-none shadow-sm select-none ${inMonth ? '' : 'opacity-40 cursor-not-allowed'} ${groupShapeClasses}
                           ${selectedDrag ? 'bg-red-200/80 border border-red-400 ring-2 ring-red-400' : isDayOff ? 'bg-red-200/80 border border-red-400' : 'bg-white border border-gray-200'}
                           ${!selectedDrag && !isDayOff && !monthDrag.active ? 'hover:bg-gray-50' : ''}
                           ${isToday && inMonth ? 'ring-2 ring-blue-500' : ''}`}
                         aria-current={isToday ? 'date' : undefined}
-                        style={{ height: monthTileHeight, cursor: 'pointer' }}
+                        style={{ height: monthTileHeight, cursor: 'pointer', overflow: 'visible' }}
                       >
+                        {leftConnected && !selectedDrag && isDayOff && <span className="absolute top-0 -left-[10px] h-full w-[10px] bg-red-200/80 border-y border-l border-red-400" />}
+                        {rightConnected && !selectedDrag && isDayOff && <span className="absolute top-0 -right-[10px] h-full w-[10px] bg-red-200/80 border-y border-r border-red-400" />}
                         <span className={`absolute top-1 left-2 text-[11px] font-semibold ${isDayOff || selectedDrag ? 'text-red-700' : 'text-gray-700'}`}>{d.getDate()}</span>
                         {(isDayOff || selectedDrag) && (
                           <span className="absolute bottom-1 left-1 right-1 text-[10px] text-red-700 font-medium truncate">Niedostępny</span>
@@ -953,23 +1025,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                     type="button"
                     onClick={()=> {
                       if(!unavailabilityRange) return;
-                      if(!confirm('Usunąć całą niedostępność dla wybranych pracowników w tym zakresie?')) return;
-                      try {
-                        const raw = localStorage.getItem(DAY_OFF_KEY);
-                        const all: DayOff[] = raw ? JSON.parse(raw) : [];
-                        const toDeleteSet = new Set<string>();
-                        originalRangeDates.forEach(dStr => { originalEmployees.concat(unavailabilityEmployees).forEach(emp => toDeleteSet.add(emp+'|'+dStr)); });
-                        const next = all.filter(d=> !toDeleteSet.has(d.specialistId+'|'+d.date));
-                        localStorage.setItem(DAY_OFF_KEY, JSON.stringify(next));
-                        if(selectedEmployee) setDayOffs(next.filter(d=> d.specialistId === selectedEmployee));
-                      } catch(e){ console.warn('Delete unavailability failed', e); }
-                      setShowUnavailabilityModal(false);
-                      setEditingUnavailability(false);
-                      setUnavailabilityRange(null);
-                      setUnavailabilityEmployees([]);
-                      setUnavailabilityNotes('');
-                      setOriginalRangeDates([]);
-                      setOriginalEmployees([]);
+                      setPendingDeleteUnav({ groupId: currentEditingGroupId || 'legacy', dates: originalRangeDates, employees: originalEmployees.length? originalEmployees : unavailabilityEmployees });
                     }}
                     className="px-3 py-1.5 text-xs font-medium rounded-md bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400"
                   >Usuń</button>
@@ -1022,13 +1078,13 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                 <p className="text-sm font-medium text-gray-700 mb-2">Pracownicy:</p>
                 <div className="flex flex-wrap gap-2 max-h-40 overflow-auto pr-1">
                   {sortedEmployees.map(emp => {
-                    const active = unavailabilityEmployees.includes(emp.id);
+                    const isActiveEmp = unavailabilityEmployees.includes(emp.id);
                     return (
                       <button
                         key={emp.id}
                         type="button"
                         onClick={()=> setUnavailabilityEmployees(prev => prev.includes(emp.id) ? prev.filter(id=> id!==emp.id) : [...prev, emp.id])}
-                        className={`px-3 py-1.5 text-xs rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                        className={`px-3 py-1.5 text-xs rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${isActiveEmp ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
                       >
                         {emp.name}
                       </button>
@@ -1046,8 +1102,9 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                 />
               </div>
               {editingUnavailability && unavailabilityRange && (
-                <div className="text-[11px] text-gray-500 -mt-2">Łącznie dni: {unavailabilityRange.dates.length}</div>
+                <div className="text-[11px] text-gray-500 -mt-2">Łącznie dni: {unavailabilityRange ? unavailabilityRange.dates.length : 0}</div>
               )}
+              {unavailabilityError && <div className="text-xs text-red-600 font-medium">{unavailabilityError}</div>}
               <div className="flex justify-end gap-3 pt-2">
                 <button
                   type="button"
@@ -1058,30 +1115,38 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                   type="button"
                   disabled={!unavailabilityEmployees.length}
                   onClick={()=> {
+                    setUnavailabilityError('');
                     if(unavailabilityRange){
-                      if(editingUnavailability){
-                        // update existing: remove old (originalEmployees) for originalRangeDates, then add new for current selected employees & dates
-                        try {
-                          const raw = localStorage.getItem(DAY_OFF_KEY);
-                          const all: DayOff[] = raw ? JSON.parse(raw) : [];
-                          const removeSet = new Set<string>();
-                          originalRangeDates.forEach(dStr => { originalEmployees.forEach((emp)=> removeSet.add(emp+'|'+dStr)); });
-                          const filtered = all.filter(d=> !removeSet.has(d.specialistId+'|'+d.date));
-                          const existingKeys = new Set(filtered.map(d=> d.specialistId+'|'+d.date));
+                      // validate overlaps
+                      try {
+                        const raw = localStorage.getItem(DAY_OFF_KEY);
+                        const all: DayOff[] = raw ? JSON.parse(raw) : [];
+                        const overlaps = unavailabilityEmployees.some(emp =>
+                          unavailabilityRange.dates.some(ds => all.some(d=> d.specialistId===emp && d.date===ds && (!currentEditingGroupId || d.groupId!==currentEditingGroupId)))
+                        );
+                        if(overlaps){
+                          setUnavailabilityError('Zakres koliduje z istniejącą niedostępnością.');
+                          return;
+                        }
+                        if(editingUnavailability){
+                          // update existing group
+                          const filtered = all.filter(d=> !(currentEditingGroupId && d.groupId===currentEditingGroupId && originalEmployees.includes(d.specialistId)));
+                          const groupId = currentEditingGroupId || ('unav-'+Date.now().toString(36));
                           const toAdd: DayOff[] = [];
                           unavailabilityEmployees.forEach(emp => {
                             unavailabilityRange.dates.forEach(ds => {
-                              const key = emp+'|'+ds;
-                              if(!existingKeys.has(key)) toAdd.push({ id: 'dayoff-'+emp+'-'+ds, specialistId: emp, date: ds, note: unavailabilityNotes.trim() || undefined });
+                              if(!filtered.some(d=> d.specialistId===emp && d.date===ds)){
+                                toAdd.push({ id: 'dayoff-'+emp+'-'+ds, specialistId: emp, date: ds, note: unavailabilityNotes.trim() || undefined, groupId });
+                              }
                             });
                           });
                           const next = [...filtered, ...toAdd];
                           localStorage.setItem(DAY_OFF_KEY, JSON.stringify(next));
                           if(selectedEmployee) setDayOffs(next.filter(d=> d.specialistId === selectedEmployee));
-                        } catch(e){ console.warn('Update unavailability failed', e); }
-                      } else {
-                        addDayOffs(unavailabilityRange.dates, unavailabilityEmployees, unavailabilityNotes.trim());
-                      }
+                        } else {
+                          addDayOffs(unavailabilityRange.dates, unavailabilityEmployees, unavailabilityNotes.trim());
+                        }
+                      } catch(e){ console.warn('Save unavailability failed', e); }
                     }
                     setShowUnavailabilityModal(false);
                     setUnavailabilityRange(null);
@@ -1090,9 +1155,42 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
                     setEditingUnavailability(false);
                     setOriginalRangeDates([]);
                     setOriginalEmployees([]);
+                    setCurrentEditingGroupId(null);
                   }}
                   className={`px-5 py-2.5 text-sm font-medium rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${unavailabilityEmployees.length ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300 cursor-not-allowed'}`}
                 >Zatwierdź</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal potwierdzenia usunięcia grupy niedostępności */}
+      {pendingDeleteUnav && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-sm overflow-hidden animate-scale-in">
+            <div className="p-6">
+              <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="h-6 w-6 text-red-600" />
+              </div>
+              <h3 className="text-base font-semibold text-gray-900 mb-2 text-center">Usuń niedostępność?</h3>
+              <p className="text-sm text-gray-600 mb-6 leading-relaxed text-center">Czy na pewno chcesz usunąć wybraną niedostępność ( {pendingDeleteUnav.dates.length} dni )? Operacji nie można cofnąć.</p>
+              <div className="flex justify-center gap-3">
+                <button type="button" onClick={()=> setPendingDeleteUnav(null)} className="px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">Anuluj</button>
+                <button type="button" onClick={()=> {
+                  try {
+                    const raw = localStorage.getItem(DAY_OFF_KEY);
+                    const all: DayOff[] = raw ? JSON.parse(raw) : [];
+                    const deleteSet = new Set(pendingDeleteUnav!.dates.flatMap(d=> pendingDeleteUnav!.employees.map(e=> e+'|'+d)));
+                    const next = all.filter(d=> !(d.groupId===pendingDeleteUnav!.groupId || deleteSet.has(d.specialistId+'|'+d.date)));
+                    localStorage.setItem(DAY_OFF_KEY, JSON.stringify(next));
+                    if(selectedEmployee) setDayOffs(next.filter(d=> d.specialistId === selectedEmployee));
+                  } catch(e){ console.warn('Delete unavailability group failed', e); }
+                  setPendingDeleteUnav(null);
+                  setShowUnavailabilityModal(false);
+                  setEditingUnavailability(false);
+                  setCurrentEditingGroupId(null);
+                }} className="px-4 py-2.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400">Usuń</button>
               </div>
             </div>
           </div>
