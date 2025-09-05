@@ -1,7 +1,7 @@
 export interface User {
   id: string;
   name: string;
-  role: 'admin' | 'employee';
+  role: 'admin' | 'employee' | 'contact';
   specialization?: string;
   employmentStart?: string; // YYYY-MM-DD
   employmentEnd?: string;   // YYYY-MM-DD
