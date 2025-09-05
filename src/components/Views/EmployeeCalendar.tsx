@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import CalendarHeader from '../Calendar/CalendarHeader';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { User, Room, Meeting } from '../../types';
-import { ChevronDown, Copy, Check, Trash2 } from 'lucide-react';
+import { ChevronDown, Check, Trash2 } from 'lucide-react';
 import MonthCalendar from './MonthCalendar';
+
+const DAYOFF_MEETING_PREFIX = 'dayoff-';
 
 // === Date helpers ===
 const formatLocalDate = (d: Date) => {
@@ -32,7 +34,7 @@ interface EmployeeCalendarProps {
   endHour: number;
 }
 
-const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, meetings, */ currentUser, showWeekends, startHour, endHour }) => {
+const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, */ meetings, currentUser, showWeekends, startHour, endHour }) => {
   // Core state
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewType, setViewType] = useState<'week' | 'month'>('week');
@@ -52,7 +54,25 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, me
   interface DayOff { id: string; specialistId: string; date: string; note?: string; groupId?: string; }
   const DAY_OFF_KEY = 'schedule_day_offs';
   const [dayOffs, setDayOffs] = useState<DayOff[]>([]);
-  React.useEffect(()=> { if(!selectedEmployee) return; try { const raw=localStorage.getItem(DAY_OFF_KEY); const all: DayOff[] = raw? JSON.parse(raw): []; setDayOffs(all.filter(d=> d.specialistId===selectedEmployee)); } catch(e){ console.warn('Load dayOffs failed', e);} }, [selectedEmployee]);
+  const [allDayOffs, setAllDayOffs] = useState<DayOff[]>([]);
+  const loadDayOffs = React.useCallback(()=> { if(!selectedEmployee) { setDayOffs([]); setAllDayOffs([]); return; } try { const raw=localStorage.getItem(DAY_OFF_KEY); const all: DayOff[] = raw? JSON.parse(raw): []; setAllDayOffs(all); setDayOffs(all.filter(d=> d.specialistId===selectedEmployee)); } catch(e){ console.warn('Load dayOffs failed', e);} }, [selectedEmployee]);
+  React.useEffect(()=> { loadDayOffs(); }, [loadDayOffs]);
+  // Helpers for rendering day-off blocks in week view
+  const formatDayDisplayFull = React.useCallback((iso:string)=> { if(!iso) return ''; const [y,m,d]=iso.split('-'); return `${d}.${m}.${y}`; }, []);
+  const dayOffGroupMeta = React.useMemo(()=> {
+    const map: Record<string, { start:string; end:string; note?: string; employees: string[] }> = {};
+    allDayOffs.forEach(d=> {
+      const key = d.groupId || d.id;
+      if(!map[key]) { map[key] = { start:d.date, end:d.date, note:d.note, employees: [d.specialistId] }; }
+      else {
+        if(d.date < map[key].start) map[key].start = d.date;
+        if(d.date > map[key].end) map[key].end = d.date;
+        if(d.note && !map[key].note) map[key].note = d.note;
+        if(!map[key].employees.includes(d.specialistId)) map[key].employees.push(d.specialistId);
+      }
+    });
+    return map;
+  }, [allDayOffs]);
 
   // Month view pending marker callback integration
   const [monthPending, setMonthPending] = React.useState(false);
@@ -143,6 +163,19 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, me
 
   const rangeToIndices = (range:AvailabilityRange)=> { const startD=new Date(range.start); const endD=new Date(range.end); const startMinutes=startD.getHours()*60 + startD.getMinutes(); const endMinutes=endD.getHours()*60 + endD.getMinutes(); const rawStart=(startMinutes-startHour*60)/30; const rawEnd=(endMinutes-startHour*60)/30; const startIndex=Math.max(0, Math.min(totalSlots-1, Math.floor(rawStart))); const endIndex=Math.max(startIndex+1, Math.min(totalSlots, Math.ceil(rawEnd))); return { startIndex, endIndex }; };
 
+  // Meetings helper (przywrócone)
+  const meetingToIndices = React.useCallback((m: Meeting) => {
+    const [sh, sm] = m.startTime.split(':').map(Number);
+    const [eh, em] = m.endTime.split(':').map(Number);
+    const startMinutes = sh * 60 + sm;
+    const endMinutes = eh * 60 + em;
+    const rawStart = (startMinutes - startHour * 60) / 30;
+    const rawEnd = (endMinutes - startHour * 60) / 30;
+    const startIndex = Math.max(0, Math.min(totalSlots - 1, Math.floor(rawStart)));
+    const endIndex = Math.max(startIndex + 1, Math.min(totalSlots, Math.ceil(rawEnd)));
+    return { startIndex, endIndex };
+  }, [startHour, endHour, totalSlots]);
+
   // Copy availability handler
   const handleCopyAvailability = () => { if(!selectedEmployee) return; const working=[...availabilities.filter(r=> r.specialistId===selectedEmployee), ...tempRanges.filter(r=> r.specialistId===selectedEmployee)]; const baseWeekRanges= working.filter(r=> { const startDate=new Date(r.start); return startDate>=weekBounds.start && startDate<=weekBounds.end; }); if(!baseWeekRanges.length){ setShowCopyDropdown(false); return; } const weeksToCopy = copyPeriod==='week'? 1 : 4; const newRanges:AvailabilityRange[]=[]; let counter=0; for(let w=1; w<=weeksToCopy; w++){ const dayOffset=w*7; for(const r of baseWeekRanges){ const startDate=new Date(r.start); startDate.setDate(startDate.getDate()+dayOffset); const endDate=new Date(r.end); endDate.setDate(endDate.getDate()+dayOffset); newRanges.push({ id:`copy-${Date.now()}-${w}-${counter++}`, specialistId:r.specialistId, start:startDate.toISOString(), end:endDate.toISOString() }); } } if(!newRanges.length){ setShowCopyDropdown(false); return; } setTempRanges(prev=> [...prev, ...newRanges]); setShowCopyDropdown(false); };
 
@@ -151,7 +184,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, me
   const runWithSaving = (action: ()=>void) => { if(showSavingDialog) return; setShowSavingDialog(true); requestAnimationFrame(()=> { action(); setTimeout(()=> setShowSavingDialog(false), 1200); }); };
 
   // Week view renderer
-  const renderWeekView = () => { const weekDays=getWeekDays(currentDate); /* const employeeMeetings=getEmployeeMeetings(); */ const calendarHeight='calc(100vh - 292px)'; const hourColWidth=56; const gridTemplate={ gridTemplateColumns: `${hourColWidth}px repeat(${weekDays.length}, 1fr)` }; const activeId=activeEdit?.id; const allRanges=[...availabilities, ...tempRanges].filter(r=> r.specialistId===selectedEmployee); const byDay: Record<string, AvailabilityRange[]> = {}; allRanges.forEach(r=> { if(r.id!==activeId){ const dayStr=new Date(r.start).toISOString().split('T')[0]; (byDay[dayStr] ||= []).push(r);} }); return (
+  const renderWeekView = () => { const weekDays=getWeekDays(currentDate); const employeeMeetings = selectedEmployee? meetings.filter(m=> m.specialistId===selectedEmployee && !m.id.startsWith(DAYOFF_MEETING_PREFIX)): []; const calendarHeight='calc(100vh - 292px)'; const hourColWidth=56; const gridTemplate={ gridTemplateColumns: `${hourColWidth}px repeat(${weekDays.length}, 1fr)` }; const activeId=activeEdit?.id; const allRanges=[...availabilities, ...tempRanges].filter(r=> r.specialistId===selectedEmployee); const byDay: Record<string, AvailabilityRange[]> = {}; allRanges.forEach(r=> { if(r.id!==activeId){ const dayStr=new Date(r.start).toISOString().split('T')[0]; (byDay[dayStr] ||= []).push(r);} }); return (
     <div className="rounded-xl shadow-sm border border-gray-200 flex flex-col h-full bg-transparent">
       <div className="flex-1 overflow-hidden select-none">
         <div className="h-full flex flex-col">
@@ -170,7 +203,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, me
                 {timeSlots.map((t,i)=>(<div key={i} className={`flex-1 flex items-center justify-center ${i>0?'border-t border-gray-200':''}`}> <span className="text-[12px] font-medium text-gray-700 select-none leading-none tracking-tight">{t}</span></div>))}
               </div>
             </div>
-            {weekDays.map((day, idx)=> { const dayStr=formatDateForComparison(day); /* const dayMeetings=employeeMeetings.filter(m=> m.date===dayStr); */ const dayRanges=byDay[dayStr] || []; const isEditDay=activeEdit?.day===dayStr; const editStart=activeEdit?.startIndex ?? -1; const editEnd=activeEdit?.endIndex ?? -1; return (
+            {weekDays.map((day, idx)=> { const dayStr=formatDateForComparison(day); const dayMeetings = employeeMeetings.filter(m=> m.date===dayStr); const dayRanges=byDay[dayStr] || []; const isEditDay=activeEdit?.day===dayStr; const editStart=activeEdit?.startIndex ?? -1; const editEnd=activeEdit?.endIndex ?? -1; return (
               <div key={idx} ref={el=> { dayColRefs.current[dayStr]=el; }} className="relative overflow-hidden" style={{height:'100%'}}>
                 <div className="absolute inset-0 flex flex-col">
                   {timeSlots.map((t, slotIdx)=> { const isSelectedSlot=isEditDay && slotIdx>=editStart && slotIdx<editEnd; return (
@@ -197,7 +230,20 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, me
                   {activeEdit && activeEdit.day===dayStr && (()=> { const { startIndex, endIndex }=activeEdit; const topPct=(startIndex/totalSlots)*100; const heightPct=((endIndex-startIndex)/totalSlots)*100; const startTime=timeFromIndex(startIndex); const endTime=endTimeFromEndIndex(endIndex); return (<div className="absolute left-1 right-1 rounded-md bg-green-200/80 text-[12px] md:text-[13px] flex flex-col pointer-events-none z-30 text-green-800 border border-green-300" style={{ top:`${topPct}%`, height:`${heightPct}%` }}><div className="px-1 py-0.5 font-semibold select-none">{startTime} - {endTime}</div></div>); })()}
                 </div>
                 <div className="absolute inset-0 z-40 pointer-events-none">
-                  {/* Spotkania tymczasowo ukryte w tej uproszczonej wersji dialogu wysyłania */}
+                  {/* Day-offs full-day red blocks */}
+                  {dayOffs.filter(o=> o.date===dayStr).map(o=> { const meta = o.groupId? dayOffGroupMeta[o.groupId]: dayOffGroupMeta[o.id]; const note=meta?.note; const rangeLabel = meta? (meta.start===meta.end? formatDayDisplayFull(meta.start): `${formatDayDisplayFull(meta.start)}-${formatDayDisplayFull(meta.end)}`): ''; const employeeNames = (meta?.employees||[]).map(id=> sortedEmployees.find(e=> e.id===id)?.name || id).join(', '); return (
+                    <div key={o.id} className="absolute left-2 right-2 rounded-md bg-red-200/95 text-red-900 shadow-md flex flex-col pointer-events-none z-30 border border-red-300 px-3 py-2 overflow-hidden" style={{ top:'0%', height:'100%' }}>
+                      <div className="font-bold leading-tight tracking-tight text-[13px] md:text-[14px] mb-1 truncate">{rangeLabel}</div>
+                      {employeeNames && <div className="text-[12px] md:text-[13px] font-medium mb-2 truncate">{employeeNames}</div>}
+                      {note && <div className="text-[11px] md:text-[12px] leading-snug opacity-90 whitespace-pre-wrap break-words line-clamp-6">{note}</div>}
+                    </div>
+                  ); })}
+                  {dayMeetings.map(m=> { const { startIndex, endIndex } = meetingToIndices(m); const topPct=(startIndex/ totalSlots)*100; const heightPct=((endIndex-startIndex)/ totalSlots)*100; return (
+                    <div key={m.id} className="absolute left-2 right-2 rounded-md bg-yellow-100/95 text-yellow-900 shadow-md text-[10px] leading-tight px-2 py-1 flex flex-col pointer-events-auto z-40" style={{ top:`${topPct}%`, height:`${heightPct}%` }}>
+                      <div className="font-semibold truncate">{m.patientName || 'Spotkanie'}</div>
+                      <div className="text-[11px] opacity-80 tracking-tight">{m.startTime}-{m.endTime}</div>
+                    </div>
+                  ); })}
                 </div>
               </div>
             ); })}
@@ -237,10 +283,10 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, me
                         <button onClick={()=> { setCopyPeriod('4weeks'); setShowCopyDropdown(false);} } className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2">{copyPeriod==='4weeks' && <Check className="h-4 w-4 text-blue-600" />}<span className={copyPeriod==='4weeks'? 'text-blue-600 font-medium':'text-gray-700'}>kolejne 4 tygodnie</span></button>
                       </div>) }
                   </div>
-                  <button onClick={handleCopyAvailability} disabled={!selectedEmployee} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"><Copy className="h-4 w-4" />Zastosuj</button>
+                  <button onClick={handleCopyAvailability} disabled={!selectedEmployee} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors">Powiel</button>
                 </>)}
                 {viewType==='month' && monthPending && (<div className="flex items-center gap-2 ml-8 md:ml-12">
-                  <button onClick={()=> runWithSaving(()=> monthActionsRef.current?.save())} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors">Zapisz zmiany</button>
+                  <button onClick={()=> runWithSaving(()=> { monthActionsRef.current?.save(); loadDayOffs(); })} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors">Zapisz zmiany</button>
                   <button onClick={()=> monthActionsRef.current?.discard()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors">Odrzuć</button>
                 </div>)}
                 {viewType==='week' && (!pendingDeleteRange && (tempRanges.length>0 || deletedRangeIds.length>0)) && (<div className="flex items-center gap-2 ml-8 md:ml-12">

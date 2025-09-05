@@ -1,6 +1,9 @@
 import React from 'react';
+import { loadMeetings, saveMeetings } from '../../utils/storage';
+import { Meeting } from '../../types';
 
 const DAY_OFF_KEY = 'schedule_day_offs';
+const DAYOFF_MEETING_PREFIX = 'dayoff-';
 
 interface DayOff { id: string; specialistId: string; date: string; note?: string; groupId?: string; }
 interface EmployeeLite { id: string; name: string; }
@@ -8,7 +11,8 @@ interface MonthCalendarProps { currentDate: Date; dayOffs: DayOff[]; buildDateRa
 
 // Helpers
 const formatDisplayDate = (iso: string) => { if(!iso) return ''; const [y,m,d] = iso.split('-'); return `${d}/${m}/${y}`; };
-const formatISO = (d: Date) => d.toISOString().slice(0,10);
+// Use local time instead of UTC to avoid off-by-one day issues in date picker
+const formatISO = (d: Date) => { const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const dd=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; };
 
 const MonthCalendar: React.FC<MonthCalendarProps> = ({ currentDate, dayOffs, buildDateRange, formatLocalDate, employees = [], defaultEmployeeId, onPendingStateChange }) => {
   // Dynamic tile height
@@ -49,7 +53,8 @@ const MonthCalendar: React.FC<MonthCalendarProps> = ({ currentDate, dayOffs, bui
   const [editingInitialNote, setEditingInitialNote] = React.useState('');
   const [editingInitialEmployees, setEditingInitialEmployees] = React.useState<string[]>([]);
 
-  React.useEffect(()=> { const up=()=> { setDragSelecting(prev=> { if(!prev) return prev; if(dragStart && dragCurrent){ const dates=buildDateRange(dragStart, dragCurrent); if(dates.length){ setRangeDates(dates); setShowRangeModal(true);} } return false; }); setDragStart(null); setDragCurrent(null); }; window.addEventListener('mouseup', up); return ()=> window.removeEventListener('mouseup', up); }, [dragStart, dragCurrent, buildDateRange]);
+  // Replace previous mouseup listener with a single robust handler that reads the end date under the cursor
+  React.useEffect(()=> { const up=(e: MouseEvent)=> { setDragSelecting(prev=> { if(!prev) return prev; const start=dragStart; const getDateFromPoint = (evt: MouseEvent): string | null => { const el = document.elementFromPoint(evt.clientX, evt.clientY) as HTMLElement | null; let node: HTMLElement | null = el; while (node) { const ds = (node as HTMLElement).dataset as any; if (ds && ds.date) return ds.date as string; node = node.parentElement; } return null; }; const hovered = getDateFromPoint(e); const end = dragCurrent || hovered || start; if(start && end){ const dates=buildDateRange(start, end); if(dates.length){ setRangeDates(dates); setShowRangeModal(true);} } return false; }); setDragStart(null); setDragCurrent(null); }; window.addEventListener('mouseup', up); return ()=> window.removeEventListener('mouseup', up); }, [dragStart, dragCurrent, buildDateRange]);
   const selectedDragDates = (dragSelecting && dragStart && dragCurrent)? buildDateRange(dragStart, dragCurrent): [];
   const selectedDragSet = React.useMemo(()=> new Set(selectedDragDates), [selectedDragDates]);
 
@@ -211,6 +216,25 @@ const MonthCalendar: React.FC<MonthCalendarProps> = ({ currentDate, dayOffs, bui
       const next = existing.filter(d=> !(d.groupId && (replacedGroupIds.includes(d.groupId) || deletedGroupIds.includes(d.groupId))));
       const finalData = [...next, ...localDayOffs];
       localStorage.setItem(DAY_OFF_KEY, JSON.stringify(finalData));
+
+      // Additionally, mirror day-offs as meetings without a room
+      const currentMeetings: Meeting[] = loadMeetings();
+      const meetingsWithoutDayOffs = currentMeetings.filter(m=> !m.id.startsWith(DAYOFF_MEETING_PREFIX));
+      const dayoffMeetings: Meeting[] = finalData.map(off => ({
+        id: `${DAYOFF_MEETING_PREFIX}${off.groupId || 'single'}-${off.specialistId}-${off.date}`,
+        specialistId: off.specialistId,
+        patientName: 'Niedostępność',
+        roomId: '', // no room assigned
+        date: off.date,
+        startTime: '00:00',
+        endTime: '23:59',
+        notes: off.note || '',
+        status: 'cancelled',
+        createdBy: 'system',
+        // optional multi-specialist cache fields kept empty/not used
+      } as Meeting));
+      saveMeetings([...meetingsWithoutDayOffs, ...dayoffMeetings]);
+
       setLocalDayOffs([]); setReplacedGroupIds([]); setDeletedGroupIds([]); loadBaseline();
     } catch(e){ console.warn('Save dayOff staged changes failed', e); }
   }, [localDayOffs, replacedGroupIds, deletedGroupIds, loadBaseline]);
@@ -239,7 +263,7 @@ const MonthCalendar: React.FC<MonthCalendarProps> = ({ currentDate, dayOffs, bui
           const isInDragSelection = selectedDragSet.has(dateStr) && !isDayOff;
           const isFirstOfGroup = isDayOff && !prevEntrySameGroup;
           return (
-            <div key={i} style={{height:tileHeight}} className={`relative flex flex-col justify-start p-1.5 text-[11px] font-medium h-full transition-colors border ${inMonth? '' : 'opacity-40'} ${isDayOff? 'bg-red-200 text-red-900 border-red-300 cursor-pointer':'bg-white text-gray-700 border-gray-200 hover:border-gray-300 hover:bg-gray-50'} ${isInDragSelection? 'ring-2 ring-red-400 ring-offset-1 bg-red-50':''} ${groupShapeClasses}`}
+            <div key={i} style={{height:tileHeight}} data-date={dateStr} className={`relative flex flex-col justify-start p-1.5 text-[11px] font-medium h-full transition-colors border ${inMonth? '' : 'opacity-40'} ${isDayOff? 'bg-red-200 text-red-900 border-red-300 cursor-pointer':'bg-white text-gray-700 border-gray-200 hover:border-gray-300 hover:bg-gray-50'} ${isInDragSelection? 'ring-2 ring-red-400 ring-offset-1 bg-red-50':''} ${groupShapeClasses}`}
               onMouseDown={(e)=> { if(e.button!==0) return; if(isDayOff && groupId){ e.stopPropagation(); openEditGroup(groupId); return; } setDragSelecting(true); setDragStart(dateStr); setDragCurrent(dateStr); }}
               onMouseEnter={()=> { if(dragSelecting) setDragCurrent(dateStr); }}>
               {isDayOff && leftConnected && <div className="absolute top-0 left-[-8px] h-full w-8 bg-red-200 pointer-events-none z-0" />}
