@@ -4,7 +4,7 @@ import { User, LogOut, Bell } from 'lucide-react';
 interface TopBarProps {
   currentUser: {
     name: string;
-    role: 'admin' | 'employee';
+  role: 'admin' | 'employee' | 'contact';
   };
   onLogout: () => void;
   pageTitle: string; // NEW
