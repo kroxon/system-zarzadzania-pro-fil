@@ -4,7 +4,7 @@ import { Calendar, Users, MapPin, Settings, BarChart3, User, ListChecks, Clipboa
 interface SidebarProps {
   currentView: string;
   onViewChange: (view: string) => void;
-  userRole: 'admin' | 'employee';
+  userRole: 'admin' | 'employee' | 'contact';
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }) => {
@@ -15,7 +15,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
   const [expanded, setExpanded] = useState(false); // sidebar hover state
 
   // Base items excluding dashboard and groups
-  const otherItems: { id: string; label: string; icon: React.ElementType; roles: Array<'admin' | 'employee'> }[] = [
+  const otherItems: { id: string; label: string; icon: React.ElementType; roles: Array<'admin' | 'employee' | 'contact'> }[] = [
     { id: 'shared-calendar', label: 'Kalendarz wspólny', icon: Calendar, roles: ['admin', 'employee'] },
     { id: 'quizes', label: 'Quizy', icon: ListChecks, roles: ['admin', 'employee'] },
     { id: 'tasks', label: 'Zadania', icon: ClipboardList, roles: ['admin', 'employee'] },
