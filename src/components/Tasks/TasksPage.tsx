@@ -42,7 +42,7 @@ const StatusBadge = ({ status }: { status: string }) => {
 };
 
 
-export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee' }) {
+export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee' | 'contact' }) {
   const [taskList, setTaskList] = useState<Task[]>(() => loadTasks());
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [formData, setFormData] = useState<Task | null>(null);
