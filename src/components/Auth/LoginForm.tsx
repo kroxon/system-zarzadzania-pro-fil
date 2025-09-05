@@ -7,6 +7,7 @@ interface LoginFormProps {
 
 const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
   const [selectedUser, setSelectedUser] = useState('');
+  const [loginData, setLoginData] = useState({ username: '', password: '' });
 
   const demoUsers = [
     {
@@ -39,66 +40,137 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
     }
   };
 
+  const handleFormLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+  fetch(`${import.meta.env.VITE_API_URL}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(loginData),
+    })
+      .then(async res => {
+      if (!res.ok) {
+        throw new Error('Błąd logowania');
+      }
+      const user = await res.json();
+      if (user.token) {
+        localStorage.setItem('token', user.token);
+      }
+      onLogin(user);
+      })
+      .catch(() => {
+      alert('Nieprawidłowy login lub hasło');
+      });
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Lock className="h-8 w-8 text-blue-600" />
+      <div className="flex flex-col md:flex-row gap-8 w-full max-w-4xl">
+        {/* Kafelek 1: Wybór użytkownika */}
+        <div className="bg-white rounded-2xl shadow-xl w-full md:w-1/2 p-8 flex flex-col justify-center">
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Lock className="h-8 w-8 text-blue-600" />
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900">System Grafików</h1>
+            <p className="text-gray-600 mt-2">Wybierz użytkownika do logowania (MVP)</p>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">System Grafików</h1>
-          <p className="text-gray-600 mt-2">Wybierz użytkownika do logowania (MVP)</p>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Wybierz profil użytkownika
+              </label>
+              <select
+                value={selectedUser}
+                onChange={(e) => setSelectedUser(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">Wybierz użytkownika...</option>
+                {demoUsers.map(user => (
+                  <option key={user.id} value={user.id}>
+                    {user.name} - {user.role === 'admin' ? 'Administrator' : 'Pracownik'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedUser && (
+              <div className="bg-gray-50 rounded-lg p-4">
+                {(() => {
+                  const user = demoUsers.find(u => u.id === selectedUser);
+                  return user ? (
+                    <div className="text-sm">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <User className="h-4 w-4 text-gray-600" />
+                        <span className="font-medium">{user.name}</span>
+                      </div>
+                      <p className="text-gray-600">{user.specialization}</p>
+                      <p className="text-gray-500 text-xs mt-1">{user.description}</p>
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+            )}
+
+            <button
+              onClick={handleLogin}
+              disabled={!selectedUser}
+              className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
+            >
+              Zaloguj się
+            </button>
+
+            <div className="text-center text-xs text-gray-500 mt-6">
+              <p>To jest prototyp aplikacji (MVP)</p>
+              <p>Wybierz różne profile, aby zobaczyć różne uprawnienia</p>
+            </div>
+          </div>
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Wybierz profil użytkownika
-            </label>
-            <select
-              value={selectedUser}
-              onChange={(e) => setSelectedUser(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">Wybierz użytkownika...</option>
-              {demoUsers.map(user => (
-                <option key={user.id} value={user.id}>
-                  {user.name} - {user.role === 'admin' ? 'Administrator' : 'Pracownik'}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {selectedUser && (
-            <div className="bg-gray-50 rounded-lg p-4">
-              {(() => {
-                const user = demoUsers.find(u => u.id === selectedUser);
-                return user ? (
-                  <div className="text-sm">
-                    <div className="flex items-center space-x-2 mb-2">
-                      <User className="h-4 w-4 text-gray-600" />
-                      <span className="font-medium">{user.name}</span>
-                    </div>
-                    <p className="text-gray-600">{user.specialization}</p>
-                    <p className="text-gray-500 text-xs mt-1">{user.description}</p>
-                  </div>
-                ) : null;
-              })()}
+        {/* Kafelek 2: Formularz logowania + rejestracja */}
+        <div className="bg-white rounded-2xl shadow-xl w-full md:w-1/2 p-8 flex flex-col justify-center">
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <User className="h-8 w-8 text-indigo-600" />
             </div>
-          )}
-
-          <button
-            onClick={handleLogin}
-            disabled={!selectedUser}
-            className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
-          >
-            Zaloguj się
-          </button>
-
-          <div className="text-center text-xs text-gray-500 mt-6">
-            <p>To jest prototyp aplikacji (MVP)</p>
-            <p>Wybierz różne profile, aby zobaczyć różne uprawnienia</p>
+            <h2 className="text-2xl font-bold text-gray-900">Logowanie</h2>
+            <p className="text-gray-600 mt-2">Zaloguj się lub zarejestruj nowe konto</p>
           </div>
+          <form className="space-y-4" onSubmit={handleFormLogin}>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Login</label>
+              <input
+                type="text"
+                value={loginData.username}
+                onChange={e => setLoginData({ ...loginData, username: e.target.value })}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Hasło</label>
+              <input
+                type="password"
+                value={loginData.password}
+                onChange={e => setLoginData({ ...loginData, password: e.target.value })}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                required
+              />
+            </div>
+            <button
+              type="submit"
+              className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+            >
+              Zaloguj się
+            </button>
+            <button
+              type="button"
+              className="w-full bg-gray-100 text-indigo-700 py-3 px-4 rounded-lg hover:bg-indigo-200 transition-colors font-medium mt-2"
+              onClick={() => alert('Przejdź do rejestracji')}
+            >
+              Zarejestruj się
+            </button>
+          </form>
         </div>
       </div>
     </div>
