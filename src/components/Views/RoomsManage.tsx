@@ -29,7 +29,7 @@ const ROOM_COLOR_PALETTE = [
 interface RoomsManageProps {
   rooms: Room[];
   onRoomsChange: (rooms: Room[]) => void;
-  userRole: 'admin' | 'employee';
+  userRole: 'admin' | 'employee' | 'contact';
 }
 
 const emptyRoom = (): Room => ({ id: '', name: '', capacity: 0, equipment: [], purpose: '', color: ROOM_COLOR_PALETTE[0] });
