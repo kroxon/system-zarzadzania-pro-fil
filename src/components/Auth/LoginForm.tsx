@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { User, Lock } from 'lucide-react';
+import RegisterForm from './RegisterForm';
 
 interface LoginFormProps {
   onLogin: (user: { id: string; name: string; role: 'admin' | 'employee'; specialization?: string }) => void;
 }
 
 const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
+  const [isRegistering, setIsRegistering] = useState(false);
   const [selectedUser, setSelectedUser] = useState('');
   const [loginData, setLoginData] = useState({ username: '', password: '' });
 
@@ -64,9 +66,9 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-      <div className="flex flex-col md:flex-row gap-8 w-full max-w-4xl">
+  <div className="flex flex-col md:flex-row gap-8 w-full max-w-4xl justify-center items-center">
         {/* Kafelek 1: Wybór użytkownika */}
-        <div className="bg-white rounded-2xl shadow-xl w-full md:w-1/2 p-8 flex flex-col justify-center">
+  <div className="bg-white rounded-2xl shadow-xl w-full md:w-1/2 p-8 flex flex-col justify-center" style={{ width: '480px', height: '540px' }}>
           <div className="text-center mb-8">
             <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <Lock className="h-8 w-8 text-blue-600" />
@@ -127,50 +129,80 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
           </div>
         </div>
 
-        {/* Kafelek 2: Formularz logowania + rejestracja */}
-        <div className="bg-white rounded-2xl shadow-xl w-full md:w-1/2 p-8 flex flex-col justify-center">
-          <div className="text-center mb-8">
-            <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <User className="h-8 w-8 text-indigo-600" />
+        {/* Kafelek 2: flip logowanie/rejestracja */}
+        <div className="bg-white rounded-2xl shadow-xl w-full md:w-1/2 p-8 flex flex-col justify-center" style={{ width: '480px', height: '540px' }}>
+          <div className="relative w-full h-full" style={{ perspective: '1200px' }}>
+            <div
+              className={`transition-transform duration-500 ease-in-out w-full h-full`}
+              style={{
+                minHeight: '400px',
+                position: 'relative',
+                transformStyle: 'preserve-3d',
+                transform: isRegistering ? 'rotateY(180deg)' : 'none'
+              }}
+            >
+              {/* Front: logowanie */}
+              <div className="absolute w-full h-full" style={{ backfaceVisibility: 'hidden' }}>
+                <div className="bg-white rounded-2xl p-8 flex flex-col justify-center h-full">
+                  <div className="text-center mb-8">
+                    <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <User className="h-8 w-8 text-indigo-600" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-gray-900">Logowanie</h2>
+                    <p className="text-gray-600 mt-2">Zaloguj się lub zarejestruj nowe konto</p>
+                  </div>
+                  <form className="space-y-4" onSubmit={handleFormLogin}>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Login</label>
+                      <input
+                        type="text"
+                        value={loginData.username}
+                        onChange={e => setLoginData({ ...loginData, username: e.target.value })}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Hasło</label>
+                      <input
+                        type="password"
+                        value={loginData.password}
+                        onChange={e => setLoginData({ ...loginData, password: e.target.value })}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        required
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                    >
+                      Zaloguj się
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full bg-gray-100 text-indigo-700 py-3 px-4 rounded-lg hover:bg-indigo-200 transition-colors font-medium mt-2"
+                      onClick={() => setIsRegistering(true)}
+                    >
+                      Zarejestruj się
+                    </button>
+                  </form>
+                </div>
+              </div>
+              {/* Back: rejestracja */}
+              <div className="absolute w-full h-full" style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}>
+                <div className="flex flex-col justify-center h-full">
+                  <div className="text-center mb-8">
+                    <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <User className="h-8 w-8 text-indigo-600" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-gray-900">Rejestracja</h2>
+                    <p className="text-gray-600 mt-2">Załóż nowe konto</p>
+                  </div>
+                  <RegisterForm onRegisterSuccess={() => setIsRegistering(false)} />
+                </div>
+              </div>
             </div>
-            <h2 className="text-2xl font-bold text-gray-900">Logowanie</h2>
-            <p className="text-gray-600 mt-2">Zaloguj się lub zarejestruj nowe konto</p>
           </div>
-          <form className="space-y-4" onSubmit={handleFormLogin}>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Login</label>
-              <input
-                type="text"
-                value={loginData.username}
-                onChange={e => setLoginData({ ...loginData, username: e.target.value })}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Hasło</label>
-              <input
-                type="password"
-                value={loginData.password}
-                onChange={e => setLoginData({ ...loginData, password: e.target.value })}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                required
-              />
-            </div>
-            <button
-              type="submit"
-              className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
-            >
-              Zaloguj się
-            </button>
-            <button
-              type="button"
-              className="w-full bg-gray-100 text-indigo-700 py-3 px-4 rounded-lg hover:bg-indigo-200 transition-colors font-medium mt-2"
-              onClick={() => alert('Przejdź do rejestracji')}
-            >
-              Zarejestruj się
-            </button>
-          </form>
         </div>
       </div>
     </div>
