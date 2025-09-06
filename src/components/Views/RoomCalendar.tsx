@@ -41,9 +41,9 @@ function getRoomStyle(room: Room | undefined){
   return { backgroundColor: bg, borderColor: border, color: text };
 }
 
-interface RoomCalendarProps { users: User[]; rooms: Room[]; meetings: Meeting[]; currentUser: User; onMeetingCreate: (m: Omit<Meeting,'id'>) => void; onMeetingUpdate: (id:string, u:Partial<Meeting>)=>void; showWeekends:boolean; startHour:number; endHour:number; }
+interface RoomCalendarProps { users: User[]; rooms: Room[]; meetings: Meeting[]; currentUser: User; onMeetingCreate: (m: Omit<Meeting,'id'>) => void; onMeetingUpdate: (id:string, u:Partial<Meeting>)=>void; onMeetingDelete?: (id:string)=>void; showWeekends:boolean; startHour:number; endHour:number; }
 
-const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, currentUser, onMeetingCreate, onMeetingUpdate, showWeekends, startHour, endHour }) => {
+const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, currentUser, onMeetingCreate, onMeetingUpdate, onMeetingDelete, showWeekends, startHour, endHour }) => {
   // State
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewType, setViewType] = useState<'day'|'week'|'month'>('week');
@@ -263,7 +263,8 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
   // Click handlers
   const handleTimeSlotClick = (date:string, time:string, meeting?:Meeting, roomId?:string) => { if(isSelecting || resizingMeetingId || movingMeetingId) return; if(currentUser.role==='employee' && meeting && meeting.specialistId!==currentUser.id) return; if(meeting){ setEditingMeeting(meeting); setSelectedTime(meeting.startTime); setFormRoomId(meeting.roomId);} else { setEditingMeeting(undefined); setSelectedTime(time); setFormRoomId(roomId);} setCurrentDate(new Date(date)); setShowMeetingForm(true); };
   const handleMeetingFormSubmit = (meetingData: Omit<Meeting,'id'>) => { if(editingMeeting){ onMeetingUpdate(editingMeeting.id, meetingData);} else { onMeetingCreate(meetingData);} setShowMeetingForm(false); setEditingMeeting(undefined); };
-
+  const handleMeetingDelete = (meetingId: string) => { onMeetingDelete?.(meetingId); setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); };
+  
   // Week view (day columns, time grid like day view, meetings overlay)
   const renderWeekView = () => {
     const weekDays = getWeekDays(currentDate);
@@ -656,7 +657,6 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
     const month = currentDate.getMonth();
     const firstOfMonth = new Date(year, month, 1);
     const startWeekday = (firstOfMonth.getDay()+6)%7; // convert Sunday=0 to Monday=6 wrap
-    const daysInMonth = new Date(year, month+1, 0).getDate();
     // Start date for grid (Monday before or on first)
     const gridStart = new Date(firstOfMonth);
     gridStart.setDate(firstOfMonth.getDate() - startWeekday);
@@ -669,7 +669,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
         week.push(day);
       }
       weeks.push(week);
-      // stop early if last week entirely next month and we've passed daysInMonth
+      // stop early if last week entirely next month
       const lastDay = week[6];
       if(lastDay.getMonth() !== month && lastDay.getDate() >= 7) break;
     }
@@ -752,7 +752,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
     {/* Removed month view top panel (room dropdown) per request */}
     <div className="flex-none"><CalendarHeader currentDate={currentDate} viewType={viewType} onDateChange={setCurrentDate} onViewTypeChange={setViewType} /></div>
     <div className="flex-1 min-h-0">{viewType==='day' && renderDayViewMultiRoom()}{viewType==='week' && renderWeekView()}{viewType==='month' && renderMonthView()}</div>
-    <MeetingForm isOpen={showMeetingForm} onClose={()=>{ setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); }} onSubmit={handleMeetingFormSubmit} users={users} rooms={rooms} meetings={meetings} selectedDate={formatDateForComparison(currentDate)} selectedTime={selectedTime} currentUser={currentUser} editingMeeting={editingMeeting} initialRoomId={formRoomId} selectedEndTime={selectedEndTime} />
+    <MeetingForm isOpen={showMeetingForm} onClose={()=>{ setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); }} onSubmit={handleMeetingFormSubmit} onDelete={handleMeetingDelete} users={users} rooms={rooms} meetings={meetings} selectedDate={formatDateForComparison(currentDate)} selectedTime={selectedTime} currentUser={currentUser} editingMeeting={editingMeeting} initialRoomId={formRoomId} selectedEndTime={selectedEndTime} />
     {conflictMessage && <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl text-sm z-[100] max-w-sm text-center animate-in fade-in">{conflictMessage}</div>}
     {hoverTooltip && (
       <div className="fixed z-[200] pointer-events-none -translate-x-1/2" style={{ left: hoverTooltip!.x, top: hoverTooltip!.y }}>

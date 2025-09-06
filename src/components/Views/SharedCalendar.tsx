@@ -11,6 +11,7 @@ interface SharedCalendarProps {
   currentUser: User;
   onMeetingCreate: (meeting: Omit<Meeting, 'id'>) => void;
   onMeetingUpdate: (meetingId: string, updates: Partial<Meeting>) => void;
+  onMeetingDelete?: (meetingId: string) => void;
   showWeekends: boolean; // new
   startHour: number; // NEW
   endHour: number;   // NEW
@@ -33,6 +34,7 @@ const SharedCalendar: React.FC<SharedCalendarProps> = ({
   currentUser,
   onMeetingCreate,
   onMeetingUpdate,
+  onMeetingDelete,
   showWeekends,
   startHour,
   endHour
@@ -90,6 +92,12 @@ const SharedCalendar: React.FC<SharedCalendarProps> = ({
     } else {
       onMeetingCreate(meetingData);
     }
+    setShowMeetingForm(false);
+    setEditingMeeting(undefined);
+  };
+
+  const handleMeetingDelete = (meetingId: string) => {
+    onMeetingDelete?.(meetingId);
     setShowMeetingForm(false);
     setEditingMeeting(undefined);
   };
@@ -346,6 +354,7 @@ const SharedCalendar: React.FC<SharedCalendarProps> = ({
           setEditingMeeting(undefined);
         }}
         onSubmit={handleMeetingFormSubmit}
+        onDelete={handleMeetingDelete}
         users={users}
         rooms={rooms}
         meetings={meetings}

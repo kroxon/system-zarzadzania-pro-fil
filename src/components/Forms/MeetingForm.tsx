@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, AlertCircle, Hash } from 'lucide-react';
+import { X, AlertCircle, Hash, Trash2 } from 'lucide-react';
 import { Meeting, User, Room, Patient } from '../../types';
 import { loadPatients } from '../../utils/storage';
 
@@ -9,6 +9,7 @@ interface MeetingFormProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (meeting: Omit<Meeting, 'id'>) => void;
+  onDelete?: (meetingId: string) => void;
   users: User[];
   rooms: Room[];
   meetings: Meeting[];
@@ -38,6 +39,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   isOpen,
   onClose,
   onSubmit,
+  onDelete,
   users,
   rooms,
   meetings,
@@ -213,6 +215,25 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     window.addEventListener('keydown', handleKey, true);
     return ()=> window.removeEventListener('keydown', handleKey, true);
   }, [isOpen, onClose]);
+
+  // Determine if meeting is in the future (based on start time)
+  const isMeetingInFuture = (m: Meeting | undefined) => {
+    if (!m) return false;
+    const [y, mo, d] = m.date.split('-').map(Number);
+    const [sh, sm] = m.startTime.split(':').map(Number);
+    const startLocal = new Date(y, (mo || 1) - 1, d || 1, sh || 0, sm || 0, 0, 0);
+    return startLocal.getTime() > Date.now();
+  };
+
+  const canCurrentUserDelete = (m: Meeting | undefined) => {
+    if (!m) return false;
+    if (currentUser.role === 'admin' || currentUser.role === 'contact') return true;
+    if (currentUser.role === 'employee') return m.specialistId === currentUser.id;
+    return false;
+  };
+
+  const canShowDelete = !!editingMeeting && isMeetingInFuture(editingMeeting) && canCurrentUserDelete(editingMeeting) && !!onDelete;
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   if (!isOpen) return null;
 
@@ -400,12 +421,61 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               </div>
             </div>
           </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">Anuluj</button>
-            <button type="submit" className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">{editingMeeting? 'Zapisz zmiany':'Utwórz sesję'}</button>
+          <div className="flex justify-between items-center gap-3 pt-2">
+            {/* Delete button on the left when allowed */}
+            <div>
+              {canShowDelete && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Usuń
+                </button>
+              )}
+            </div>
+             <div className="ml-auto flex items-center gap-3">
+               <button type="button" onClick={onClose} className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">Anuluj</button>
+               <button type="submit" className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">{editingMeeting? 'Zapisz zmiany':'Utwórz sesję'}</button>
+             </div>
           </div>
         </form>
       </div>
+
+      {/* Delete confirmation dialog */}
+      {showDeleteConfirm && editingMeeting && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowDeleteConfirm(false)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-scale-in">
+            <div className="p-6">
+              <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="h-6 w-6 text-red-600" />
+              </div>
+              <h3 className="text-base font-semibold text-gray-900 mb-2 text-center">Usunąć to spotkanie?</h3>
+              <p className="text-sm text-gray-600 mb-6 leading-relaxed text-center">
+                Ta operacja trwale usunie spotkanie z {editingMeeting.date} ({editingMeeting.startTime}-{editingMeeting.endTime}).
+              </p>
+              <div className="flex justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { onDelete?.(editingMeeting.id); setShowDeleteConfirm(false); onClose(); }}
+                  className="px-4 py-2.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400"
+                >
+                  Usuń
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
