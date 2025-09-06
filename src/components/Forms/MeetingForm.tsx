@@ -65,6 +65,15 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const specialistHasConflict = (specialistId:string, date:string, start:string, end:string, excludeId?:string) => meetings.some(m=> m.id!==excludeId && m.date===date && ((m.specialistIds && m.specialistIds.includes(specialistId)) || m.specialistId===specialistId) && overlap(start,end,m.startTime,m.endTime));
   const roomHasConflict = (roomId:string, date:string, start:string, end:string, excludeId?:string) => meetings.some(m=> m.id!==excludeId && m.date===date && m.roomId===roomId && overlap(start,end,m.startTime,m.endTime));
 
+  // creation guard: allow only future start times
+  const isDateTimeInFuture = (date: string, time: string) => {
+    if (!date || !time) return false;
+    const [y, mo, d] = date.split('-').map(Number);
+    const [sh, sm] = time.split(':').map(Number);
+    const startLocal = new Date(y, (mo || 1) - 1, d || 1, sh || 0, sm || 0, 0, 0);
+    return startLocal.getTime() > Date.now();
+  };
+
   const [formData, setFormData] = useState<MeetingFormState>({
     specialistId: currentUser.role === 'employee' ? currentUser.id : '',
     patientName: '',
@@ -81,6 +90,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const [errors, setErrors] = useState<string[]>([]);
   const [patientAssignmentFilter, setPatientAssignmentFilter] = useState<'wszyscy'|'przypisani'>('wszyscy'); // filter patients
   const effectivePatients = patients.length ? patients : loadPatients();
+  const [showPastSubmitInfo, setShowPastSubmitInfo] = useState(false);
 
   // load therapistAssignments (single source of truth)
   const therapistAssignments: Record<string,string[]> = React.useMemo(()=> {
@@ -157,6 +167,11 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) return;
+    // If user changed time to past while form is open, block submission
+    if (!editingMeeting && !isDateTimeInFuture(selectedDate, formData.startTime)) {
+      setShowPastSubmitInfo(true);
+      return;
+    }
     const primarySpec = formData.specialistIds[0];
     const primaryPatientId = formData.patientIds[0];
     const patientNamesList = formData.patientIds.map(id => {
@@ -250,6 +265,37 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   })();
 
   if (!isOpen) return null;
+
+  // If creating and the selected start is in the past, show only info dialog (no form)
+  const isCreateAttemptInPast = !editingMeeting && !isDateTimeInFuture(selectedDate, formData.startTime);
+  if (isCreateAttemptInPast) {
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+        <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+        <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in">
+          <div className="p-6">
+            <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
+              <AlertCircle className="h-6 w-6 text-blue-600" />
+            </div>
+            <h3 className="text-base font-semibold text-gray-900 mb-2 text-center">Nie można utworzyć sesji w przeszłości</h3>
+            <p className="text-sm text-gray-600 mb-6 leading-relaxed text-center">
+              Nowe sesje można planować wyłącznie w przyszłych terminach. Wybierz proszę datę i godzinę późniejszą niż obecna i spróbuj ponownie.
+            </p>
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-6 py-2.5 text-sm font-medium rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:from-indigo-500 hover:to-blue-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                autoFocus
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-start justify-center p-6 z-50 overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="meetingFormTitle">
@@ -528,6 +574,34 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                   className="px-4 py-2.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400"
                 >
                   Usuń
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Submit-time info dialog */}
+      {showPastSubmitInfo && !editingMeeting && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowPastSubmitInfo(false)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in">
+            <div className="p-6">
+              <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
+                <AlertCircle className="h-6 w-6 text-blue-600" />
+              </div>
+              <h3 className="text-base font-semibold text-gray-900 mb-2 text-center">Nie można utworzyć sesji w przeszłości</h3>
+              <p className="text-sm text-gray-600 mb-6 leading-relaxed text-center">
+                Nowe sesje można planować wyłącznie w przyszłych terminach. Wybierz proszę datę i godzinę późniejszą niż obecna i spróbuj ponownie.
+              </p>
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setShowPastSubmitInfo(false)}
+                  className="px-6 py-2.5 text-sm font-medium rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:from-indigo-500 hover:to-blue-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                >
+                  OK
                 </button>
               </div>
             </div>
