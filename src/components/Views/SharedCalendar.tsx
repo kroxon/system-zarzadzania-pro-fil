@@ -21,6 +21,7 @@ interface SharedCalendarProps {
 const meetingStatusClasses = (status: Meeting['status']) => {
   switch (status) {
     case 'present': return 'bg-green-200 border-green-400 text-green-900';
+    case 'absent': return 'bg-orange-200 border-orange-400 text-orange-900';
     case 'in-progress': return 'bg-yellow-200 border-yellow-400 text-yellow-900';
     case 'cancelled': return 'bg-red-200 border-red-400 text-red-900 line-through';
     default: return 'bg-gray-200 border-gray-400 text-gray-700';
@@ -76,6 +77,10 @@ const SharedCalendar: React.FC<SharedCalendarProps> = ({
 
   const handleTimeSlotClick = (date: string, time: string, meeting?: Meeting) => {
     if (meeting) {
+      if (currentUser.role === 'employee') {
+        const isMine = meeting.specialistId === currentUser.id || (meeting.specialistIds?.includes(currentUser.id) ?? false) || meeting.createdBy === currentUser.id;
+        if (!isMine) return;
+      }
       setEditingMeeting(meeting);
       setSelectedTime(meeting.startTime);
     } else {
@@ -103,7 +108,7 @@ const SharedCalendar: React.FC<SharedCalendarProps> = ({
   };
 
   const filteredMeetings = meetings.filter(meeting => {
-    if (selectedEmployee && meeting.specialistId !== selectedEmployee) return false;
+    if (selectedEmployee && !(meeting.specialistId === selectedEmployee || (meeting.specialistIds?.includes(selectedEmployee) ?? false))) return false;
     if (selectedRoom && meeting.roomId !== selectedRoom) return false;
     if (statusFilter && meeting.status !== statusFilter) return false;
     return true;

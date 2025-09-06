@@ -4,6 +4,7 @@ import { generateTimeSlots } from '../../utils/timeSlots';
 import { User, Room, Meeting } from '../../types';
 import { ChevronDown, Check, Trash2 } from 'lucide-react';
 import MonthCalendar from './MonthCalendar';
+import MeetingForm from '../Forms/MeetingForm';
 
 const DAYOFF_MEETING_PREFIX = 'dayoff-';
 
@@ -32,9 +33,12 @@ interface EmployeeCalendarProps {
   showWeekends: boolean;
   startHour: number;
   endHour: number;
+  onMeetingCreate: (m: Omit<Meeting,'id'>) => void;
+  onMeetingUpdate: (id:string, u: Partial<Meeting>) => void;
+  onMeetingDelete?: (id:string) => void;
 }
 
-const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, */ meetings, currentUser, showWeekends, startHour, endHour }) => {
+const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meetings, currentUser, showWeekends, startHour, endHour, onMeetingCreate, onMeetingUpdate, onMeetingDelete }) => {
   // Core state
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewType, setViewType] = useState<'week' | 'month'>('week');
@@ -42,6 +46,9 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, */
   const [showCopyDropdown, setShowCopyDropdown] = useState(false);
   const [copyPeriod, setCopyPeriod] = useState<'week' | '4weeks'>('week');
   const [deletedRangeIds, setDeletedRangeIds] = useState<string[]>([]);
+  const [showMeetingForm, setShowMeetingForm] = useState(false);
+  const [editingMeeting, setEditingMeeting] = useState<Meeting | undefined>();
+  const [selectedTime, setSelectedTime] = useState('');
 
   // Availability state
   interface AvailabilityRange { id: string; specialistId: string; start: string; end: string; }
@@ -184,7 +191,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, */
   const runWithSaving = (action: ()=>void) => { if(showSavingDialog) return; setShowSavingDialog(true); requestAnimationFrame(()=> { action(); setTimeout(()=> setShowSavingDialog(false), 1200); }); };
 
   // Week view renderer
-  const renderWeekView = () => { const weekDays=getWeekDays(currentDate); const employeeMeetings = selectedEmployee? meetings.filter(m=> m.specialistId===selectedEmployee && !m.id.startsWith(DAYOFF_MEETING_PREFIX)): []; const calendarHeight='calc(100vh - 292px)'; const hourColWidth=56; const gridTemplate={ gridTemplateColumns: `${hourColWidth}px repeat(${weekDays.length}, 1fr)` }; const activeId=activeEdit?.id; const allRanges=[...availabilities, ...tempRanges].filter(r=> r.specialistId===selectedEmployee); const byDay: Record<string, AvailabilityRange[]> = {}; allRanges.forEach(r=> { if(r.id!==activeId){ const dayStr=new Date(r.start).toISOString().split('T')[0]; (byDay[dayStr] ||= []).push(r);} }); return (
+  const renderWeekView = () => { const weekDays=getWeekDays(currentDate); const employeeMeetings = selectedEmployee? meetings.filter(m=> (m.specialistId===selectedEmployee || (m.specialistIds?.includes(selectedEmployee) ?? false)) && !m.id.startsWith(DAYOFF_MEETING_PREFIX)): []; const calendarHeight='calc(100vh - 292px)'; const hourColWidth=56; const gridTemplate={ gridTemplateColumns: `${hourColWidth}px repeat(${weekDays.length}, 1fr)` }; const activeId=activeEdit?.id; const allRanges=[...availabilities, ...tempRanges].filter(r=> r.specialistId===selectedEmployee); const byDay: Record<string, AvailabilityRange[]> = {}; allRanges.forEach(r=> { if(r.id!==activeId){ const dayStr=new Date(r.start).toISOString().split('T')[0]; (byDay[dayStr] ||= []).push(r);} }); return (
     <div className="rounded-xl shadow-sm border border-gray-200 flex flex-col h-full bg-transparent">
       <div className="flex-1 overflow-hidden select-none">
         <div className="h-full flex flex-col">
@@ -239,7 +246,8 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, */
                     </div>
                   ); })}
                   {dayMeetings.map(m=> { const { startIndex, endIndex } = meetingToIndices(m); const topPct=(startIndex/ totalSlots)*100; const heightPct=((endIndex-startIndex)/ totalSlots)*100; return (
-                    <div key={m.id} className="absolute left-2 right-2 rounded-md bg-yellow-100/95 text-yellow-900 shadow-md text-[10px] leading-tight px-2 py-1 flex flex-col pointer-events-auto z-40" style={{ top:`${topPct}%`, height:`${heightPct}%` }}>
+                    <div key={m.id} className="absolute left-2 right-2 rounded-md bg-yellow-100/95 text-yellow-900 shadow-md text-[10px] leading-tight px-2 py-1 flex flex-col pointer-events-auto z-40" style={{ top:`${topPct}%`, height:`${heightPct}%` }}
+                      onClick={()=>{ const isMine = currentUser.role!=='employee' || m.specialistId===currentUser.id || (m.specialistIds?.includes(currentUser.id) ?? false); if(!isMine) return; setEditingMeeting(m); setSelectedTime(m.startTime); setCurrentDate(parseLocalDate(m.date)); setShowMeetingForm(true); }}>
                       <div className="font-semibold truncate">{m.patientName || 'Spotkanie'}</div>
                       <div className="text-[11px] opacity-80 tracking-tight">{m.startTime}-{m.endTime}</div>
                     </div>
@@ -304,6 +312,21 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, */
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex-1 flex items-center justify-center"><p className="text-gray-500 text-center">Wybierz pracownika, aby wyświetlić jego grafik</p></div>
       )}
 
+      {/* Meeting form for editing/creating */}
+      <MeetingForm
+        isOpen={showMeetingForm}
+        onClose={()=> { setShowMeetingForm(false); setEditingMeeting(undefined); }}
+        onSubmit={(data)=> { if(editingMeeting){ onMeetingUpdate(editingMeeting.id, data); } else { onMeetingCreate(data); } setShowMeetingForm(false); setEditingMeeting(undefined); }}
+        onDelete={(id)=> { onMeetingDelete?.(id); setShowMeetingForm(false); setEditingMeeting(undefined); }}
+        users={users}
+        rooms={rooms}
+        meetings={meetings}
+        selectedDate={formatLocalDate(currentDate)}
+        selectedTime={selectedTime}
+        currentUser={currentUser}
+        editingMeeting={editingMeeting}
+      />
+
       {pendingDeleteRange && (<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
         <div className="bg-white rounded-xl shadow-lg w-full max-w-sm overflow-hidden animate-scale-in">
           <div className="p-6">
@@ -327,6 +350,6 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, */
       </div>)}
     </div>
   );
-};
+}
 
 export default EmployeeCalendar;

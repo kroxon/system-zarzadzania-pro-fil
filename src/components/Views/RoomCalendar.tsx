@@ -261,7 +261,24 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
   useEffect(()=>{ const onUp=(e:MouseEvent)=>{ if(pointerDownMeeting && !resizingMeetingId && !movingMeetingId){ const dt=Date.now()-pointerDownMeeting.t; const dy=Math.abs(e.clientY-pointerDownMeeting.y); if(dt < 250 && dy < 6){ const meeting=meetings.find(m=>m.id===pointerDownMeeting.id); if(meeting){ handleTimeSlotClick(pointerDownMeeting.dateStr, meeting.startTime, meeting, meeting.roomId); } } } setPointerDownMeeting(null); }; window.addEventListener('mouseup', onUp); return ()=>window.removeEventListener('mouseup', onUp); },[pointerDownMeeting, resizingMeetingId, movingMeetingId, meetings]);
 
   // Click handlers
-  const handleTimeSlotClick = (date:string, time:string, meeting?:Meeting, roomId?:string) => { if(isSelecting || resizingMeetingId || movingMeetingId) return; if(currentUser.role==='employee' && meeting && meeting.specialistId!==currentUser.id) return; if(meeting){ setEditingMeeting(meeting); setSelectedTime(meeting.startTime); setFormRoomId(meeting.roomId);} else { setEditingMeeting(undefined); setSelectedTime(time); setFormRoomId(roomId);} setCurrentDate(new Date(date)); setShowMeetingForm(true); };
+  const handleTimeSlotClick = (date:string, time:string, meeting?:Meeting, roomId?:string) => {
+    if (isSelecting || resizingMeetingId || movingMeetingId) return;
+    if (currentUser.role === 'employee' && meeting) {
+      const isMine = meeting.specialistId === currentUser.id || (meeting.specialistIds?.includes(currentUser.id) ?? false) || meeting.createdBy === currentUser.id;
+      if (!isMine) return;
+    }
+    if (meeting) {
+      setEditingMeeting(meeting);
+      setSelectedTime(meeting.startTime);
+      setFormRoomId(meeting.roomId);
+    } else {
+      setEditingMeeting(undefined);
+      setSelectedTime(time);
+      setFormRoomId(roomId);
+    }
+    setCurrentDate(new Date(date));
+    setShowMeetingForm(true);
+  };
   const handleMeetingFormSubmit = (meetingData: Omit<Meeting,'id'>) => { if(editingMeeting){ onMeetingUpdate(editingMeeting.id, meetingData);} else { onMeetingCreate(meetingData);} setShowMeetingForm(false); setEditingMeeting(undefined); };
   const handleMeetingDelete = (meetingId: string) => { onMeetingDelete?.(meetingId); setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); };
   
@@ -353,13 +370,14 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                 const nameFontClass = enlarged ? (isShort ? 'text-[12px]' : 'text-[12px]') : 'text-[10px]';
                 const paddingClass = enlarged ? 'px-1.5 py-1' : 'px-1.5';
                 const marginClass = enlarged ? 'm-0.5' : '';
+                const statusClass = m.status==='cancelled' ? 'line-through opacity-70' : (m.status==='absent' ? 'opacity-90' : '');
                 return (
                   <div key={m.id+"_orig"}
                     onMouseDown={(e)=>{ if(e.button!==0) return; if(resizingMeetingId) return; setPointerDownMeeting({ id:m.id, y:e.clientY, t:Date.now(), dateStr, roomId:m.roomId }); }}
                     onMouseEnter={(e)=> scheduleTooltip(`${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}`, e.clientX, e.clientY+14)}
                     onMouseMove={(e)=> updateTooltipPosition(e.clientX, e.clientY+14)}
                     onMouseLeave={cancelTooltip}
-                    className={`group absolute rounded-md ${paddingClass} ${marginClass} text-[11px] shadow-sm cursor-pointer overflow-visible hover:brightness-95 transition-opacity flex items-center justify-center border ${(conflictFlashId===m.id)?'!ring-4 !ring-red-500 !border-red-500 animate-pulse':''} ${m.status==='cancelled'?'line-through opacity-70':''}`}
+                    className={`group absolute rounded-md ${paddingClass} ${marginClass} text-[11px] shadow-sm cursor-pointer overflow-visible hover:brightness-95 transition-opacity flex items-center justify-center border ${(conflictFlashId===m.id)?'!ring-4 !ring-red-500 !border-red-500 animate-pulse':''} ${statusClass}`}
                     style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, ...roomStyle }}
                   >
                     <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize flex items-end justify-center" onMouseDown={(e)=>startResize(e,m,'end')}>

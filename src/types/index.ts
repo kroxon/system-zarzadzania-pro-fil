@@ -45,7 +45,7 @@ export interface Meeting {
   startTime: string;
   endTime: string;
   notes?: string;
-  status: 'present' | 'cancelled' | 'in-progress';
+  status: 'present' | 'absent' | 'cancelled' | 'in-progress';
   createdBy: string;
 }
 

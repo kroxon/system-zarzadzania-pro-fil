@@ -225,15 +225,29 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return startLocal.getTime() > Date.now();
   };
 
+  // Determine if meeting is in the past (based on end time)
+  const isMeetingInPastByEnd = (m: Meeting | undefined) => {
+    if (!m) return false;
+    const [y, mo, d] = m.date.split('-').map(Number);
+    const [eh, em] = m.endTime.split(':').map(Number);
+    const endLocal = new Date(y, (mo || 1) - 1, d || 1, eh || 0, em || 0, 0, 0);
+    return endLocal.getTime() < Date.now();
+  };
+
   const canCurrentUserDelete = (m: Meeting | undefined) => {
     if (!m) return false;
     if (currentUser.role === 'admin' || currentUser.role === 'contact') return true;
-    if (currentUser.role === 'employee') return m.specialistId === currentUser.id;
+    if (currentUser.role === 'employee') return m.specialistId === currentUser.id || (m.specialistIds?.includes(currentUser.id) ?? false);
     return false;
   };
 
   const canShowDelete = !!editingMeeting && isMeetingInFuture(editingMeeting) && canCurrentUserDelete(editingMeeting) && !!onDelete;
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const isEditingPast = !!editingMeeting && isMeetingInPastByEnd(editingMeeting);
+  const effectiveStatus: 'present' | 'absent' | 'cancelled' = ((): any => {
+    const s = (formData.status as any);
+    return s === 'present' || s === 'absent' || s === 'cancelled' ? s : 'present';
+  })();
 
   if (!isOpen) return null;
 
@@ -266,30 +280,40 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               <div>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Specjaliści</label>
                 {/* Selected specialists only */}
-                <div className="flex flex-wrap gap-1 mb-2 min-h-[32px]">
-                  {formData.specialistIds.map(id=> {
-                    const u = users.find(us=>us.id===id);
-                    if(!u) return null;
-                    const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(id, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id));
-                    return (
-                      <span
-                        key={id}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium border flex items-center gap-1 ${busy? 'bg-red-100 text-red-700 border-red-300':'bg-indigo-100 text-indigo-700 border-indigo-300'}`}
-                        title={busy? 'Ten specjalista jest zajęty w tym czasie':'Specjalista dodany'}
-                      >
-                        {u.name.split(' ').slice(0,2).join(' ')}
-                        <button
-                          type="button"
-                          onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))}
-                          className="hover:opacity-80"
-                          aria-label="Usuń specjalistę"
-                        >×</button>
-                      </span>
-                    );
-                  })}
-                  {formData.specialistIds.length===0 && (
-                    <span className="text-[11px] text-gray-400">Brak wybranych specjalistów</span>
-                  )}
+                <div className="mb-2">
+                  <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-40 overflow-auto">
+                    {formData.specialistIds.length===0 && (
+                      <li className="p-3 text-sm text-gray-400">Brak wybranych specjalistów</li>
+                    )}
+                    {formData.specialistIds.map(id=> {
+                      const u = users.find(us=>us.id===id);
+                      if(!u) return null;
+                      const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(id, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id));
+                      return (
+                        <li
+                          key={id}
+                          className={`flex items-center justify-between p-2.5 transition-colors border-l-4 ${busy ? 'border-red-300 bg-red-50/50' : 'border-indigo-200 hover:bg-indigo-50'}`}
+                        >
+                          <div className="min-w-0 pr-3">
+                            <div className={`text-sm font-semibold leading-5 truncate ${busy ? 'text-red-700' : 'text-gray-900'}`}>{u.name}</div>
+                            <div className="text-xs text-gray-500 truncate">{u.specialization || 'Specjalista'}</div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {busy && <span className="text-[11px] text-red-700 px-2 py-0.5 rounded-full bg-red-50 border border-red-200">zajęty</span>}
+                            <button
+                              type="button"
+                              onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              aria-label="Usuń specjalistę"
+                              title="Usuń"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
                 <select onChange={(e)=>{ const v=e.target.value; if(v) setFormData(fd=> fd.specialistIds.includes(v)? fd : {...fd, specialistIds:[...fd.specialistIds, v]}); e.target.selectedIndex=0; }} value="" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
                   <option value="">Dodaj specjalistę...</option>
@@ -324,12 +348,35 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                     ) : null)}
                   </div>
                 )}
-                <div className="flex flex-wrap gap-1 mb-2 max-h-28 overflow-y-auto pr-1">
-                  {formData.patientIds.map(pid=>{
-                    const p = effectivePatients.find(pp=>pp.id===pid); if(!p) return null;
-                    return <span key={pid} className="px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded-full text-[11px] font-medium flex items-center gap-1">{p.firstName} {p.lastName}<button type="button" onClick={()=> setFormData(fd=>({...fd, patientIds: fd.patientIds.filter(x=>x!==pid)}))} className="hover:text-emerald-900" aria-label="Usuń podopiecznego">×</button></span>;
-                  })}
-                  {formData.patientIds.length===0 && <span className="text-[11px] text-gray-400">Brak</span>}
+                <div className="mb-2">
+                  <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-44 overflow-auto">
+                    {formData.patientIds.length===0 && (
+                      <li className="p-3 text-sm text-gray-400">Brak</li>
+                    )}
+                    {formData.patientIds.map(pid=>{
+                      const p = effectivePatients.find(pp=>pp.id===pid); if(!p) return null;
+                      const fullName = `${p.firstName} ${p.lastName}`;
+                      return (
+                        <li
+                          key={pid}
+                          className="flex items-center justify-between p-2.5 transition-colors border-l-4 border-emerald-200 hover:bg-emerald-50"
+                        >
+                          <div className="min-w-0 pr-3">
+                            <div className="text-sm font-semibold leading-5 text-gray-900 truncate">{fullName}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={()=> setFormData(fd=>({...fd, patientIds: fd.patientIds.filter(x=>x!==pid)}))}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            aria-label="Usuń podopiecznego"
+                            title="Usuń"
+                          >
+                            ×
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
                 <select onChange={(e)=>{ const v=e.target.value; if(v) setFormData(fd=> fd.patientIds.includes(v)? fd : {...fd, patientIds:[...fd.patientIds, v]}); e.target.selectedIndex=0; }} value="" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60" disabled={patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0}>
                   <option value="">Dodaj podopiecznego...</option>
@@ -399,27 +446,38 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Status</label>
-                  <select value={formData.status} onChange={e=> setFormData({...formData, status: e.target.value as 'present' | 'in-progress' | 'cancelled'})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
-                    <option value="present">Obecny</option>
-                    <option value="in-progress">W toku</option>
-                    <option value="cancelled">Odwołany</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Gość (opcjonalnie)</label>
-                  <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Notatki</label>
-                <textarea value={formData.notes} onChange={e=> setFormData({...formData, notes:e.target.value})} rows={4} placeholder="Cel sesji, materiały, obserwacje..." className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y" />
-              </div>
-              <div className="bg-gray-50 rounded-lg p-4 text-xs text-gray-500 leading-relaxed">
-                Sesja musi zawierać przynajmniej jednego specjalistę i jednego podopiecznego. Konflikty czasowe są sprawdzane automatycznie.
-              </div>
-            </div>
+                {isEditingPast && (
+                  <div>
+                    <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Status</label>
+                    <div className="bg-white border border-gray-300 rounded-lg p-3 space-y-2">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="status" value="present" checked={effectiveStatus==='present'} onChange={()=> setFormData({...formData, status: 'present'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" />
+                        <span className="text-sm text-gray-800">Podopieczny obecny</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="status" value="absent" checked={effectiveStatus==='absent'} onChange={()=> setFormData({...formData, status: 'absent'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" />
+                        <span className="text-sm text-gray-800">Podopieczny nieobecny</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="status" value="cancelled" checked={effectiveStatus==='cancelled'} onChange={()=> setFormData({...formData, status: 'cancelled'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" />
+                        <span className="text-sm text-gray-800">Odwołano</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+                <div className={!isEditingPast ? 'col-span-2' : ''}>
+                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Gość (opcjonalnie)</label>
+                   <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+                 </div>
+               </div>
+               <div>
+                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Notatki</label>
+                 <textarea value={formData.notes} onChange={e=> setFormData({...formData, notes:e.target.value})} rows={4} placeholder="Cel sesji, materiały, obserwacje..." className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y" />
+               </div>
+               <div className="bg-gray-50 rounded-lg p-4 text-xs text-gray-500 leading-relaxed">
+                 Sesja musi zawierać przynajmniej jednego specjalistę i jednego podopiecznego. Konflikty czasowe są sprawdzane automatycznie.
+               </div>
+             </div>
           </div>
           <div className="flex justify-between items-center gap-3 pt-2">
             {/* Delete button on the left when allowed */}
@@ -435,10 +493,10 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 </button>
               )}
             </div>
-             <div className="ml-auto flex items-center gap-3">
-               <button type="button" onClick={onClose} className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">Anuluj</button>
-               <button type="submit" className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">{editingMeeting? 'Zapisz zmiany':'Utwórz sesję'}</button>
-             </div>
+            <div className="ml-auto flex items-center gap-3">
+              <button type="button" onClick={onClose} className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">Anuluj</button>
+              <button type="submit" className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">{editingMeeting? 'Zapisz zmiany':'Utwórz sesję'}</button>
+            </div>
           </div>
         </form>
       </div>
