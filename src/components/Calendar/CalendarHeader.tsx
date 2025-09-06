@@ -7,6 +7,7 @@ interface CalendarHeaderProps {
   onDateChange: (date: Date) => void;
   onViewTypeChange: (viewType: 'day' | 'week' | 'month') => void;
   centerContent?: React.ReactNode; // NEW
+  availableViews?: ('day' | 'week' | 'month')[]; // NEW - opcjonalna lista dostępnych widoków
 }
 
 const CalendarHeader: React.FC<CalendarHeaderProps> = ({
@@ -14,7 +15,8 @@ const CalendarHeader: React.FC<CalendarHeaderProps> = ({
   viewType,
   onDateChange,
   onViewTypeChange,
-  centerContent
+  centerContent,
+  availableViews = ['day', 'week', 'month'] // domyślnie wszystkie widoki
 }) => {
   const formatDate = (date: Date) => {
     const options: Intl.DateTimeFormatOptions = {
@@ -97,7 +99,7 @@ const CalendarHeader: React.FC<CalendarHeaderProps> = ({
         </div>
       )}
       <div className="flex items-center space-x-2">
-        {(['day', 'week', 'month'] as const).map((type) => (
+        {availableViews.map((type) => (
           <button
             key={type}
             onClick={() => onViewTypeChange(type)}

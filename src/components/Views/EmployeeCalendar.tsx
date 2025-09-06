@@ -1,317 +1,330 @@
 import React, { useState } from 'react';
 import CalendarHeader from '../Calendar/CalendarHeader';
-import TimeSlot from '../Calendar/TimeSlot';
-import MeetingForm from '../Forms/MeetingForm';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { User, Room, Meeting } from '../../types';
+import { ChevronDown, Check, Trash2 } from 'lucide-react';
+import MonthCalendar from './MonthCalendar';
+
+const DAYOFF_MEETING_PREFIX = 'dayoff-';
+
+// === Date helpers ===
+const formatLocalDate = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+};
+const parseLocalDate = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, (m || 1) - 1, d || 1); };
+const buildDateRange = (a: string, b: string) => {
+  if (!a || !b) return [] as string[];
+  const d1 = parseLocalDate(a); const d2 = parseLocalDate(b);
+  const from = d1 < d2 ? d1 : d2; const to = d1 < d2 ? d2 : d1;
+  const out: string[] = []; const cur = new Date(from);
+  while (cur <= to) { out.push(formatLocalDate(cur)); cur.setDate(cur.getDate() + 1); }
+  return out;
+};
 
 interface EmployeeCalendarProps {
   users: User[];
   rooms: Room[];
   meetings: Meeting[];
   currentUser: User;
-  onMeetingCreate: (meeting: Omit<Meeting, 'id'>) => void;
-  onMeetingUpdate: (meetingId: string, updates: Partial<Meeting>) => void;
-  showWeekends: boolean; // new
-  startHour: number; // NEW
-  endHour: number;   // NEW
+  showWeekends: boolean;
+  startHour: number;
+  endHour: number;
 }
 
-const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({
-  users,
-  rooms,
-  meetings,
-  currentUser,
-  onMeetingCreate,
-  onMeetingUpdate,
-  showWeekends,
-  startHour,
-  endHour
-}) => {
+const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, /* rooms, */ meetings, currentUser, showWeekends, startHour, endHour }) => {
+  // Core state
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewType, setViewType] = useState<'day' | 'week' | 'month'>('week');
-  const [selectedEmployee, setSelectedEmployee] = useState(
-    currentUser.role === 'employee' ? currentUser.id : ''
-  );
-  const [showMeetingForm, setShowMeetingForm] = useState(false);
-  const [selectedTime, setSelectedTime] = useState('');
-  const [editingMeeting, setEditingMeeting] = useState<Meeting | undefined>();
+  const [viewType, setViewType] = useState<'week' | 'month'>('week');
+  const [selectedEmployee, setSelectedEmployee] = useState(currentUser.role === 'employee' ? currentUser.id : '');
+  const [showCopyDropdown, setShowCopyDropdown] = useState(false);
+  const [copyPeriod, setCopyPeriod] = useState<'week' | '4weeks'>('week');
+  const [deletedRangeIds, setDeletedRangeIds] = useState<string[]>([]);
 
-  const timeSlots = generateTimeSlots(startHour, endHour);
-  const employees = users.filter(user => user.role === 'employee');
-  const sortedEmployees = React.useMemo(() => [...employees].sort((a,b)=> a.name.localeCompare(b.name,'pl')), [employees]);
+  // Availability state
+  interface AvailabilityRange { id: string; specialistId: string; start: string; end: string; }
+  const [pendingDeleteRange, setPendingDeleteRange] = useState<AvailabilityRange | null>(null);
+  const AVAIL_KEY = 'schedule_availabilities';
+  const [availabilities, setAvailabilities] = useState<AvailabilityRange[]>([]);
+  const [tempRanges, setTempRanges] = useState<AvailabilityRange[]>([]);
 
-  const formatDateForComparison = (date: Date): string => {
-    return date.toISOString().split('T')[0];
-  };
-
-  const getWeekDays = (date: Date): Date[] => {
-    const week: Date[] = [];
-    const startOfWeek = new Date(date);
-    startOfWeek.setDate(date.getDate() - date.getDay() + 1);
-    for (let i = 0; i < 7; i++) {
-      const day = new Date(startOfWeek);
-      day.setDate(startOfWeek.getDate() + i);
-      if (!showWeekends) {
-        const dow = day.getDay();
-        if (dow === 0 || dow === 6) continue;
+  // Day-offs for month view (filtered by employee just for initial load; MonthCalendar ma własną bazę)
+  interface DayOff { id: string; specialistId: string; date: string; note?: string; groupId?: string; }
+  const DAY_OFF_KEY = 'schedule_day_offs';
+  const [dayOffs, setDayOffs] = useState<DayOff[]>([]);
+  const [allDayOffs, setAllDayOffs] = useState<DayOff[]>([]);
+  const loadDayOffs = React.useCallback(()=> { if(!selectedEmployee) { setDayOffs([]); setAllDayOffs([]); return; } try { const raw=localStorage.getItem(DAY_OFF_KEY); const all: DayOff[] = raw? JSON.parse(raw): []; setAllDayOffs(all); setDayOffs(all.filter(d=> d.specialistId===selectedEmployee)); } catch(e){ console.warn('Load dayOffs failed', e);} }, [selectedEmployee]);
+  React.useEffect(()=> { loadDayOffs(); }, [loadDayOffs]);
+  // Helpers for rendering day-off blocks in week view
+  const formatDayDisplayFull = React.useCallback((iso:string)=> { if(!iso) return ''; const [y,m,d]=iso.split('-'); return `${d}.${m}.${y}`; }, []);
+  const dayOffGroupMeta = React.useMemo(()=> {
+    const map: Record<string, { start:string; end:string; note?: string; employees: string[] }> = {};
+    allDayOffs.forEach(d=> {
+      const key = d.groupId || d.id;
+      if(!map[key]) { map[key] = { start:d.date, end:d.date, note:d.note, employees: [d.specialistId] }; }
+      else {
+        if(d.date < map[key].start) map[key].start = d.date;
+        if(d.date > map[key].end) map[key].end = d.date;
+        if(d.note && !map[key].note) map[key].note = d.note;
+        if(!map[key].employees.includes(d.specialistId)) map[key].employees.push(d.specialistId);
       }
-      week.push(day);
+    });
+    return map;
+  }, [allDayOffs]);
+
+  // Month view pending marker callback integration
+  const [monthPending, setMonthPending] = React.useState(false);
+  const monthActionsRef = React.useRef<{ save: ()=>void; discard: ()=>void } | null>(null);
+
+  // Dynamic month container ref (tile height handled in MonthCalendar now)
+  const monthContainerRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(()=> { const recalc=()=> { if(!monthContainerRef.current) return; }; window.addEventListener('resize', recalc); return ()=> window.removeEventListener('resize', recalc); }, []);
+
+  // Employees list
+  const timeSlots = generateTimeSlots(startHour, endHour);
+  const employees = users.filter(u=> u.role==='employee');
+  const sortedEmployees = React.useMemo(()=> [...employees].sort((a,b)=> a.name.localeCompare(b.name,'pl')), [employees]);
+
+  // Week helpers
+  const getWeekDays = (date: Date) => { const week: Date[]=[]; const start=new Date(date); start.setDate(date.getDate() - date.getDay() + 1); for(let i=0;i<7;i++){ const day=new Date(start); day.setDate(start.getDate()+i); if(!showWeekends){ const dow=day.getDay(); if(dow===0|| dow===6) continue; } week.push(day);} return week; };
+  const formatDateForComparison = (date: Date)=> formatLocalDate(date);
+  // const getEmployeeMeetings = ()=> selectedEmployee? meetings.filter(m=> m.specialistId===selectedEmployee): [];
+
+  React.useEffect(()=> { if(currentUser.role==='admin' && !selectedEmployee && sortedEmployees.length){ setSelectedEmployee(sortedEmployees[0].id);} }, [currentUser.role, selectedEmployee, sortedEmployees]);
+
+  // Close copy dropdown on outside click
+  React.useEffect(()=> { const handler=(e:MouseEvent)=> { const target=e.target as Element; if(showCopyDropdown && !target.closest('.copy-dropdown')) setShowCopyDropdown(false); }; document.addEventListener('mousedown', handler); return ()=> document.removeEventListener('mousedown', handler); }, [showCopyDropdown]);
+
+  // Week bounds
+  const getWeekBounds = (date: Date) => { const start=new Date(date); start.setDate(date.getDate()-date.getDay()+1); start.setHours(0,0,0,0); const end=new Date(start); end.setDate(end.getDate()+6); end.setHours(23,59,59,999); return { start, end }; };
+  const weekBounds = getWeekBounds(currentDate);
+
+  // Load availabilities for employee + week
+  React.useEffect(()=> { if(!selectedEmployee) return; try { const raw=localStorage.getItem(AVAIL_KEY); const all: AvailabilityRange[] = raw? JSON.parse(raw): []; const filtered= all.filter(a=> a.specialistId===selectedEmployee && new Date(a.start)>=weekBounds.start && new Date(a.start)<=weekBounds.end); setAvailabilities(filtered); setTempRanges([]); } catch(e){ console.warn('Load availabilities failed', e);} }, [selectedEmployee, weekBounds.start.getTime()]);
+
+  // Guard date change if unsaved
+  const guardedSetCurrentDate = (d: Date) => { const newBounds=getWeekBounds(d); const sameWeek= weekBounds.start.getTime()===newBounds.start.getTime(); if(!sameWeek && tempRanges.length){ alert('Najpierw zapisz zmiany dostępności dla tego tygodnia.'); return; } setCurrentDate(d); };
+
+  // Merge adjacency helper
+  const mergeRangesAdjacency = (ranges: AvailabilityRange[]): AvailabilityRange[] => {
+    if (!ranges.length) return [];
+    const sorted = [...ranges].sort((a,b)=> new Date(a.start).getTime() - new Date(b.start).getTime());
+    const out: AvailabilityRange[] = [];
+    for (const r of sorted) {
+      if (!out.length) { out.push({...r}); continue; }
+      const last = out[out.length - 1];
+      const rStart = new Date(r.start).getTime();
+      const lastEnd = new Date(last.end).getTime();
+      if (rStart <= lastEnd) {
+        const rEnd = new Date(r.end).getTime();
+        if (rEnd > lastEnd) last.end = r.end; // extend
+      } else {
+        out.push({...r});
+      }
     }
-    return week;
+    return out;
   };
 
-  const handleTimeSlotClick = (date: string, time: string, meeting?: Meeting) => {
-    // Sprawdź uprawnienia
-    if (currentUser.role === 'employee' && meeting && meeting.specialistId !== currentUser.id) {
-      return; // Nie pozwalaj edytować cudzych spotkań
-    }
-
-    if (meeting) {
-      setEditingMeeting(meeting);
-      setSelectedTime(meeting.startTime);
-    } else {
-      setEditingMeeting(undefined);
-      setSelectedTime(time);
-    }
-    setCurrentDate(new Date(date));
-    setShowMeetingForm(true);
+  // Save & discard
+  const saveAvailabilities = () => {
+    if (!selectedEmployee) return;
+    const raw = localStorage.getItem(AVAIL_KEY);
+    const all: AvailabilityRange[] = raw ? JSON.parse(raw) : [];
+    const merged = mergeRangesAdjacency([...availabilities, ...tempRanges].filter(r=> r.specialistId===selectedEmployee));
+    const keep = all.filter(a=> a.specialistId!==selectedEmployee || new Date(a.start) < weekBounds.start || new Date(a.start) > weekBounds.end);
+    const next = [...keep, ...merged];
+    localStorage.setItem(AVAIL_KEY, JSON.stringify(next));
+    setAvailabilities(merged);
+    setTempRanges([]);
+    setDeletedRangeIds([]);
   };
+  const discardChanges = () => { if(!selectedEmployee) return; try { const raw=localStorage.getItem(AVAIL_KEY); const all: AvailabilityRange[] = raw? JSON.parse(raw): []; const filtered= all.filter(a=> a.specialistId===selectedEmployee && new Date(a.start)>=weekBounds.start && new Date(a.start)<=weekBounds.end); setAvailabilities(filtered); setTempRanges([]); setDeletedRangeIds([]); setPendingDeleteRange(null); setActiveEdit(null); } catch(e){ console.warn('Discard changes failed', e);} };
 
-  const handleMeetingFormSubmit = (meetingData: Omit<Meeting, 'id'>) => {
-    if (editingMeeting) {
-      onMeetingUpdate(editingMeeting.id, meetingData);
-    } else {
-      onMeetingCreate(meetingData);
-    }
-    setShowMeetingForm(false);
-    setEditingMeeting(undefined);
-  };
+  // Delete confirm
+  const handleConfirmDelete = () => { if(pendingDeleteRange){ const id=pendingDeleteRange.id; setAvailabilities(a=> a.filter(r=> r.id!==id)); setTempRanges(t=> t.filter(r=> r.id!==id)); setDeletedRangeIds(ids=> ids.includes(id)? ids : [...ids, id]); setPendingDeleteRange(null); } };
 
-  const getEmployeeMeetings = () => {
-    if (!selectedEmployee) return [];
-    return meetings.filter(meeting => meeting.specialistId === selectedEmployee);
-  };
+  // Active edit logic
+  interface ActiveEditState { id: string; day: string; type: 'create'|'move'|'resize'; originalStartIndex: number; originalEndIndex: number; startIndex: number; endIndex: number; originY: number; slotHeight: number; isTemp: boolean; daySnapshot: AvailabilityRange[]; }
+  const [activeEdit, setActiveEdit] = useState<ActiveEditState | null>(null);
+  const activeEditRef = React.useRef<ActiveEditState | null>(null);
+  React.useEffect(()=> { activeEditRef.current = activeEdit; }, [activeEdit]);
+  const dayColRefs = React.useRef<{[day:string]: HTMLDivElement | null}>({});
+  const totalSlots = (endHour - startHour) * 2;
+  const timeFromIndex = (idx:number)=> timeSlots[idx];
+  const endTimeFromEndIndex = (endIdx:number)=> { const base=timeSlots[endIdx-1]; const [h,m]=base.split(':').map(Number); const date=new Date(); date.setHours(h, m+30,0,0); return date.toTimeString().substring(0,5); };
+  const toISO = (day:string, time:string)=> new Date(`${day}T${time}:00`).toISOString();
+  const dayKey = (iso: string)=> iso.slice(0,10);
 
-  React.useEffect(() => {
-    if (currentUser.role === 'admin' && !selectedEmployee && sortedEmployees.length) {
-      setSelectedEmployee(sortedEmployees[0].id);
-    }
-  }, [currentUser.role, selectedEmployee, sortedEmployees]);
+  const finalizeActiveEdit = React.useCallback(()=> { const prev=activeEditRef.current; if(!prev) return; const day=prev.day; const startTime=timeFromIndex(prev.startIndex); const endTime=endTimeFromEndIndex(prev.endIndex); const startISO=toISO(day,startTime); const endISO=toISO(day,endTime); const updated:AvailabilityRange={ id:prev.id, specialistId:selectedEmployee||'', start:startISO, end:endISO }; const snapshot=prev.daySnapshot.filter(r=> r.id!==updated.id); const mergedDay = mergeRangesAdjacency([...snapshot, updated]); setAvailabilities(a=> a.filter(r=> dayKey(r.start)!==day || r.specialistId!==selectedEmployee)); setTempRanges(t=> { const others=t.filter(r=> dayKey(r.start)!==day || r.specialistId!==selectedEmployee); return [...others, ...mergedDay]; }); setActiveEdit(null); }, [selectedEmployee]);
 
-  const renderWeekView = () => {
-    const weekDays = getWeekDays(currentDate);
-    const employeeMeetings = getEmployeeMeetings();
-    const gridTemplate = { gridTemplateColumns: `120px repeat(${weekDays.length}, 1fr)` };
-    const hourStarts = timeSlots.filter(t => t.endsWith(':00'));
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col">
-        <div className="flex-1 max-h-[38rem] overflow-y-auto styled-scrollbar" style={{ scrollbarGutter: 'stable' }}>
-          <div className="min-w-full inline-block">
-            <div className="grid divide-x divide-gray-200 bg-gray-50 sticky top-0 z-10" style={gridTemplate}>
-              <div className="p-4 bg-gray-50">
-                <div className="text-sm font-medium text-gray-600">Godzina</div>
+  React.useEffect(()=> { if(!activeEdit) return; const move=(e:MouseEvent)=> { setActiveEdit(prev=> { if(!prev) return prev; const deltaY=e.clientY - prev.originY; const slotH=prev.slotHeight; if(!slotH) return prev; if(prev.type==='move'){ const duration=prev.originalEndIndex-prev.originalStartIndex; let newStart=prev.originalStartIndex + Math.round(deltaY/slotH); const maxSlots=(endHour-startHour)*2; newStart=Math.max(0, Math.min(newStart, maxSlots - duration)); return { ...prev, startIndex:newStart, endIndex:newStart+duration }; } else if(prev.type==='resize'){ let newEnd=prev.originalEndIndex + Math.round(deltaY/slotH); const maxSlots=(endHour-startHour)*2; newEnd=Math.max(prev.originalStartIndex+1, Math.min(newEnd, maxSlots)); return { ...prev, endIndex:newEnd }; } else if(prev.type==='create'){ const colEl=dayColRefs.current[prev.day]; if(!colEl) return prev; const rect=colEl.getBoundingClientRect(); const relY=Math.min(Math.max(e.clientY-rect.top,0), rect.height-1); const currentIdx=Math.min((endHour-startHour)*2 -1, Math.max(0, Math.floor(relY / (rect.height/((endHour-startHour)*2))))); const anchor=prev.originalStartIndex; const newStart=Math.min(anchor, currentIdx); const newEnd=Math.max(anchor, currentIdx)+1; if(newStart===prev.startIndex && newEnd===prev.endIndex) return prev; return { ...prev, startIndex:newStart, endIndex:newEnd }; } return prev; }); }; const up=()=> finalizeActiveEdit(); window.addEventListener('mousemove', move); window.addEventListener('mouseup', up, { once:true }); return ()=> { window.removeEventListener('mousemove', move); }; }, [activeEdit, finalizeActiveEdit, startHour, endHour]);
+
+  const rangeToIndices = (range:AvailabilityRange)=> { const startD=new Date(range.start); const endD=new Date(range.end); const startMinutes=startD.getHours()*60 + startD.getMinutes(); const endMinutes=endD.getHours()*60 + endD.getMinutes(); const rawStart=(startMinutes-startHour*60)/30; const rawEnd=(endMinutes-startHour*60)/30; const startIndex=Math.max(0, Math.min(totalSlots-1, Math.floor(rawStart))); const endIndex=Math.max(startIndex+1, Math.min(totalSlots, Math.ceil(rawEnd))); return { startIndex, endIndex }; };
+
+  // Meetings helper (przywrócone)
+  const meetingToIndices = React.useCallback((m: Meeting) => {
+    const [sh, sm] = m.startTime.split(':').map(Number);
+    const [eh, em] = m.endTime.split(':').map(Number);
+    const startMinutes = sh * 60 + sm;
+    const endMinutes = eh * 60 + em;
+    const rawStart = (startMinutes - startHour * 60) / 30;
+    const rawEnd = (endMinutes - startHour * 60) / 30;
+    const startIndex = Math.max(0, Math.min(totalSlots - 1, Math.floor(rawStart)));
+    const endIndex = Math.max(startIndex + 1, Math.min(totalSlots, Math.ceil(rawEnd)));
+    return { startIndex, endIndex };
+  }, [startHour, endHour, totalSlots]);
+
+  // Copy availability handler
+  const handleCopyAvailability = () => { if(!selectedEmployee) return; const working=[...availabilities.filter(r=> r.specialistId===selectedEmployee), ...tempRanges.filter(r=> r.specialistId===selectedEmployee)]; const baseWeekRanges= working.filter(r=> { const startDate=new Date(r.start); return startDate>=weekBounds.start && startDate<=weekBounds.end; }); if(!baseWeekRanges.length){ setShowCopyDropdown(false); return; } const weeksToCopy = copyPeriod==='week'? 1 : 4; const newRanges:AvailabilityRange[]=[]; let counter=0; for(let w=1; w<=weeksToCopy; w++){ const dayOffset=w*7; for(const r of baseWeekRanges){ const startDate=new Date(r.start); startDate.setDate(startDate.getDate()+dayOffset); const endDate=new Date(r.end); endDate.setDate(endDate.getDate()+dayOffset); newRanges.push({ id:`copy-${Date.now()}-${w}-${counter++}`, specialistId:r.specialistId, start:startDate.toISOString(), end:endDate.toISOString() }); } } if(!newRanges.length){ setShowCopyDropdown(false); return; } setTempRanges(prev=> [...prev, ...newRanges]); setShowCopyDropdown(false); };
+
+  // Abstract saving dialog (mock backend)
+  const [showSavingDialog, setShowSavingDialog] = useState(false);
+  const runWithSaving = (action: ()=>void) => { if(showSavingDialog) return; setShowSavingDialog(true); requestAnimationFrame(()=> { action(); setTimeout(()=> setShowSavingDialog(false), 1200); }); };
+
+  // Week view renderer
+  const renderWeekView = () => { const weekDays=getWeekDays(currentDate); const employeeMeetings = selectedEmployee? meetings.filter(m=> m.specialistId===selectedEmployee && !m.id.startsWith(DAYOFF_MEETING_PREFIX)): []; const calendarHeight='calc(100vh - 292px)'; const hourColWidth=56; const gridTemplate={ gridTemplateColumns: `${hourColWidth}px repeat(${weekDays.length}, 1fr)` }; const activeId=activeEdit?.id; const allRanges=[...availabilities, ...tempRanges].filter(r=> r.specialistId===selectedEmployee); const byDay: Record<string, AvailabilityRange[]> = {}; allRanges.forEach(r=> { if(r.id!==activeId){ const dayStr=new Date(r.start).toISOString().split('T')[0]; (byDay[dayStr] ||= []).push(r);} }); return (
+    <div className="rounded-xl shadow-sm border border-gray-200 flex flex-col h-full bg-transparent">
+      <div className="flex-1 overflow-hidden select-none">
+        <div className="h-full flex flex-col">
+          <div className="grid divide-x divide-gray-200 bg-white sticky top-0 z-10" style={gridTemplate}>
+            <div className="px-1 py-0.5 bg-white flex items-center justify-center"><div className="text-[12px] font-semibold text-gray-600 leading-tight text-center">Godzina</div></div>
+            {weekDays.map((day, idx)=> (
+              <div key={idx} className="px-2 py-1 bg-white text-center">
+                <div className="text-sm font-medium text-gray-900 leading-snug">{day.toLocaleDateString('pl-PL',{ weekday:'short' })}</div>
+                <div className="text-xs text-gray-600 mt-0.5 leading-none">{day.toLocaleDateString('pl-PL',{ day:'numeric', month:'short' })}</div>
               </div>
-              {weekDays.map((day, index) => (
-                <div key={index} className="p-4 bg-gray-50 text-center">
-                  <div className="text-sm font-medium text-gray-900">{day.toLocaleDateString('pl-PL', { weekday: 'short' })}</div>
-                  <div className="text-sm text-gray-600 mt-1">{day.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })}</div>
-                </div>
-              ))}
+            ))}
+          </div>
+          <div className="grid flex-1 divide-x divide-gray-200" style={{...gridTemplate, height:calendarHeight}}>
+            <div className="relative px-1" style={{height:'100%'}}>
+              <div className="absolute inset-0 flex flex-col">
+                {timeSlots.map((t,i)=>(<div key={i} className={`flex-1 flex items-center justify-center ${i>0?'border-t border-gray-200':''}`}> <span className="text-[12px] font-medium text-gray-700 select-none leading-none tracking-tight">{t}</span></div>))}
+              </div>
             </div>
-            <div className="divide-y divide-gray-200">
-              {hourStarts.map(hour => {
-                const [hh] = hour.split(':');
-                const firstSlot = hour;        // HH:00
-                const secondSlot = `${hh}:30`; // HH:30
-                return (
-                  <div
-                    key={hour}
-                    className="grid divide-x divide-gray-200"
-                    style={{ ...gridTemplate, gridTemplateRows: 'repeat(2, minmax(0,1fr))' }}
-                  >
-                    {/* scalona godzina */}
-                    <div className="row-span-2 p-3 bg-gray-50 flex items-start text-sm font-medium text-gray-600 border-r border-gray-200">
-                      {hour}
+            {weekDays.map((day, idx)=> { const dayStr=formatDateForComparison(day); const dayMeetings = employeeMeetings.filter(m=> m.date===dayStr); const dayRanges=byDay[dayStr] || []; const isEditDay=activeEdit?.day===dayStr; const editStart=activeEdit?.startIndex ?? -1; const editEnd=activeEdit?.endIndex ?? -1; return (
+              <div key={idx} ref={el=> { dayColRefs.current[dayStr]=el; }} className="relative overflow-hidden" style={{height:'100%'}}>
+                <div className="absolute inset-0 flex flex-col">
+                  {timeSlots.map((t, slotIdx)=> { const isSelectedSlot=isEditDay && slotIdx>=editStart && slotIdx<editEnd; return (
+                    <div key={slotIdx} className={`day-slot relative flex-1 px-1 ${slotIdx>0?'border-t border-gray-200':''} ${isSelectedSlot?'bg-green-50':''} cursor-crosshair`}
+                      onMouseDown={(e)=> { if(e.button!==0) return; e.preventDefault(); if(!selectedEmployee || activeEdit) return; const colEl=dayColRefs.current[dayStr]; const rect=colEl? colEl.getBoundingClientRect(): {height:0} as any; const slotH=rect.height / totalSlots; const newId='new-'+Date.now()+'-'+Math.random().toString(36).slice(2,7); setActiveEdit({ id:newId, day:dayStr, type:'create', originalStartIndex:slotIdx, originalEndIndex:slotIdx+1, startIndex:slotIdx, endIndex:slotIdx+1, originY:e.clientY, slotHeight:slotH, isTemp:true, daySnapshot:[...(availabilities.filter(r=> dayKey(r.start)===dayStr && r.specialistId===selectedEmployee)), ...(tempRanges.filter(r=> dayKey(r.start)===dayStr && r.specialistId===selectedEmployee))] }); }}
+                      onMouseEnter={()=> { setActiveEdit(prev=> { if(!prev|| prev.type!=='create'|| prev.day!==dayStr) return prev; const anchor=prev.originalStartIndex; const newStart=Math.min(anchor, slotIdx); const newEnd=Math.max(anchor, slotIdx)+1; if(newStart===prev.startIndex && newEnd===prev.endIndex) return prev; return { ...prev, startIndex:newStart, endIndex:newEnd };}); }}>
+                      <span className={`absolute inset-0 flex items-center justify-start pl-1 text-[11px] font-semibold select-none pointer-events-none ${isSelectedSlot?'text-green-800':'text-gray-600'}`}>{t}</span>
                     </div>
-                    {/* pierwsze 30 min */}
-                    {weekDays.map((day, dayIndex) => {
-                      const slotTime = firstSlot;
-                      const dateStr = formatDateForComparison(day);
-                      const dayMeetings = employeeMeetings.filter(m => m.date === dateStr);
-                      const meetingAtTime = dayMeetings.find(meeting => {
-                        const startTime = parseInt(meeting.startTime.replace(':', ''));
-                        const endTime = parseInt(meeting.endTime.replace(':', ''));
-                        const currentTime = parseInt(slotTime.replace(':', ''));
-                        return currentTime >= startTime && currentTime < endTime;
-                      });
-                      const isAvailable = !meetingAtTime;
-                      const canInteract = !selectedEmployee || currentUser.role === 'admin' || selectedEmployee === currentUser.id;
-                      return (
-                        <TimeSlot
-                          key={`${dayIndex}-${slotTime}-a`}
-                          time={slotTime}
-                          isAvailable={isAvailable}
-                          meeting={meetingAtTime}
-                          onClick={() => canInteract && handleTimeSlotClick(dateStr, slotTime, meetingAtTime)}
-                          className={`min-h-[32px] border-b border-gray-100 ${!canInteract ? 'cursor-not-allowed opacity-50' : ''}`}
-                          compact
-                        />
-                      );
-                    })}
-                    {/* drugie 30 min */}
-                    {weekDays.map((day, dayIndex) => {
-                      const slotTime = secondSlot;
-                      const dateStr = formatDateForComparison(day);
-                      const dayMeetings = employeeMeetings.filter(m => m.date === dateStr);
-                      const meetingAtTime = dayMeetings.find(meeting => {
-                        const startTime = parseInt(meeting.startTime.replace(':', ''));
-                        const endTime = parseInt(meeting.endTime.replace(':', ''));
-                        const currentTime = parseInt(slotTime.replace(':', ''));
-                        return currentTime >= startTime && currentTime < endTime;
-                      });
-                      const isAvailable = !meetingAtTime;
-                      const canInteract = !selectedEmployee || currentUser.role === 'admin' || selectedEmployee === currentUser.id;
-                      return (
-                        <TimeSlot
-                          key={`${dayIndex}-${slotTime}-b`}
-                          time={slotTime}
-                          isAvailable={isAvailable}
-                          meeting={meetingAtTime}
-                          onClick={() => canInteract && handleTimeSlotClick(dateStr, slotTime, meetingAtTime)}
-                          className={`min-h-[32px] ${!canInteract ? 'cursor-not-allowed opacity-50' : ''}`}
-                          compact
-                        />
-                      );
-                    })}
-                  </div>
-                );
-              })}
-            </div>
+                  ); })}
+                </div>
+                <div className="absolute inset-0 z-0 pointer-events-none">
+                  {dayRanges.map(r=> { const { startIndex, endIndex }= rangeToIndices(r); const topPct=(startIndex/totalSlots)*100; const heightPct=((endIndex-startIndex)/totalSlots)*100; return (
+                    <div key={r.id} className="group avail-block absolute left-1 right-1 rounded-md bg-green-100 hover:bg-green-200 shadow-sm text-[12px] md:text-[13px] flex flex-col cursor-move z-20 text-green-800 border border-green-300 pointer-events-auto" style={{ top:`${topPct}%`, height:`${heightPct}%` }}
+                      onMouseDown={(e)=> { if(e.button!==0|| !selectedEmployee) return; const target=e.target as HTMLElement; if(target.closest('.delete-btn')|| target.closest('.avail-resize-handle')) return; e.stopPropagation(); const colEl=dayColRefs.current[dayStr]; const rect=colEl? colEl.getBoundingClientRect(): {height:0} as any; const slotH=rect.height / totalSlots; const { startIndex:sI, endIndex:eI }= rangeToIndices(r); const currentDayRanges=[...availabilities, ...tempRanges].filter(x=> x.specialistId===selectedEmployee && dayKey(x.start)===dayStr && x.id!==r.id); setAvailabilities(a=> a.filter(x=> x.id!==r.id)); setTempRanges(t=> t.filter(x=> x.id!==r.id)); setActiveEdit({ id:r.id, day:dayStr, type:'move', originalStartIndex:sI, originalEndIndex:eI, startIndex:sI, endIndex:eI, originY:e.clientY, slotHeight:slotH, isTemp: tempRanges.some(x=> x.id===r.id), daySnapshot: currentDayRanges }); }}>
+                      <div className="px-2 pt-1 pb-2 flex justify-between items-start font-semibold text-[12px] md:text-[13px] select-none h-full">
+                        <span className="leading-tight">{timeFromIndex(rangeToIndices(r).startIndex)} - {endTimeFromEndIndex(rangeToIndices(r).endIndex)}</span>
+                        <button type="button" aria-label="Usuń dostępność" onMouseDown={(e)=> e.stopPropagation()} onClick={(e)=> { e.stopPropagation(); setPendingDeleteRange(r); }} className="delete-btn ml-2 shrink-0 h-7 w-7 flex items-center justify-center rounded-md bg-red-500 text-white hover:bg-red-600 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-400">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="avail-resize-handle absolute left-1/2 -translate-x-1/2 bottom-1 h-1.5 w-14 bg-green-600 rounded cursor-ns-resize hover:bg-green-700" onMouseDown={(e)=> { e.stopPropagation(); if(e.button!==0|| !selectedEmployee) return; const colEl=dayColRefs.current[dayStr]; const rect=colEl? colEl.getBoundingClientRect(): {height:0} as any; const slotH=rect.height / totalSlots; const { startIndex:sI, endIndex:eI }= rangeToIndices(r); const currentDayRanges=[...availabilities, ...tempRanges].filter(x=> x.specialistId===selectedEmployee && dayKey(x.start)===dayStr && x.id!==r.id); setAvailabilities(a=> a.filter(x=> x.id!==r.id)); setTempRanges(t=> t.filter(x=> x.id!==r.id)); setActiveEdit({ id:r.id, day:dayStr, type:'resize', originalStartIndex:sI, originalEndIndex:eI, startIndex:sI, endIndex:eI, originY:e.clientY, slotHeight:slotH, isTemp: tempRanges.some(x=> x.id===r.id), daySnapshot: currentDayRanges }); }} />
+                    </div>
+                  ); })}
+                  {activeEdit && activeEdit.day===dayStr && (()=> { const { startIndex, endIndex }=activeEdit; const topPct=(startIndex/totalSlots)*100; const heightPct=((endIndex-startIndex)/totalSlots)*100; const startTime=timeFromIndex(startIndex); const endTime=endTimeFromEndIndex(endIndex); return (<div className="absolute left-1 right-1 rounded-md bg-green-200/80 text-[12px] md:text-[13px] flex flex-col pointer-events-none z-30 text-green-800 border border-green-300" style={{ top:`${topPct}%`, height:`${heightPct}%` }}><div className="px-1 py-0.5 font-semibold select-none">{startTime} - {endTime}</div></div>); })()}
+                </div>
+                <div className="absolute inset-0 z-40 pointer-events-none">
+                  {/* Day-offs full-day red blocks */}
+                  {dayOffs.filter(o=> o.date===dayStr).map(o=> { const meta = o.groupId? dayOffGroupMeta[o.groupId]: dayOffGroupMeta[o.id]; const note=meta?.note; const rangeLabel = meta? (meta.start===meta.end? formatDayDisplayFull(meta.start): `${formatDayDisplayFull(meta.start)}-${formatDayDisplayFull(meta.end)}`): ''; const employeeNames = (meta?.employees||[]).map(id=> sortedEmployees.find(e=> e.id===id)?.name || id).join(', '); return (
+                    <div key={o.id} className="absolute left-2 right-2 rounded-md bg-red-200/95 text-red-900 shadow-md flex flex-col pointer-events-none z-30 border border-red-300 px-3 py-2 overflow-hidden" style={{ top:'0%', height:'100%' }}>
+                      <div className="font-bold leading-tight tracking-tight text-[13px] md:text-[14px] mb-1 truncate">{rangeLabel}</div>
+                      {employeeNames && <div className="text-[12px] md:text-[13px] font-medium mb-2 truncate">{employeeNames}</div>}
+                      {note && <div className="text-[11px] md:text-[12px] leading-snug opacity-90 whitespace-pre-wrap break-words line-clamp-6">{note}</div>}
+                    </div>
+                  ); })}
+                  {dayMeetings.map(m=> { const { startIndex, endIndex } = meetingToIndices(m); const topPct=(startIndex/ totalSlots)*100; const heightPct=((endIndex-startIndex)/ totalSlots)*100; return (
+                    <div key={m.id} className="absolute left-2 right-2 rounded-md bg-yellow-100/95 text-yellow-900 shadow-md text-[10px] leading-tight px-2 py-1 flex flex-col pointer-events-auto z-40" style={{ top:`${topPct}%`, height:`${heightPct}%` }}>
+                      <div className="font-semibold truncate">{m.patientName || 'Spotkanie'}</div>
+                      <div className="text-[11px] opacity-80 tracking-tight">{m.startTime}-{m.endTime}</div>
+                    </div>
+                  ); })}
+                </div>
+              </div>
+            ); })}
           </div>
         </div>
       </div>
-    );
-  };
+    </div>
+  ); };
 
-  const renderDayView = () => {
-    const dateStr = formatDateForComparison(currentDate);
-    const employeeMeetings = getEmployeeMeetings();
-    const dayMeetings = employeeMeetings.filter(meeting => meeting.date === dateStr);
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col">
-        <div className="p-6 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">
-            {currentDate.toLocaleDateString('pl-PL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </h3>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-6">
-          {timeSlots.map((time, index) => {
-            const meetingAtTime = dayMeetings.find(meeting => {
-              const startTime = parseInt(meeting.startTime.replace(':', ''));
-              const endTime = parseInt(meeting.endTime.replace(':', ''));
-              const currentTime = parseInt(time.replace(':', ''));
-              return currentTime >= startTime && currentTime < endTime;
-            });
-            const isAvailable = !meetingAtTime;
-            const canInteract = !selectedEmployee || currentUser.role === 'admin' || selectedEmployee === currentUser.id;
-            return (
-              <TimeSlot
-                key={index}
-                time={time}
-                isAvailable={isAvailable}
-                meeting={meetingAtTime}
-                onClick={() => canInteract && handleTimeSlotClick(dateStr, time, meetingAtTime)}
-                compact
-              />
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
+  // Pending delete modal confirm handled below
 
   return (
-    <div className="space-y-6">
-      {/* Wybór pracownika */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-        <div className="space-y-3">
-          <div>
-            <div className="flex flex-wrap gap-2">
-              {sortedEmployees.map(emp => {
-                const active = selectedEmployee === emp.id;
-                return (
-                  <button
-                    key={emp.id}
-                    type="button"
-                    onClick={() => setSelectedEmployee(emp.id)}
-                    className={`px-3 py-1.5 text-xs rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
-                      active
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    {emp.name}
-                  </button>
-                );
-              })}
-              {sortedEmployees.length === 0 && (
-                <span className="text-xs text-gray-400 italic">Brak pracowników</span>
-              )}
+    <div className="flex-1 flex flex-col pb-6">
+      <div className="mb-4">
+        <div className="flex flex-wrap gap-2">
+          {sortedEmployees.map(emp=> { const active=emp.id===selectedEmployee; const disabled=currentUser.role==='employee' && emp.id!==currentUser.id; return (
+            <button key={emp.id} type="button" aria-pressed={active} disabled={disabled} onClick={()=> { if(disabled) return; setSelectedEmployee(emp.id); }}
+              className={`px-4 py-1.5 text-xs md:text-sm rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${active? 'bg-blue-600 text-white border-blue-600':'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} ${disabled && !active? 'opacity-50 cursor-not-allowed hover:bg-white':''}`}>{emp.name}</button>
+          ); })}
+        </div>
+      </div>
+      {selectedEmployee ? (
+        <div className="flex flex-col flex-1 min-h-0">
+          <div className="flex-shrink-0">
+            <CalendarHeader currentDate={currentDate} viewType={viewType} onDateChange={guardedSetCurrentDate} onViewTypeChange={(v)=> { if(v==='week'|| v==='month') setViewType(v); }} availableViews={['week','month']}
+              centerContent={(<div className="flex flex-wrap items-center gap-4 justify-center">
+                {viewType==='week' && (<>
+                  <span className="text-sm font-medium text-gray-700">Powiel dostępność na:</span>
+                  <div className="relative copy-dropdown">
+                    <button onClick={()=> setShowCopyDropdown(!showCopyDropdown)} className="flex items-center justify-between gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors w-44">
+                      <span>{copyPeriod==='week'? 'kolejny tydzień':'kolejne 4 tygodnie'}</span>
+                      <ChevronDown className="h-4 w-4 text-gray-500" />
+                    </button>
+                    {showCopyDropdown && (
+                      <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+                        <button onClick={()=> { setCopyPeriod('week'); setShowCopyDropdown(false);} } className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2">{copyPeriod==='week' && <Check className="h-4 w-4 text-blue-600" />}<span className={copyPeriod==='week'? 'text-blue-600 font-medium':'text-gray-700'}>kolejny tydzień</span></button>
+                        <button onClick={()=> { setCopyPeriod('4weeks'); setShowCopyDropdown(false);} } className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2">{copyPeriod==='4weeks' && <Check className="h-4 w-4 text-blue-600" />}<span className={copyPeriod==='4weeks'? 'text-blue-600 font-medium':'text-gray-700'}>kolejne 4 tygodnie</span></button>
+                      </div>) }
+                  </div>
+                  <button onClick={handleCopyAvailability} disabled={!selectedEmployee} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors">Powiel</button>
+                </>)}
+                {viewType==='month' && monthPending && (<div className="flex items-center gap-2 ml-8 md:ml-12">
+                  <button onClick={()=> runWithSaving(()=> { monthActionsRef.current?.save(); loadDayOffs(); })} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors">Zapisz zmiany</button>
+                  <button onClick={()=> monthActionsRef.current?.discard()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors">Odrzuć</button>
+                </div>)}
+                {viewType==='week' && (!pendingDeleteRange && (tempRanges.length>0 || deletedRangeIds.length>0)) && (<div className="flex items-center gap-2 ml-8 md:ml-12">
+                  <button onClick={()=> runWithSaving(saveAvailabilities)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors">Zapisz zmiany</button>
+                  <button onClick={discardChanges} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors">Odrzuć</button>
+                </div>)}
+              </div>)} />
+          </div>
+          <div className="flex-1 min-h-0">
+            {viewType==='week' && renderWeekView()}
+            {viewType==='month' && (<MonthCalendar currentDate={currentDate} dayOffs={dayOffs} buildDateRange={buildDateRange} formatLocalDate={formatLocalDate} employees={sortedEmployees.map(e=> ({ id:e.id, name:e.name }))} defaultEmployeeId={selectedEmployee || undefined} onPendingStateChange={(has, actions)=> { setMonthPending(has); monthActionsRef.current = actions; }} />)}
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex-1 flex items-center justify-center"><p className="text-gray-500 text-center">Wybierz pracownika, aby wyświetlić jego grafik</p></div>
+      )}
+
+      {pendingDeleteRange && (<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+        <div className="bg-white rounded-xl shadow-lg w-full max-w-sm overflow-hidden animate-scale-in">
+          <div className="p-6">
+            <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-red-100 flex items-center justify-center"><Trash2 className="h-6 w-6 text-red-600" /></div>
+            <h3 className="text-base font-semibold text-gray-900 mb-2 text-center">Usuń dostępność?</h3>
+            <p className="text-sm text-gray-600 mb-6 leading-relaxed text-center">Czy na pewno chcesz usunąć ten zakres dostępności? Zmiana zostanie zapisana dopiero po kliknięciu "Zapisz zmiany".</p>
+            <div className="flex justify-center gap-3">
+              <button type="button" onClick={()=> setPendingDeleteRange(null)} className="px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">Anuluj</button>
+              <button type="button" onClick={handleConfirmDelete} className="px-4 py-2.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400">Usuń</button>
             </div>
           </div>
         </div>
-      </div>
+      </div>)}
 
-      {selectedEmployee ? (
-        <>
-          <CalendarHeader
-            currentDate={currentDate}
-            viewType={viewType}
-            onDateChange={setCurrentDate}
-            onViewTypeChange={setViewType}
-            centerContent={
-              <>
-                <div className="flex items-center gap-8 text-xs text-gray-600">
-                  <div className="flex items-center gap-2"><span className="w-4 h-4 rounded bg-gray-50 border border-gray-300" /> Dostępny</div>
-                  <div className="flex items-center gap-2"><span className="w-4 h-4 rounded bg-red-50 border border-red-300" /> Niedostępny</div>
-                </div>
-              </>
-            }
-          />
-
-          {viewType === 'week' && renderWeekView()}
-          {viewType === 'day' && renderDayView()}
-          {viewType === 'month' && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <p className="text-gray-500 text-center py-8">Widok miesięczny będzie dostępny w przyszłych wersjach</p>
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <p className="text-gray-500 text-center py-8">Wybierz pracownika, aby wyświetlić jego grafik</p>
+      {showSavingDialog && (<div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 text-center animate-fade-in">
+          <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center"><div className="h-6 w-6 rounded-full border-4 border-blue-300 border-t-blue-600 animate-spin" /></div>
+          <h3 className="text-base font-semibold text-gray-800 mb-2">Wysyłanie zmian...</h3>
+            <p className="text-sm text-gray-600">Trwa przesyłanie zmian do backendu (mock).</p>
         </div>
-      )}
-
-      <MeetingForm
-        isOpen={showMeetingForm}
-        onClose={() => {
-          setShowMeetingForm(false);
-          setEditingMeeting(undefined);
-        }}
-        onSubmit={handleMeetingFormSubmit}
-        users={users}
-        rooms={rooms}
-        meetings={meetings}
-        selectedDate={formatDateForComparison(currentDate)}
-        selectedTime={selectedTime}
-        currentUser={currentUser}
-        editingMeeting={editingMeeting}
-      />
-
-      {/* Nowa legenda na dole strony */}
-      {/* legenda przeniesiona do nagłówka */}
+      </div>)}
     </div>
   );
 };

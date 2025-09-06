@@ -2,6 +2,7 @@ export interface User {
   id: string;
   name: string;
   role: 'admin' | 'employee' | 'contact';
+  surname: string;
   specialization?: string;
   employmentStart?: string; // YYYY-MM-DD
   employmentEnd?: string;   // YYYY-MM-DD
@@ -58,6 +59,14 @@ export interface PatientVisit {
   endTime: string;
   status: 'planned' | 'done' | 'cancelled';
   notes?: string;
+}
+
+export interface Availability {
+  id: string;
+  specialistId: string; // ID specjalisty do którego przypisana jest dostępność
+  startDate: string; // YYYY-MM-DD HH:mm (data i godzina rozpoczęcia dostępności)
+  endDate: string;   // YYYY-MM-DD HH:mm (data i godzina zakończenia dostępności)
+  notes?: string;    // opcjonalne notatki dotyczące dostępności
 }
 
 export interface CalendarView {

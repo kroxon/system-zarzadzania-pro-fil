@@ -53,8 +53,10 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
     e.preventDefault();
     if (!validate()) return;
 
+    const [name, surname] = formData.name.trim().split(' ', 2);
     const payload = {
-      name: formData.name.trim(),
+      name: name || '',
+      surname: surname || '',
       specialization: formData.specialization.trim(),
       role: 'employee' as const,
       employmentStart: formData.employmentStart || undefined,
