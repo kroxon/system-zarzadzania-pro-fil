@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, AlertCircle, Hash, Trash2 } from 'lucide-react';
+import { AlertCircle, Trash2, Calendar, Clock } from 'lucide-react';
 import { Meeting, User, Room, Patient } from '../../types';
 import { loadPatients } from '../../utils/storage';
+import { generateTimeSlots } from '../../utils/timeSlots';
 
 const ASSIGN_KEY = 'schedule_therapist_assignments';
 
@@ -92,6 +93,22 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const effectivePatients = patients.length ? patients : loadPatients();
   const [showPastSubmitInfo, setShowPastSubmitInfo] = useState(false);
 
+  // Reset validation errors on open and when switching context (create/edit another meeting)
+  useEffect(() => { if (isOpen) setErrors([]); }, [isOpen]);
+  useEffect(() => { setErrors([]); }, [editingMeeting]);
+
+  // Centralized close to also clear transient UI states and errors
+  const handleClose = () => {
+    setErrors([]);
+    setRoomsOpen(false);
+    setDateOpen(false);
+    setStartOpen(false);
+    setEndOpen(false);
+    setShowDeleteConfirm(false);
+    setShowPastSubmitInfo(false);
+    onClose();
+  };
+
   // load therapistAssignments (single source of truth)
   const therapistAssignments: Record<string,string[]> = React.useMemo(()=> {
     try { const raw = localStorage.getItem(ASSIGN_KEY); return raw? JSON.parse(raw): {}; } catch { return {}; }
@@ -147,20 +164,29 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   }, [editingMeeting, currentUser, selectedTime, initialRoomId, selectedEndTime]);
 
   const validateForm = (): boolean => {
+    // When editing a past meeting with permissions, allow saving status/notes only without blocking on other validations
+    if (restrictPastEdit) {
+      setErrors([]);
+      return true;
+    }
     const newErrors: string[] = [];
     if (!formData.specialistIds.length) newErrors.push('Wybierz co najmniej jednego specjalistę');
-    if (!formData.patientIds.length) newErrors.push('Wybierz co najmniej jednego podopiecznego');
+    // patient optional – no error
     if (!formData.roomId) newErrors.push('Wybierz salę');
     if (!formData.startTime || !formData.endTime) newErrors.push('Określ godziny spotkania');
     if (formData.startTime && formData.endTime) {
       const startM = toMin(formData.startTime); const endM = toMin(formData.endTime);
       if (endM <= startM) newErrors.push('Godzina zakończenia musi być późniejsza niż rozpoczęcia');
     }
-    // conflict per specialist and room
+    // creation: start must be in the future
+    if (!editingMeeting && formData.startTime && !isDateTimeInFuture(effectiveDate, formData.startTime)) {
+      newErrors.push('Termin rozpoczęcia musi być w przyszłości');
+    }
+    // conflict per specialist and room (using effectiveDate)
     formData.specialistIds.forEach(id => {
-      if (specialistHasConflict(id, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id)) newErrors.push(`Specjalista (${users.find(u=>u.id===id)?.name||id}) jest zajęty`);
+      if (specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) newErrors.push(`Specjalista (${users.find(u=>u.id===id)?.name||id}) jest zajęty`);
     });
-    if (roomHasConflict(formData.roomId, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id)) newErrors.push('Sala jest zajęta w tym przedziale czasu');
+    if (roomHasConflict(formData.roomId, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) newErrors.push('Sala jest zajęta w tym przedziale czasu');
     setErrors(newErrors); return newErrors.length===0;
   };
 
@@ -168,7 +194,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     e.preventDefault();
     if (!validateForm()) return;
     // If user changed time to past while form is open, block submission
-    if (!editingMeeting && !isDateTimeInFuture(selectedDate, formData.startTime)) {
+    if (!editingMeeting && !isDateTimeInFuture(effectiveDate, formData.startTime)) {
       setShowPastSubmitInfo(true);
       return;
     }
@@ -183,7 +209,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       patientId: primaryPatientId,
       guestName: formData.guestName,
       roomId: formData.roomId,
-      date: selectedDate,
+      date: effectiveDate,
       startTime: formData.startTime,
       endTime: formData.endTime,
       notes: formData.notes,
@@ -256,6 +282,16 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return false;
   };
 
+  // Determine if current user can edit this meeting (broader than delete)
+  const canCurrentUserEdit = (m: Meeting | undefined) => {
+    if (!m) return false;
+    if (currentUser.role === 'admin' || currentUser.role === 'contact') return true;
+    if (currentUser.role === 'employee') {
+      return m.specialistId === currentUser.id || (m.specialistIds?.includes(currentUser.id) ?? false) || m.createdBy === currentUser.id;
+    }
+    return false;
+  };
+
   const canShowDelete = !!editingMeeting && isMeetingInFuture(editingMeeting) && canCurrentUserDelete(editingMeeting) && !!onDelete;
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isEditingPast = !!editingMeeting && isMeetingInPastByEnd(editingMeeting);
@@ -264,52 +300,122 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return s === 'present' || s === 'absent' || s === 'cancelled' ? s : 'present';
   })();
 
-  if (!isOpen) return null;
+  // When editing a past meeting and user has permission, restrict editing to status + notes only
+  const restrictPastEdit = !!editingMeeting && isEditingPast && canCurrentUserEdit(editingMeeting);
+  const canEditThis = !!editingMeeting && canCurrentUserEdit(editingMeeting);
 
-  // If creating and the selected start is in the past, show only info dialog (no form)
-  const isCreateAttemptInPast = !editingMeeting && !isDateTimeInFuture(selectedDate, formData.startTime);
-  if (isCreateAttemptInPast) {
-    return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true">
-        <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-        <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in">
-          <div className="p-6">
-            <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
-              <AlertCircle className="h-6 w-6 text-blue-600" />
-            </div>
-            <h3 className="text-base font-semibold text-gray-900 mb-2 text-center">Nie można utworzyć sesji w przeszłości</h3>
-            <p className="text-sm text-gray-600 mb-6 leading-relaxed text-center">
-              Nowe sesje można planować wyłącznie w przyszłych terminach. Wybierz proszę datę i godzinę późniejszą niż obecna i spróbuj ponownie.
-            </p>
-            <div className="flex justify-center">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-6 py-2.5 text-sm font-medium rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:from-indigo-500 hover:to-blue-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                autoFocus
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+  // Local date state with Polish formatting helpers
+  const [localDate, setLocalDate] = useState<string>(selectedDate);
+  useEffect(()=>{ if(isOpen) setLocalDate(selectedDate); }, [isOpen, selectedDate]);
+  const toYMD = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const parseYMD = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, (m||1)-1, d||1); };
+  const formatPolishDate = (s: string) => { const d = parseYMD(s); const day = String(d.getDate()).padStart(2,'0'); const month = new Intl.DateTimeFormat('pl-PL', { month: 'long' }).format(d); const year = d.getFullYear(); return `${day}.${month}.${year}`; };
+  const effectiveDate = localDate || selectedDate;
+
+  // If opening create form on a past date, correct to today and show info, but keep form visible
+  useEffect(() => {
+    if (!isOpen || editingMeeting) return;
+    const todayYMD = toYMD(new Date());
+    if (localDate < todayYMD) {
+      setLocalDate(todayYMD);
+      setShowPastSubmitInfo(true);
+    }
+  }, [isOpen, editingMeeting, localDate]);
+
+  // Reset form on open
+  useEffect(() => {
+    // Removed auto-reset on open to avoid overriding edit state; initialization handled elsewhere
+  }, [isOpen, currentUser, initialRoomId, selectedTime, selectedEndTime]);
+
+  const [dateOpen, setDateOpen] = useState(false);
+  const base = parseYMD(localDate);
+  const [viewYear, setViewYear] = useState<number>(base.getFullYear());
+  const [viewMonth, setViewMonth] = useState<number>(base.getMonth()); // 0-11
+  useEffect(()=>{ const d = parseYMD(localDate); setViewYear(d.getFullYear()); setViewMonth(d.getMonth()); }, [localDate]);
+  const monthLabelPl = new Intl.DateTimeFormat('pl-PL', { month: 'long', year: 'numeric' }).format(new Date(viewYear, viewMonth, 1));
+  const getCalendarDays = (y:number, m:number) => {
+    const first = new Date(y, m, 1);
+    const startOffset = (first.getDay() + 6) % 7; // Monday=0
+    const start = new Date(y, m, 1 - startOffset);
+    const days: { d: Date; inMonth: boolean }[] = [];
+    for (let i=0;i<42;i++) {
+      const cur = new Date(start); cur.setDate(start.getDate()+i);
+      days.push({ d: cur, inMonth: cur.getMonth()===m });
+    }
+    return days;
+  };
+  const calendarDays = getCalendarDays(viewYear, viewMonth);
+
+  // Month navigation helpers
+  const prevMonth = () => {
+    setViewMonth((m: number) => {
+      if (m === 0) { setViewYear(y => y - 1); return 11; }
+      return m - 1;
+    });
+  };
+  const nextMonth = () => {
+    setViewMonth((m: number) => {
+      if (m === 11) { setViewYear(y => y + 1); return 0; }
+      return m + 1;
+    });
+  };
+
+  // Time pickers state and options
+  const timeOptions = React.useMemo(()=> generateTimeSlots(7, 20), []);
+  const [startOpen, setStartOpen] = useState(false);
+  const [endOpen, setEndOpen] = useState(false);
+
+  // Inline computed validations for live feedback on time and collisions
+  const startEndInvalid = React.useMemo(() => {
+    if (!formData.startTime || !formData.endTime) return false;
+    return toMin(formData.endTime) <= toMin(formData.startTime);
+  }, [formData.startTime, formData.endTime]);
+
+  const conflictedSpecialists = React.useMemo(() => {
+    if (!formData.startTime || !formData.endTime) return [] as string[];
+    return formData.specialistIds.filter(id =>
+      specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)
     );
-  }
+  }, [formData.specialistIds, formData.startTime, formData.endTime, effectiveDate, editingMeeting?.id, meetings]);
+
+  const hasRoomConflict = React.useMemo(() => {
+    if (!formData.roomId || !formData.startTime || !formData.endTime) return false;
+    return roomHasConflict(formData.roomId, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id);
+  }, [formData.roomId, formData.startTime, formData.endTime, effectiveDate, editingMeeting?.id, meetings]);
+
+  // Live check: creating in the past (date+start)
+  const isCreatePastSelection = React.useMemo(() => {
+    if (editingMeeting) return false;
+    if (!formData.startTime) return false;
+    return !isDateTimeInFuture(effectiveDate, formData.startTime);
+  }, [editingMeeting, effectiveDate, formData.startTime]);
+
+  // Today guard: disable past time options when creating for today
+  const isCreateToday = React.useMemo(() => {
+    if (editingMeeting) return false;
+    const today = toYMD(new Date());
+    return effectiveDate === today;
+  }, [editingMeeting, effectiveDate]);
+  const nowMinutes = React.useMemo(() => {
+    const n = new Date();
+    return n.getHours() * 60 + n.getMinutes();
+  }, []);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-start justify-center p-6 z-50 overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="meetingFormTitle">
-      <div ref={dialogRef} className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl border border-gray-100">
-        <div className="flex items-center justify-between px-8 py-5 border-b border-gray-200 bg-gradient-to-r from-indigo-50 to-blue-50 rounded-t-2xl">
-          <h2 id="meetingFormTitle" className="text-xl font-semibold text-gray-800 flex items-center gap-2">
-            <span className="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-indigo-100 text-indigo-600"><Hash className="h-4 w-4" /></span>
-            {editingMeeting ? 'Edytuj sesję' : 'Nowa sesja'}
-          </h2>
-          <button onClick={onClose} className="p-2 hover:bg-white/70 rounded-lg transition-colors" aria-label="Zamknij">
-            <X className="h-5 w-5 text-gray-500" />
-          </button>
-        </div>
+      <div ref={dialogRef} className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl border border-gray-100">
         <form onSubmit={handleSubmit} className="px-8 py-6 space-y-6">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-50 to-blue-50 text-indigo-700 ring-1 ring-indigo-100">
+                <Calendar className="h-5 w-5" />
+              </span>
+              <h2 id="meetingFormTitle" className="text-lg font-semibold text-gray-900">{editingMeeting ? 'Edytuj spotkanie' : 'Nowe spotkanie'}</h2>
+            </div>
+          </div>
           {errors.length>0 && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4" aria-live="assertive">
               <div className="flex items-center">
@@ -325,8 +431,21 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
             <div className="col-span-12 lg:col-span-4 space-y-6">
               <div>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Specjaliści</label>
-                {/* Selected specialists only */}
-                <div className="mb-2">
+                {/* Select first, then selected specialists list */}
+                <select
+                  onChange={(e)=>{ const v=e.target.value; if(v) setFormData(fd=> fd.specialistIds.includes(v)? fd : {...fd, specialistIds:[...fd.specialistIds, v]}); e.target.selectedIndex=0; }}
+                  value=""
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed"
+                  disabled={isEditingPast}
+                >
+                  <option value="">Dodaj specjalistę...</option>
+                  {users.filter(u=>u.role==='employee').map(u=> {
+                    const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
+                    const already = formData.specialistIds.includes(u.id);
+                    return <option key={u.id} value={u.id} disabled={busy || already}>{u.name}{u.specialization? ' – '+u.specialization: ''}{already ? ' (wybrany)' : busy ? ' (zajęty)' : ''}</option>;
+                  })}
+                </select>
+                <div className="mt-2">
                   <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-40 overflow-auto">
                     {formData.specialistIds.length===0 && (
                       <li className="p-3 text-sm text-gray-400">Brak wybranych specjalistów</li>
@@ -334,24 +453,25 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                     {formData.specialistIds.map(id=> {
                       const u = users.find(us=>us.id===id);
                       if(!u) return null;
-                      const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(id, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id));
+                      const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
                       return (
                         <li
                           key={id}
-                          className={`flex items-center justify-between p-2.5 transition-colors border-l-4 ${busy ? 'border-red-300 bg-red-50/50' : 'border-indigo-200 hover:bg-indigo-50'}`}
+                          className={`flex items-center justify-between p-2.5 transition-colors ${busy ? 'bg-red-50/60' : 'bg-indigo-50 hover:bg-indigo-100'}`}
                         >
                           <div className="min-w-0 pr-3">
                             <div className={`text-sm font-semibold leading-5 truncate ${busy ? 'text-red-700' : 'text-gray-900'}`}>{u.name}</div>
-                            <div className="text-xs text-gray-500 truncate">{u.specialization || 'Specjalista'}</div>
+                            <div className="text-xs text-gray-600 truncate">{u.specialization || 'Specjalista'}</div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             {busy && <span className="text-[11px] text-red-700 px-2 py-0.5 rounded-full bg-red-50 border border-red-200">zajęty</span>}
                             <button
                               type="button"
                               onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                               aria-label="Usuń specjalistę"
                               title="Usuń"
+                              disabled={isEditingPast}
                             >
                               ×
                             </button>
@@ -361,14 +481,6 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                     })}
                   </ul>
                 </div>
-                <select onChange={(e)=>{ const v=e.target.value; if(v) setFormData(fd=> fd.specialistIds.includes(v)? fd : {...fd, specialistIds:[...fd.specialistIds, v]}); e.target.selectedIndex=0; }} value="" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
-                  <option value="">Dodaj specjalistę...</option>
-                  {users.filter(u=>u.role==='employee').map(u=> {
-                    const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id));
-                    const already = formData.specialistIds.includes(u.id);
-                    return <option key={u.id} value={u.id} disabled={busy || already}>{u.name}{u.specialization? ' – '+u.specialization: ''}{already ? ' (wybrany)' : busy ? ' (zajęty)' : ''}</option>;
-                  })}
-                </select>
               </div>
               <div>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Podopieczni</label>
@@ -376,10 +488,14 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                   <div className="inline-flex text-[11px] rounded-lg overflow-hidden border border-indigo-300 bg-indigo-50">
                     <button type="button"
                       onClick={()=> setPatientAssignmentFilter('wszyscy')}
-                      className={`px-3 py-1.5 font-medium transition-colors ${patientAssignmentFilter==='wszyscy' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'}`}>Wszyscy</button>
+                      className={`px-3 py-1.5 font-medium transition-colors ${patientAssignmentFilter==='wszyscy' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`}
+                      disabled={isEditingPast}
+                    >Wszyscy</button>
                     <button type="button"
                       onClick={()=> setPatientAssignmentFilter('przypisani')}
-                      className={`px-3 py-1.5 font-medium transition-colors border-l border-indigo-300 ${patientAssignmentFilter==='przypisani' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'}`}>Przypisani</button>
+                      className={`px-3 py-1.5 font-medium transition-colors border-l border-indigo-300 ${patientAssignmentFilter==='przypisani' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`}
+                      disabled={isEditingPast}
+                    >Przypisani</button>
                   </div>
                 </div>
                 {patientAssignmentFilter==='przypisani' && (
@@ -394,7 +510,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                     ) : null)}
                   </div>
                 )}
-                <div className="mb-2">
+                {/* Selected patients list first, then select below it */}
+                <div className="mt-2">
                   <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-44 overflow-auto">
                     {formData.patientIds.length===0 && (
                       <li className="p-3 text-sm text-gray-400">Brak</li>
@@ -405,7 +522,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                       return (
                         <li
                           key={pid}
-                          className="flex items-center justify-between p-2.5 transition-colors border-l-4 border-emerald-200 hover:bg-emerald-50"
+                          className="flex items-center justify-between p-2.5 transition-colors bg-emerald-50 hover:bg-emerald-100"
                         >
                           <div className="min-w-0 pr-3">
                             <div className="text-sm font-semibold leading-5 text-gray-900 truncate">{fullName}</div>
@@ -413,9 +530,10 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                           <button
                             type="button"
                             onClick={()=> setFormData(fd=>({...fd, patientIds: fd.patientIds.filter(x=>x!==pid)}))}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
                             aria-label="Usuń podopiecznego"
                             title="Usuń"
+                            disabled={isEditingPast}
                           >
                             ×
                           </button>
@@ -424,7 +542,13 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                     })}
                   </ul>
                 </div>
-                <select onChange={(e)=>{ const v=e.target.value; if(v) setFormData(fd=> fd.patientIds.includes(v)? fd : {...fd, patientIds:[...fd.patientIds, v]}); e.target.selectedIndex=0; }} value="" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60" disabled={patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0}>
+                {/* Select moved below list */}
+                <select
+                  onChange={(e)=>{ const v=e.target.value; if(v) setFormData(fd=> fd.patientIds.includes(v)? fd : {...fd, patientIds:[...fd.patientIds, v]}); e.target.selectedIndex=0; }}
+                  value=""
+                  className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed"
+                  disabled={isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)}
+                >
                   <option value="">Dodaj podopiecznego...</option>
                   {filteredPatients.map(p=> {
                     const selected = formData.patientIds.includes(p.id);
@@ -439,7 +563,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               <div>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Sala</label>
                 <div className="relative">
-                  <button type="button" onClick={()=> setRoomsOpen(o=>!o)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white flex items-center justify-between focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                  <button type="button" onClick={()=> setRoomsOpen(o=>!o)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white flex items-center justify-between focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast}>
                     {formData.roomId ? (
                       <span className="flex items-center gap-2">
                         {(() => { const rc = rooms.find(r=>r.id===formData.roomId); const col = rc?.color || '#9ca3af'; return <span style={{ backgroundColor: col }} className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-white shadow" />; })()}
@@ -452,7 +576,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                     <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto text-sm">
                       <ul className="py-1">
                         {rooms.map(r => {
-                          const disabledOpt = !!(formData.startTime && formData.endTime && roomHasConflict(r.id, selectedDate, formData.startTime, formData.endTime, editingMeeting?.id) && r.id!==formData.roomId);
+                          const disabledOpt = !!(formData.startTime && formData.endTime && roomHasConflict(r.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id) && r.id!==formData.roomId);
                           const selectedRoom = formData.roomId === r.id;
                           const col = r.color || '#9ca3af';
                           return (
@@ -481,31 +605,155 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               </div>
             </div>
             <div className="col-span-12 lg:col-span-8 space-y-6">
-              <div className="grid grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Start</label>
-                  <input type="time" value={formData.startTime} onChange={e=> setFormData({...formData, startTime:e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+              {/* Modern date + time picker (custom popovers) */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Date picker */}
+                <div className="relative min-w-0">
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Data</label>
+                  <button type="button" disabled={isEditingPast} onClick={()=> setDateOpen(o=>!o)} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-300 disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Calendar className="h-3.5 w-3.5" /></span>
+                    {formatPolishDate(effectiveDate)}
+                  </button>
+                  {dateOpen && !isEditingPast && (
+                    <div className="absolute z-20 mt-2 w-72 bg-white border border-gray-200 rounded-lg shadow-xl p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <button type="button" onClick={prevMonth} className="px-2 py-1 text-sm rounded hover:bg-gray-100">‹</button>
+                        <div className="text-sm font-medium capitalize">{monthLabelPl}</div>
+                        <button type="button" onClick={nextMonth} className="px-2 py-1 text-sm rounded hover:bg-gray-100">›</button>
+                      </div>
+                      <div className="grid grid-cols-7 text-[11px] text-gray-500 mb-1">
+                        {['Pn','Wt','Śr','Cz','Pt','So','Nd'].map(d=> <div key={d} className="text-center py-1">{d}</div>)}
+                      </div>
+                      <div className="grid grid-cols-7 gap-1">
+                        {calendarDays.map(({d,inMonth},i)=>{
+                          const ymd = toYMD(d);
+                          const isSelected = ymd === effectiveDate;
+                          const todayYMD = toYMD(new Date());
+                          const isPastDay = ymd < todayYMD;
+                          return (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={()=> { if (!editingMeeting && isPastDay) { setShowPastSubmitInfo(true); setDateOpen(false); return; } setLocalDate(ymd); setDateOpen(false); }}
+                              aria-disabled={!editingMeeting && isPastDay}
+                              className={`text-sm py-1.5 rounded text-center ${inMonth? '':'text-gray-400'} ${isSelected? 'bg-indigo-600 text-white':'hover:bg-gray-100'} ${(!editingMeeting && isPastDay && !isSelected) ? 'text-gray-300 cursor-not-allowed' : ''}`}
+                            >
+                              {d.getDate()}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div>
+
+                {/* Start time picker */}
+                <div className="relative min-w-0">
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Start</label>
+                  <button type="button" disabled={isEditingPast} onClick={()=> { setStartOpen(o=>!o); setEndOpen(false); }} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-300 disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
+                    {formData.startTime || 'Wybierz...'}
+                  </button>
+                  {startOpen && !isEditingPast && (
+                    <div className="absolute z-20 mt-2 w-44 max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
+                      <ul className="py-1 text-sm">
+                        {timeOptions.map(t=> {
+                          const disabledOpt = isCreateToday && toMin(t) <= nowMinutes;
+                          return (
+                            <li key={t}>
+                              <button
+                                type="button"
+                                disabled={disabledOpt}
+                                onClick={()=> { if(disabledOpt) return; setFormData(fd=> ({...fd, startTime:t, endTime: (fd.endTime && toMin(fd.endTime) > toMin(t)) ? fd.endTime : computeDefaultEnd(t)})); setStartOpen(false); }}
+                                className={`w-full text-left px-3 py-1.5 ${disabledOpt ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-50'}`}
+                              >
+                                {t}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                {/* End time picker */}
+                <div className="relative min-w-0">
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Koniec</label>
-                  <input type="time" value={formData.endTime} onChange={e=> setFormData({...formData, endTime:e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+                  <button type="button" disabled={isEditingPast} onClick={()=> { setEndOpen(o=>!o); setStartOpen(false); }} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-300 disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
+                    {formData.endTime || 'Wybierz...'}
+                  </button>
+                  {endOpen && !isEditingPast && (
+                    <div className="absolute z-20 mt-2 w-44 max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
+                      <ul className="py-1 text-sm">
+                        {timeOptions
+                          .filter(t=> !formData.startTime || toMin(t) > toMin(formData.startTime))
+                          .map(t=> {
+                            const disabledOpt = isCreateToday && !formData.startTime && toMin(t) <= nowMinutes;
+                            return (
+                              <li key={t}>
+                                <button
+                                  type="button"
+                                  disabled={disabledOpt}
+                                  onClick={()=> { if(disabledOpt) return; setFormData(fd=> ({...fd, endTime:t})); setEndOpen(false); }}
+                                  className={`w-full text-left px-3 py-1.5 ${disabledOpt ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-50'}`}
+                                >
+                                  {t}
+                                </button>
+                              </li>
+                            );
+                          })}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               </div>
+
+              {/* Live validation hints for time and collisions */}
+              {!restrictPastEdit && (
+                <div className="mt-1 space-y-1">
+                  {startEndInvalid && (
+                    <div className="text-xs text-red-600 flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>Koniec musi być późniejszy niż start.</span>
+                    </div>
+                  )}
+                  {!startEndInvalid && isCreatePastSelection && (
+                    <div className="text-xs text-red-600 flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>Data i godzina rozpoczęcia są w przeszłości. Wybierz termin w przyszłości.</span>
+                    </div>
+                  )}
+                  {!startEndInvalid && !isCreatePastSelection && conflictedSpecialists.length>0 && (
+                    <div className="text-xs text-amber-700 flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>{conflictedSpecialists.length === 1 ? 'Wybrany specjalista jest zajęty w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest zajęty w tym czasie.'}</span>
+                    </div>
+                  )}
+                  {!startEndInvalid && !isCreatePastSelection && hasRoomConflict && (
+                    <div className="text-xs text-amber-700 flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>Sala jest zajęta w tym przedziale czasu.</span>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-6">
                 {isEditingPast && (
                   <div>
                     <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Status</label>
                     <div className="bg-white border border-gray-300 rounded-lg p-3 space-y-2">
                       <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="status" value="present" checked={effectiveStatus==='present'} onChange={()=> setFormData({...formData, status: 'present'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" />
+                        <input type="radio" name="status" value="present" checked={effectiveStatus==='present'} onChange={()=> setFormData({...formData, status: 'present'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
                         <span className="text-sm text-gray-800">Podopieczny obecny</span>
                       </label>
                       <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="status" value="absent" checked={effectiveStatus==='absent'} onChange={()=> setFormData({...formData, status: 'absent'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" />
+                        <input type="radio" name="status" value="absent" checked={effectiveStatus==='absent'} onChange={()=> setFormData({...formData, status: 'absent'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
                         <span className="text-sm text-gray-800">Podopieczny nieobecny</span>
                       </label>
                       <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="status" value="cancelled" checked={effectiveStatus==='cancelled'} onChange={()=> setFormData({...formData, status: 'cancelled'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" />
+                        <input type="radio" name="status" value="cancelled" checked={effectiveStatus==='cancelled'} onChange={()=> setFormData({...formData, status: 'cancelled'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
                         <span className="text-sm text-gray-800">Odwołano</span>
                       </label>
                     </div>
@@ -513,15 +761,15 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 )}
                 <div className={!isEditingPast ? 'col-span-2' : ''}>
                    <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Gość (opcjonalnie)</label>
-                   <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+                   <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast} />
                  </div>
                </div>
                <div>
                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Notatki</label>
-                 <textarea value={formData.notes} onChange={e=> setFormData({...formData, notes:e.target.value})} rows={4} placeholder="Cel sesji, materiały, obserwacje..." className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y" />
+                 <textarea value={formData.notes} onChange={e=> setFormData({...formData, notes:e.target.value})} rows={4} placeholder="Cel sesji, materiały, obserwacje..." className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast && !canEditThis} />
                </div>
                <div className="bg-gray-50 rounded-lg p-4 text-xs text-gray-500 leading-relaxed">
-                 Sesja musi zawierać przynajmniej jednego specjalistę i jednego podopiecznego. Konflikty czasowe są sprawdzane automatycznie.
+                 Sesja musi zawierać przynajmniej jednego specjalistę. Podopieczny jest opcjonalny. Konflikty czasowe są sprawdzane automatycznie.
                </div>
              </div>
           </div>
@@ -540,8 +788,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               )}
             </div>
             <div className="ml-auto flex items-center gap-3">
-              <button type="button" onClick={onClose} className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">Anuluj</button>
-              <button type="submit" className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">{editingMeeting? 'Zapisz zmiany':'Utwórz sesję'}</button>
+              <button type="button" onClick={handleClose} className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">Anuluj</button>
+              <button type="submit" disabled={isEditingPast && !canEditThis} className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed">{editingMeeting? 'Zapisz zmiany':'Utwórz sesję'}</button>
             </div>
           </div>
         </form>
@@ -550,7 +798,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       {/* Delete confirmation dialog */}
       {showDeleteConfirm && editingMeeting && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setShowDeleteConfirm(false)} />
+          <div className="absolute inset-0 bg-black/50" onClick={handleClose} />
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-scale-in">
             <div className="p-6">
               <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-red-100 flex items-center justify-center">
@@ -563,14 +811,14 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               <div className="flex justify-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setShowDeleteConfirm(false)}
+                  onClick={handleClose}
                   className="px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   Anuluj
                 </button>
                 <button
                   type="button"
-                  onClick={() => { onDelete?.(editingMeeting.id); setShowDeleteConfirm(false); onClose(); }}
+                  onClick={() => { onDelete?.(editingMeeting.id); setShowDeleteConfirm(false); handleClose(); }}
                   className="px-4 py-2.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400"
                 >
                   Usuń
@@ -584,7 +832,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       {/* Submit-time info dialog */}
       {showPastSubmitInfo && !editingMeeting && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setShowPastSubmitInfo(false)} />
+          <div className="absolute inset-0 bg-black/50" onClick={handleClose} />
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in">
             <div className="p-6">
               <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
@@ -597,7 +845,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               <div className="flex justify-center">
                 <button
                   type="button"
-                  onClick={() => setShowPastSubmitInfo(false)}
+                  onClick={handleClose}
                   className="px-6 py-2.5 text-sm font-medium rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:from-indigo-500 hover:to-blue-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   autoFocus
                 >
