@@ -49,7 +49,8 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   const [deletedRangeIds, setDeletedRangeIds] = useState<string[]>([]);
   const [showMeetingForm, setShowMeetingForm] = useState(false);
   const [editingMeeting, setEditingMeeting] = useState<Meeting | undefined>();
-  const [selectedTime, setSelectedTime] = useState('');
+  // const [selectedTime, setSelectedTime] = useState('');
+  const [selectedTime] = useState('');
 
   // Availability state
   interface AvailabilityRange { id: string; specialistId: string; start: string; end: string; }
