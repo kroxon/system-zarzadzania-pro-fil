@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Lock } from 'lucide-react';
 import RegisterForm from './RegisterForm';
+import { loginUser } from '../../utils/auth'
 
 interface LoginFormProps {
   onLogin: (user: { id: string; name: string; role: 'admin' | 'employee'; specialization?: string }) => void;
@@ -42,26 +43,17 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
     }
   };
 
-  const handleFormLogin = (e: React.FormEvent) => {
+  const handleFormLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-  fetch(`${import.meta.env.VITE_API_URL}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(loginData),
-    })
-      .then(async res => {
-      if (!res.ok) {
-        throw new Error('Błąd logowania');
-      }
-      const user = await res.json();
-      if (user.token) {
-        localStorage.setItem('token', user.token);
-      }
-      onLogin(user);
-      })
-      .catch(() => {
-      alert('Nieprawidłowy login lub hasło');
+    try{
+      const response = await loginUser({
+        email: loginData.username,
+        password: loginData.password
       });
+      localStorage.setItem('token', response.token);
+    } catch (error) {
+      alert('Nieprawidłowy login lub hasło');
+    }
   };
 
   return (
