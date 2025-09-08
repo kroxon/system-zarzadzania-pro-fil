@@ -5,6 +5,7 @@ import { User, Room, Meeting } from '../../types';
 import { ChevronDown, Check, Trash2 } from 'lucide-react';
 import MonthCalendar from './MonthCalendar';
 import MeetingForm from '../Forms/MeetingForm';
+import { loadPatients } from '../../utils/storage';
 
 const DAYOFF_MEETING_PREFIX = 'dayoff-';
 
@@ -190,6 +191,41 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   const [showSavingDialog, setShowSavingDialog] = useState(false);
   const runWithSaving = (action: ()=>void) => { if(showSavingDialog) return; setShowSavingDialog(true); requestAnimationFrame(()=> { action(); setTimeout(()=> setShowSavingDialog(false), 1200); }); };
 
+  // Patients resolver to display full names instead of IDs (e.g., p12)
+  const patientNameById = React.useMemo(() => {
+    try {
+      const list = loadPatients();
+      const map: Record<string, string> = {};
+      list.forEach(p => { map[p.id] = `${p.firstName} ${p.lastName}`; });
+      return map;
+    } catch {
+      return {} as Record<string, string>;
+    }
+  }, []);
+
+  const getSpecialistNames = (m: Meeting) => {
+    const ids = (m.specialistIds?.length ? m.specialistIds : [m.specialistId]).filter(Boolean) as string[];
+    return ids.map(id => users.find(u => u.id === id)?.name || id).join(', ');
+  };
+
+  const getPatientNames = (m: Meeting) => {
+    if (m.patientIds && m.patientIds.length) {
+      const names = m.patientIds.map(id => patientNameById[id]).filter(Boolean);
+      if (names.length) return names.join(', ');
+    }
+    if (m.patientNamesList && m.patientNamesList.length) {
+      const fixed = m.patientNamesList.map(n => (/^p\d+$/i.test(n) && patientNameById[n]) ? patientNameById[n] : n);
+      const label = fixed.join(', ').trim();
+      if (label) return label;
+    }
+    // Legacy single fields
+    // @ts-ignore - legacy property may exist
+    if (m.patientId && patientNameById[m.patientId]) return patientNameById[m.patientId];
+    return (m.patientName || '').trim();
+  };
+
+  const getRoomName = (roomId: string) => rooms.find(r => r.id === roomId)?.name || roomId;
+
   // Week view renderer
   const renderWeekView = () => { const weekDays=getWeekDays(currentDate); const employeeMeetings = selectedEmployee? meetings.filter(m=> (m.specialistId===selectedEmployee || (m.specialistIds?.includes(selectedEmployee) ?? false)) && !m.id.startsWith(DAYOFF_MEETING_PREFIX)): []; const calendarHeight='calc(100vh - 292px)'; const hourColWidth=56; const gridTemplate={ gridTemplateColumns: `${hourColWidth}px repeat(${weekDays.length}, 1fr)` }; const activeId=activeEdit?.id; const allRanges=[...availabilities, ...tempRanges].filter(r=> r.specialistId===selectedEmployee); const byDay: Record<string, AvailabilityRange[]> = {}; allRanges.forEach(r=> { if(r.id!==activeId){ const dayStr=new Date(r.start).toISOString().split('T')[0]; (byDay[dayStr] ||= []).push(r);} }); return (
     <div className="rounded-xl shadow-sm border border-gray-200 flex flex-col h-full bg-transparent">
@@ -245,11 +281,31 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
                       {note && <div className="text-[11px] md:text-[12px] leading-snug opacity-90 whitespace-pre-wrap break-words line-clamp-6">{note}</div>}
                     </div>
                   ); })}
-                  {dayMeetings.map(m=> { const { startIndex, endIndex } = meetingToIndices(m); const topPct=(startIndex/ totalSlots)*100; const heightPct=((endIndex-startIndex)/ totalSlots)*100; return (
-                    <div key={m.id} className="absolute left-2 right-2 rounded-md bg-yellow-100/95 text-yellow-900 shadow-md text-[10px] leading-tight px-2 py-1 flex flex-col pointer-events-auto z-40" style={{ top:`${topPct}%`, height:`${heightPct}%` }}
-                      onClick={()=>{ const isMine = currentUser.role!=='employee' || m.specialistId===currentUser.id || (m.specialistIds?.includes(currentUser.id) ?? false); if(!isMine) return; setEditingMeeting(m); setSelectedTime(m.startTime); setCurrentDate(parseLocalDate(m.date)); setShowMeetingForm(true); }}>
-                      <div className="font-semibold truncate">{m.patientName || 'Spotkanie'}</div>
-                      <div className="text-[11px] opacity-80 tracking-tight">{m.startTime}-{m.endTime}</div>
+                  {dayMeetings.map(m=> { const { startIndex, endIndex } = meetingToIndices(m); const topPct=(startIndex/ totalSlots)*100; const heightPct=((endIndex-startIndex)/ totalSlots)*100; const specNames=getSpecialistNames(m); const patientLabel=getPatientNames(m); const roomName=getRoomName(m.roomId); const timeLabel = `${m.startTime}-${m.endTime}`; const openAbove = startIndex > (totalSlots/2); return (
+                    <div key={m.id} className="group absolute left-2 right-2 rounded-md bg-yellow-100/95 text-yellow-900 shadow-md text-[11px] px-2 py-1 pointer-events-auto z-40" style={{ top:`${topPct}%`, height:`${heightPct}%` }}>
+                      <div className="flex items-center gap-2 overflow-hidden w-full">
+                        <span className="font-semibold shrink-0 whitespace-nowrap leading-4">{timeLabel}</span>
+                        <span className="opacity-60">•</span>
+                        <span className="truncate whitespace-nowrap min-w-0 max-w-[24%] leading-4">{roomName}</span>
+                        <span className="opacity-60">•</span>
+                        <span className="truncate whitespace-nowrap min-w-0 max-w-[36%] leading-4">{specNames}</span>
+                        {patientLabel && (<>
+                          <span className="opacity-60">•</span>
+                          <span className="truncate whitespace-nowrap min-w-0 max-w-[36%] leading-4">{patientLabel}</span>
+                        </>)}
+                      </div>
+                      {/* Custom tooltip */}
+                      <div className={`pointer-events-none absolute ${openAbove? 'bottom-full mb-1':'top-full mt-1'} left-1/2 -translate-x-1/2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity duration-150 z-50`}> 
+                        <div className="max-w-xs rounded-lg bg-white text-gray-900 shadow-xl border border-gray-200 px-3 py-2 text-[12px] leading-snug">
+                          <div className="font-semibold">{timeLabel}</div>
+                          <div className="mt-1">{roomName}</div>
+                          <div className="mt-2">{specNames}</div>
+                          {patientLabel && <>
+                            <div className="my-2 h-px bg-gray-100" />
+                            <div>{patientLabel}</div>
+                          </>}
+                        </div>
+                      </div>
                     </div>
                   ); })}
                 </div>
