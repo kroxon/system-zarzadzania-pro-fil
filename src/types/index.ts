@@ -79,3 +79,14 @@ export interface TimeSlot {
   isAvailable: boolean;
   meeting?: Meeting;
 }
+
+//logowanie
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+//logowanie odpowiedź
+export interface LoginResponse{
+  token: string;
+}
