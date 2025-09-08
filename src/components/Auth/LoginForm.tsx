@@ -11,6 +11,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [selectedUser, setSelectedUser] = useState('');
   const [loginData, setLoginData] = useState({ username: '', password: '' });
+  const [loginSuccess, setLogginSuccess] = useState(false);
 
   const demoUsers = [
     {
@@ -51,8 +52,9 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
         password: loginData.password
       });
       localStorage.setItem('token', response.token);
+      setLogginSuccess(true);
     } catch (error) {
-      alert('Nieprawidłowy login lub hasło');
+      alert('Nieprawidłowy login lub hasło' + error);
     }
   };
 
@@ -164,19 +166,25 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                         required
                       />
                     </div>
-                    <button
-                      type="submit"
-                      className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
-                    >
-                      Zaloguj się
-                    </button>
-                    <button
-                      type="button"
-                      className="w-full bg-gray-100 text-indigo-700 py-3 px-4 rounded-lg hover:bg-indigo-200 transition-colors font-medium mt-2"
-                      onClick={() => setIsRegistering(true)}
-                    >
-                      Zarejestruj się
-                    </button>
+                    {loginSuccess && (
+                    <div className='mb-4 text-green-600 fonr-semibold text-center'>
+                      Zalogowano pomyślnie
+                    </div>
+                    )}
+                      <button
+                        type="submit"
+                        className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                      >
+                        Zaloguj się
+                      </button>
+                      <button
+                        type="button"
+                        className="w-full bg-gray-100 text-indigo-700 py-3 px-4 rounded-lg hover:bg-indigo-200 transition-colors font-medium mt-2"
+                        onClick={() => setIsRegistering(true)}
+                      >
+                        Zarejestruj się
+                      </button>
+                    
                   </form>
                 </div>
               </div>
