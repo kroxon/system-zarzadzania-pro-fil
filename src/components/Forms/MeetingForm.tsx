@@ -200,8 +200,9 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     }
     const primarySpec = formData.specialistIds[0];
     const primaryPatientId = formData.patientIds[0];
+    // Use effectivePatients (prop patients or loaded from storage) to resolve names
     const patientNamesList = formData.patientIds.map(id => {
-      const p = patients.find(pp=> pp.id===id); return p ? `${p.firstName} ${p.lastName}` : id;
+      const p = effectivePatients.find(pp=> pp.id===id); return p ? `${p.firstName} ${p.lastName}` : id;
     });
     onSubmit({
       specialistId: primarySpec,

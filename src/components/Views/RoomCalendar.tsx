@@ -3,6 +3,7 @@ import CalendarHeader from '../Calendar/CalendarHeader';
 import MeetingForm from '../Forms/MeetingForm';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { User, Room, Meeting } from '../../types';
+import { loadPatients } from '../../utils/storage';
 
 const SLOT_HEIGHT = 24;
 const SLOT_GAP = 2;
@@ -108,6 +109,26 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
   const timeSlots = generateTimeSlots(startHour, endHour);
   const scrollAreaRef = useRef<HTMLDivElement|null>(null);
   const [dynamicSlotHeight, setDynamicSlotHeight] = useState<number>(SLOT_HEIGHT);
+
+  // Resolve patient names from storage and build a helper label function
+  const patientNameById = React.useMemo(() => {
+    try {
+      const list = loadPatients();
+      const map: Record<string,string> = {};
+      list.forEach(p => { map[p.id] = `${p.firstName} ${p.lastName}`; });
+      return map;
+    } catch {
+      return {} as Record<string,string>;
+    }
+  }, [meetings]);
+  const getPatientLabel = (m: Meeting) => {
+    if (m.patientIds && m.patientIds.length) {
+      const names = m.patientIds.map(id => patientNameById[id]).filter(Boolean);
+      if (names.length) return names.join(', ');
+    }
+    if (m.patientNamesList && m.patientNamesList.length) return m.patientNamesList.join(', ');
+    return (m.patientName || '').trim();
+  };
 
   // Helper to get end label (supports exclusive index == timeSlots.length)
   const getEndLabel = (endIdx:number) => {
@@ -361,9 +382,14 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                 const height = slots*slotHeight + (slots-1)*slotGap;
                 const widthPct = 100/info.lanes;
                 const leftPct = info.lane*widthPct;
-                const specialist = users.find(u=>u.id===m.specialistId);
-                const specName = specialist? specialist.name : 'Specjalista';
+                // Build list of all specialists assigned to this meeting
+                const specialistIds = (m.specialistIds?.length ? m.specialistIds : [m.specialistId]).filter(Boolean);
+                const specNames = specialistIds.map((id: string) => users.find(u=>u.id===id)?.name || 'Specjalista').join(', ');
+                // Build patients & guests labels (resolve names from IDs first)
+                const patientLabel = getPatientLabel(m);
+                const guestLabel = (m.guestName || '').trim();
                 const timeRange = `${m.startTime}-${m.endTime}`;
+                // remove unused 'content' block; render inline below
                 const room = rooms.find(r=>r.id===m.roomId);
                 const roomStyle = getRoomStyle(room);
                 const enlarged = slots>1 || info.lanes>1;
@@ -374,7 +400,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                 return (
                   <div key={m.id+"_orig"}
                     onMouseDown={(e)=>{ if(e.button!==0) return; if(resizingMeetingId) return; setPointerDownMeeting({ id:m.id, y:e.clientY, t:Date.now(), dateStr, roomId:m.roomId }); }}
-                    onMouseEnter={(e)=> scheduleTooltip(`${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}`, e.clientX, e.clientY+14)}
+                    onMouseEnter={(e)=> scheduleTooltip(`${specNames}\u00A0\u00A0${m.startTime} - ${m.endTime}`, e.clientX, e.clientY+14)}
                     onMouseMove={(e)=> updateTooltipPosition(e.clientX, e.clientY+14)}
                     onMouseLeave={cancelTooltip}
                     className={`group absolute rounded-md ${paddingClass} ${marginClass} text-[11px] shadow-sm cursor-pointer overflow-visible hover:brightness-95 transition-opacity flex items-center justify-center border ${(conflictFlashId===m.id)?'!ring-4 !ring-red-500 !border-red-500 animate-pulse':''} ${statusClass}`}
@@ -385,7 +411,9 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                     </div>
                     <div className={`pointer-events-none select-none flex ${isShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
                       <div className={`${isShort?'text-[12px]':'text-[11px] mb-1'} font-semibold drop-shadow-sm`}>{timeRange}</div>
-                      <div className={`${nameFontClass} font-medium truncate max-w-full drop-shadow-sm`}>{specName}</div>
+                      <div className={`${nameFontClass} font-medium truncate max-w-full drop-shadow-sm`}>{specNames}</div>
+                      {patientLabel && <div className="text-[10px] truncate max-w-full">{patientLabel}</div>}
+                      {guestLabel && <div className="text-[10px] truncate max-w-full italic">{guestLabel}</div>}
                     </div>
                   </div>
                 );
@@ -403,7 +431,12 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                   const m = meetings.find(mm=>mm.id===movingMeetingId)!;
                   const ghostStart = timeSlots[ghostStartIdx];
                   const ghostEnd = getEndLabel(ghostStartIdx+durationSlots);
-                  const specialist = users.find(u=>u.id===m.specialistId); const specName = specialist?specialist.name:'Specjalista';
+                  // All specialists (moving ghost)
+                  const specialistIds = (m.specialistIds?.length ? m.specialistIds : [m.specialistId]).filter(Boolean);
+                  const specNames = specialistIds.map((id: string) => users.find(u=>u.id===id)?.name || 'Specjalista').join(', ');
+                  // patients & guests
+                  const patientLabel = getPatientLabel(m);
+                  const guestLabel = (m.guestName || '').trim();
                   const timeRange = `${ghostStart}-${ghostEnd}`;
                   const isShort = durationSlots===1;
                   const room = rooms.find(r=>r.id===m.roomId); const roomStyle = getRoomStyle(room);
@@ -414,7 +447,9 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                     <div key={m.id+"_moveGhostLive"} className={`absolute rounded-md ${paddingClass} ${marginClass} text-[11px] shadow-lg cursor-grabbing overflow-hidden flex items-center justify-center`} style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, transform:`translateY(${movePixelOffset}px)`, transition:'none', zIndex:65, ...roomStyle}}>
                       <div className={`pointer-events-none select-none flex ${isShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
                         <div className={`${isShort?'text-[12px]':'text-[11px] mb-1'} font-semibold opacity-80`}>{timeRange}</div>
-                        <div className="text-[10px] font-medium truncate max-w-full opacity-80">{specName}</div>
+                        <div className="text-[10px] font-medium truncate max-w-full opacity-80">{specNames}</div>
+                        {patientLabel && <div className="text-[10px] truncate max-w-full opacity-80">{patientLabel}</div>}
+                        {guestLabel && <div className="text-[10px] truncate max-w-full italic opacity-80">{guestLabel}</div>}
                       </div>
                     </div>
                   );
@@ -430,7 +465,12 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                   const widthPct = 100/info.lanes; const leftPct = info.lane*widthPct;
                   const m = meetings.find(mm=>mm.id===resizingMeetingId)!;
                   const ghostStart = timeSlots[ghostStartIdx]; const ghostEnd = getEndLabel(ghostEndIdx);
-                  const specialist = users.find(u=>u.id===m.specialistId); const specName = specialist?specialist.name:'Specjalista';
+                  // All specialists (resize ghost)
+                  const specialistIds = (m.specialistIds?.length ? m.specialistIds : [m.specialistId]).filter(Boolean);
+                  const specNames = specialistIds.map((id: string) => users.find(u=>u.id===id)?.name || 'Specjalista').join(', ');
+                  // patients & guests
+                  const patientLabel = getPatientLabel(m);
+                  const guestLabel = (m.guestName || '').trim();
                   const timeRange = `${ghostStart}-${ghostEnd}`; const isShort = slots===1;
                   const transform = resizeEdge==='start'? `translateY(${resizePixelOffset}px)`:'none';
                   const room = rooms.find(r=>r.id===m.roomId); const roomStyle = getRoomStyle(room);
@@ -438,10 +478,12 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                   const paddingClass = enlarged ? 'px-1.5 py-1' : 'px-1.5';
                   const marginClass = enlarged ? 'm-0.5' : '';
                   interactiveGhost = (
-                    <div key={m.id+"_resizeGhostLive"} className={`absolute rounded-md ${paddingClass} ${marginClass} text-[11px] shadow-lg cursor-ns-resize overflow-hidden flex items-center justify-center border`} style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, transform, zIndex:70, ...roomStyle}}>
+                    <div key={m.id+"_resizeGhostLive"} className={`absolute rounded-md ${paddingClass} ${marginClass} text-[11px] shadow-lg cursor-ns-resize overflow-hidden flex items-center justify-center`} style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, transform, zIndex:70, ...roomStyle}}>
                       <div className={`pointer-events-none select-none flex ${isShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
                         <div className={`${isShort?'text-[12px]':'text-[11px] mb-1'} font-semibold opacity-80`}>{timeRange}</div>
-                        <div className="text-[10px] font-medium truncate max-w-full opacity-80">{specName}</div>
+                        <div className="text-[10px] font-medium truncate max-w-full opacity-80">{specNames}</div>
+                        {patientLabel && <div className="text-[10px] truncate max-w-full opacity-80">{patientLabel}</div>}
+                        {guestLabel && <div className="text-[10px] truncate max-w-full italic opacity-80">{guestLabel}</div>}
                       </div>
                     </div>
                   );
@@ -534,23 +576,29 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                 const isShort = slots===1;
                 const top = HEADER_OFFSET + startIdx*(slotHeight+slotGap);
                 const height = slots*slotHeight + (slots-1)*slotGap;
-                const specialist = users.find(u=>u.id===m.specialistId);
-                const specName = specialist?specialist.name:'Specjalista';
+                // All specialists for this meeting
+                const specialistIds = (m.specialistIds?.length ? m.specialistIds : [m.specialistId]).filter(Boolean);
+                const specNames = specialistIds.map((id: string) => users.find(u=>u.id===id)?.name || 'Specjalista').join(', ');
+                // Build patients & guests labels (resolve names from IDs first)
+                const patientLabel = getPatientLabel(m);
+                const guestLabel = (m.guestName || '').trim();
                 const timeRange = `${m.startTime}-${m.endTime}`;
                 const content = (
                   <div className={`pointer-events-none select-none flex ${isShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
                     <div className={`${isShort?'text-[12px]':'text-[11px] mb-2'} font-semibold opacity-80`}>{timeRange}</div>
-                    <div className="text-[12px] font-semibold uppercase tracking-wide truncate max-w-full">{specName}</div>
+                    <div className="text-[12px] font-semibold uppercase tracking-wide truncate max-w-full">{specNames}</div>
+                    {patientLabel && <div className="text-[10px] truncate max-w-full">{patientLabel}</div>}
+                    {guestLabel && <div className="text-[10px] truncate max-w-full italic">{guestLabel}</div>}
                   </div>
                 );
                 const roomStyle = getRoomStyle(room);
-                const enlarged = slots>1; // w widoku dnia nie ma lanes, więc tylko slots>1
+                const enlarged = slots>1; // day view has no lanes
                 const paddingClass = enlarged ? 'px-1.5 py-1' : 'px-1.5';
                 const marginClass = enlarged ? 'm-0.5' : '';
                 const originalBlock = (
                   <div key={m.id+"_orig"}
                     onMouseDown={(e)=>{ if(e.button!==0) return; if(resizingMeetingId) return; setPointerDownMeeting({ id:m.id, y:e.clientY, t:Date.now(), dateStr, roomId: room.id }); }}
-                    onMouseEnter={(e)=> scheduleTooltip(`${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}`, e.clientX, e.clientY+14)}
+                    onMouseEnter={(e)=> scheduleTooltip(`${specNames}\u00A0\u00A0${m.startTime} - ${m.endTime}`, e.clientX, e.clientY+14)}
                     onMouseMove={(e)=> updateTooltipPosition(e.clientX, e.clientY+14)}
                     onMouseLeave={cancelTooltip}
                     className={`group absolute left-1 right-1 rounded-md ${paddingClass} ${marginClass} text-[11px] shadow-sm cursor-pointer overflow-visible hover:brightness-95 transition-opacity flex items-center justify-center border ${(isResizing)?'ring-2 ring-blue-400':''} ${conflictFlashId===m.id? '!ring-4 !ring-red-500 !border-red-500 animate-pulse':''} ${m.status==='cancelled'?'line-through opacity-70':''}`}
@@ -572,7 +620,9 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                   const ghostContent = (
                     <div className={`pointer-events-none select-none flex ${ghostIsShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
                       <div className={`${ghostIsShort?'text-[12px]':'text-[11px] mb-2'} font-semibold opacity-80`}>{ghostTimeRange}</div>
-                      <div className="text-[12px] font-semibold uppercase tracking-wide truncate max-w-full">{specName}</div>
+                      <div className="text-[12px] font-semibold uppercase tracking-wide truncate max-w-full">{specNames}</div>
+                      {patientLabel && <div className="text-[10px] truncate max-w-full opacity-80">{patientLabel}</div>}
+                      {guestLabel && <div className="text-[10px] truncate max-w-full italic opacity-80">{guestLabel}</div>}
                     </div>
                   );
                   const ghostHeight = ghostSlots*slotHeight + (ghostSlots-1)*slotGap;
@@ -598,15 +648,18 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, cur
                   const ghostTimeRange = `${timeSlots[ghostStartIdx]}-${getEndLabel(ghostEndIdx)}`;
                   const ghostContent = (
                     <div className={`pointer-events-none select-none flex ${ghostIsShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
+                      {/* time hidden previously - restore to show */}
                       <div className={`${ghostIsShort?'text-[12px]':'text-[11px] mb-2'} font-semibold opacity-80`}>{ghostTimeRange}</div>
-                      <div className="text-[12px] font-semibold uppercase tracking-wide truncate max-w-full">{specName}</div>
+                      <div className="text-[12px] font-semibold uppercase tracking-wide truncate max-w-full opacity-80">{specNames}</div>
+                      {patientLabel && <div className="text-[10px] truncate max-w-full opacity-80">{patientLabel}</div>}
+                      {guestLabel && <div className="text-[10px] truncate max-w-full italic opacity-80">{guestLabel}</div>}
                     </div>
                   );
                   const resizeEnlarged = ghostSlots>1;
-                  const resizePaddingClass = resizeEnlarged ? 'px-1.5 py-1' : 'px-1.5';
-                  const resizeMarginClass = resizeEnlarged ? 'm-0.5' : '';
+                  const ghostPaddingClass = resizeEnlarged ? 'px-1.5 py-1' : 'px-1.5';
+                  const ghostMarginClass = resizeEnlarged ? 'm-0.5' : '';
                   const ghost = (
-                    <div key={m.id+"_resizeGhost"} className={`absolute left-1 right-1 rounded-md ${resizePaddingClass} ${resizeMarginClass} text-[11px] shadow-lg cursor-ns-resize overflow-hidden flex items-center justify-center border`} style={{top:ghostTop, height:ghostHeight, transform, zIndex:70, ...roomStyle}}>
+                    <div key={m.id+"_resizeGhost"} className={`absolute left-1 right-1 rounded-md ${ghostPaddingClass} ${ghostMarginClass} text-[11px] shadow-lg cursor-ns-resize overflow-hidden flex items-center justify-center border`} style={{top:ghostTop, height:ghostHeight, transform, zIndex:70, ...roomStyle}}>
                       {ghostContent}
                     </div>
                   );
