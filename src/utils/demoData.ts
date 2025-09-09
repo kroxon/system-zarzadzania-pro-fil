@@ -59,7 +59,16 @@ export function generateDemoData(seed:number = Date.now()): DemoDataBundle & { q
   // 7 therapists (first is admin)
   const specList = ['Psycholog','Fizjoterapeuta','Terapeuta SI','Logopeda','Pedagog','Neurologopeda','Masażysta'];
   const names = ['Anna Kowalska','Piotr Nowak','Maria Wiśniewska','Jan Kowalczyk','Ewa Zielińska','Tomasz Lewandowski','Katarzyna Mazur'];
-  const users: User[] = names.map((name,i)=>({ id:'u'+(i+1), name, role: i===0? 'admin':'employee', specialization: specList[i%specList.length] }));
+  const users: User[] = names.map((fullName,i)=>{
+    const [name, surname] = fullName.split(' ');
+    return {
+      id: 'u'+(i+1),
+      name,
+      surname: surname || '',
+      role: i===0? 'admin':'employee',
+      specialization: specList[i%specList.length]
+    };
+  });
   const employeeUsers = users.filter(u=>u.role==='employee');
   // 20 patients (assign 0+ therapists later)
   const patientFirst = ['Jan','Anna','Piotr','Maria','Tomasz','Katarzyna','Michał','Agnieszka','Karolina','Łukasz','Ola','Bartek','Ewa','Igor','Zuzanna','Marek','Paweł','Julia','Natalia','Kamil'];

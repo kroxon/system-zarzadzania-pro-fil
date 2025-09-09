@@ -1,37 +1,46 @@
 import React, { useState } from 'react';
-import { User, Lock } from 'lucide-react';
+import { User as UserIcon, Lock } from 'lucide-react';
 import RegisterForm from './RegisterForm';
+import { loginUser } from '../../utils/auth'
+import { fetchUserById } from '../../utils/user';
+import { User } from '../../types';
 
 interface LoginFormProps {
-  onLogin: (user: { id: string; name: string; role: 'admin' | 'employee'; specialization?: string }) => void;
+  onLogin: (user: User) => void;
+  onLoginSuccess?: () => void;
 }
 
-const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
+const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onLoginSuccess }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [selectedUser, setSelectedUser] = useState('');
   const [loginData, setLoginData] = useState({ username: '', password: '' });
+  const [loginSuccess, setLoginSuccess] = useState(false);
+
 
   const demoUsers = [
     {
-      id: '1',
-      name: 'Anna Kowalska',
-      role: 'admin' as const,
-      specialization: 'Terapeuta',
-      description: 'Administrator systemu'
+    id: '1',
+    name: 'Anna',
+    surname: 'Kowalska',
+    role: 'admin' as const,
+    specialization: 'Terapeuta',
+    description: 'Administrator systemu'
     },
     {
-      id: '2',
-      name: 'Piotr Nowak',
-      role: 'employee' as const,
-      specialization: 'Psycholog',
-      description: 'Specjalista - widzi tylko swój grafik'
+    id: '2',
+    name: 'Piotr',
+    surname: 'Nowak',
+    role: 'employee' as const,
+    specialization: 'Psycholog',
+    description: 'Specjalista - widzi tylko swój grafik'
     },
     {
-      id: '3',
-      name: 'Maria Wiśniewska',
-      role: 'employee' as const,
-      specialization: 'Fizjoterapeuta',
-      description: 'Specjalista - widzi tylko swój grafik'
+    id: '3',
+    name: 'Maria',
+    surname: 'Wiśniewska',
+    role: 'employee' as const,
+    specialization: 'Fizjoterapeuta',
+    description: 'Specjalista - widzi tylko swój grafik'
     }
   ];
 
@@ -42,26 +51,32 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
     }
   };
 
-  const handleFormLogin = (e: React.FormEvent) => {
+  const handleFormLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-  fetch(`${import.meta.env.VITE_API_URL}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(loginData),
-    })
-      .then(async res => {
-      if (!res.ok) {
-        throw new Error('Błąd logowania');
-      }
-      const user = await res.json();
-      if (user.token) {
-        localStorage.setItem('token', user.token);
-      }
-      onLogin(user);
-      })
-      .catch(() => {
-      alert('Nieprawidłowy login lub hasło');
+    try{
+      const response = await loginUser({
+        email: loginData.username,
+        password: loginData.password
       });
+      localStorage.setItem('token', response.token);
+
+      // Pobierz dane użytkownika po employeeId
+      if (response.employeeId && onLogin) {
+        try {
+          const userData = await fetchUserById(response.employeeId, response.token);
+          onLogin(userData);
+        } catch (err) {
+          alert('Nie udało się pobrać danych użytkownika');
+        }
+      }
+
+      if (onLoginSuccess) {
+        onLoginSuccess();
+        setLoginSuccess(true);
+      }
+    } catch (error) {
+      alert('Nieprawidłowy login lub hasło' + error);
+    }
   };
 
   return (
@@ -103,7 +118,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                   return user ? (
                     <div className="text-sm">
                       <div className="flex items-center space-x-2 mb-2">
-                        <User className="h-4 w-4 text-gray-600" />
+                        <UserIcon className="h-4 w-4 text-gray-600" />
                         <span className="font-medium">{user.name}</span>
                       </div>
                       <p className="text-gray-600">{user.specialization}</p>
@@ -146,7 +161,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                 <div className="bg-white rounded-2xl p-8 flex flex-col justify-center h-full">
                   <div className="text-center mb-8">
                     <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <User className="h-8 w-8 text-indigo-600" />
+                      <UserIcon className="h-8 w-8 text-indigo-600" />
                     </div>
                     <h2 className="text-2xl font-bold text-gray-900">Logowanie</h2>
                     <p className="text-gray-600 mt-2">Zaloguj się lub zarejestruj nowe konto</p>
@@ -172,19 +187,25 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                         required
                       />
                     </div>
-                    <button
-                      type="submit"
-                      className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
-                    >
-                      Zaloguj się
-                    </button>
-                    <button
-                      type="button"
-                      className="w-full bg-gray-100 text-indigo-700 py-3 px-4 rounded-lg hover:bg-indigo-200 transition-colors font-medium mt-2"
-                      onClick={() => setIsRegistering(true)}
-                    >
-                      Zarejestruj się
-                    </button>
+                    {loginSuccess && (
+                    <div className='mb-4 text-green-600 fonr-semibold text-center'>
+                      Zalogowano pomyślnie
+                    </div>
+                    )}
+                      <button
+                        type="submit"
+                        className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                      >
+                        Zaloguj się
+                      </button>
+                      <button
+                        type="button"
+                        className="w-full bg-gray-100 text-indigo-700 py-3 px-4 rounded-lg hover:bg-indigo-200 transition-colors font-medium mt-2"
+                        onClick={() => setIsRegistering(true)}
+                      >
+                        Zarejestruj się
+                      </button>
+                    
                   </form>
                 </div>
               </div>
@@ -193,7 +214,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                 <div className="flex flex-col justify-center h-full">
                   <div className="text-center mb-8">
                     <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <User className="h-8 w-8 text-indigo-600" />
+                      <UserIcon className="h-8 w-8 text-indigo-600" />
                     </div>
                     <h2 className="text-2xl font-bold text-gray-900">Rejestracja</h2>
                     <p className="text-gray-600 mt-2">Załóż nowe konto</p>

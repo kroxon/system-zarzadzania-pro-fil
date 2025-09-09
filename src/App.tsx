@@ -127,7 +127,7 @@ function App() {
   };
 
   if (!currentUser) {
-    return <LoginForm onLogin={handleLogin} />;
+    return <LoginForm onLogin={handleLogin} onLoginSuccess={() => setCurrentView('dashboard')} />;
   }
 
   const renderCurrentView = () => {
