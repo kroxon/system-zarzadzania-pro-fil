@@ -89,4 +89,5 @@ export interface LoginRequest {
 //logowanie odpowiedź
 export interface LoginResponse{
   token: string;
+  employeeId: string | number;
 }
