@@ -11,7 +11,7 @@ import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
 import QuizzesPage from './components/Quizes/QuizList';
 import TasksPage from './components/Tasks/TasksPage';
-import { User, Meeting, Room } from './types';
+import { User, Meeting, Room, Employee } from './types';
 import { 
   saveMeetings, 
   loadMeetings, 
@@ -29,6 +29,8 @@ import {
 } from './utils/storage';
 import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
 import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon, ListChecks, ClipboardList } from 'lucide-react';
+import { fetchUserById } from './utils/api/user';
+import { mapBackendRolesToFrontend } from './utils/roleMapper';
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -54,10 +56,29 @@ function App() {
   useEffect(()=>{ savePatients(patientsState); },[patientsState]);
   useEffect(()=>{ saveMeetings(meetings); },[meetings]);
 
-  const handleLogin = (user: User) => {
+  const handleLogin = async (user: any) => {
+    // Jeśli user ma pole 'roles' (Employee z backendu), wykonaj mapowanie
+    if (user && Array.isArray(user.roles)) {
+      console.log('Backend roles:', user.roles);
+      const mappedRole = user.roles.length > 0
+        ? mapBackendRolesToFrontend(user.roles)[0]
+        : 'employee';
+      const frontendUser: User = {
+        id: user.id.toString(),
+        name: user.name,
+        surname: user.surname,
+        role: mappedRole,
+        specialization: user.occupationName,
+        // ...inne pola jeśli potrzebne
+      };
+      setCurrentUser(frontendUser);
+      saveCurrentUser(frontendUser);
+      setUsersState(prev => prev.some(u=>u.id===frontendUser.id) ? prev : [...prev, frontendUser]);
+      return;
+    }
+    // DemoUsers lub fallback
     setCurrentUser(user);
     saveCurrentUser(user);
-    // Optional: ensure logged user exists in users list if storage empty
     setUsersState(prev => prev.some(u=>u.id===user.id) ? prev : [...prev, user]);
   };
 
