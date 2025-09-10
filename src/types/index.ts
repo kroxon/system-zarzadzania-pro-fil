@@ -91,3 +91,9 @@ export interface LoginResponse{
   token: string;
   employeeId: string | number;
 }
+
+//occupations
+export interface Occupation{
+  id: number;
+  name: string;
+}
