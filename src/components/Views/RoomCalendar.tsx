@@ -845,9 +845,10 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
         week.push(day);
       }
       weeks.push(week);
-      // stop early if last week entirely next month and we've passed daysInMonth
-      const lastDay = week[6];
-      if(lastDay.getMonth() !== month && lastDay.getDate() >= 7) break;
+    }
+    // Usuń ostatni tydzień jeśli wszystkie dni są spoza bieżącego miesiąca
+    while (weeks.length > 0 && weeks[weeks.length-1].every(day => day.getMonth() !== month)) {
+      weeks.pop();
     }
     // Use local time for today and for all date comparisons (avoid UTC off-by-one)
     const formatLocalDate = (date: Date) => {
@@ -862,13 +863,13 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
     const weekdayLabels = ['Pon','Wt','Śr','Cz','Pt','So','Nd'];
 
     return (
-      <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+  <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="grid grid-cols-7 border-b border-gray-100 bg-gray-50/70 text-[11px] font-medium text-gray-600">
           {weekdayLabels.map(l => (
             <div key={l} className="px-2 py-2 text-center uppercase tracking-wide">{l}</div>
           ))}
         </div>
-        <div className="flex-1 grid gap-px bg-gray-200" style={{gridTemplateRows:`repeat(${weeks.length},1fr)`}}>
+  <div className="flex-1 grid gap-px bg-gray-200 overflow-y-auto" style={{gridTemplateRows:`repeat(${weeks.length},1fr)`, maxHeight: `${weeks.length * 80}px`}}>
           {weeks.map((week, wi) => (
             <div key={wi} className="grid grid-cols-7 gap-px bg-gray-200">
               {week.map(day => {
@@ -897,19 +898,31 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                         {/* Removed 'D' badge for today, only border remains */}
                       </div>
                       <div className="flex-1 px-2 pb-2">
-                        <div className="flex flex-row flex-wrap gap-1 items-start content-start">
-                          {dayMeetings.map(m=>{ const room = rooms.find(r=> r.id===m.roomId); const rc = getRoomStyle(room); const specialist = users.find(u=>u.id===m.specialistId); const specName = specialist?specialist.name:'Specjalista'; const tooltipTxt = `${m.startTime}-${m.endTime}\n${specName}\n${room?room.name:''}`; return (
-                            <span key={m.id+"_dot"}
-                              onMouseEnter={(e)=> scheduleTooltip(tooltipTxt, e.clientX, e.clientY+16)}
-                              onMouseMove={(e)=> updateTooltipPosition(e.clientX, e.clientY+16)}
-                              onMouseLeave={cancelTooltip}
-                              onClick={(e)=>{ e.stopPropagation(); handleTimeSlotClick(m.date, m.startTime, m, m.roomId); }}
-                              className="w-6 h-6 rounded-full border shadow-sm shrink-0 cursor-pointer hover:brightness-110 transition"
-                              style={{backgroundColor: rc.backgroundColor, borderColor: rc.borderColor}}
-                              title=""
-                              aria-label={tooltipTxt.replace(/\n/g,' ')}
-                            />
-                          ); })}
+                        <div className="flex flex-row flex-wrap gap-1 items-start content-start justify-center">
+                          {rooms.slice(0,5).map((room, idx) => {
+                            const rc = getRoomStyle(room);
+                            const roomMeetings = dayMeetings.filter(m => m.roomId === room.id);
+                            const tooltipTxt = `${room.name}\nSpotkań: ${roomMeetings.length}`;
+                            return (
+                              <span
+                                key={room.id+"_dot"}
+                                onMouseEnter={e => scheduleTooltip(tooltipTxt, e.clientX, e.clientY+16)}
+                                onMouseMove={e => updateTooltipPosition(e.clientX, e.clientY+16)}
+                                onMouseLeave={cancelTooltip}
+                                className="w-5 h-5 rounded-full border shadow-sm shrink-0 cursor-pointer hover:brightness-110 transition"
+                                style={{backgroundColor: rc.backgroundColor, borderColor: rc.borderColor}}
+                                title={tooltipTxt}
+                              />
+                            );
+                          })}
+                        </div>
+                        <div className="flex flex-row flex-wrap gap-1 items-center justify-center mt-1 text-[11px] text-gray-600">
+                          {rooms.slice(0,5).map((room, idx) => {
+                            const roomMeetings = dayMeetings.filter(m => m.roomId === room.id);
+                            return (
+                              <span key={room.id+"_count"} className="w-5 text-center">{roomMeetings.length}</span>
+                            );
+                          })}
                         </div>
                       </div>
                       {!inMonth && !isToday && <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] pointer-events-none" />}
