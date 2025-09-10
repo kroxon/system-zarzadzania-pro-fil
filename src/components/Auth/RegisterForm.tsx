@@ -1,14 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import getAllOccupations from '../../utils/api/occupations';
+import { Occupation } from '../../types';
+
 
 interface RegisterFormProps {
   onRegisterSuccess: () => void;
 }
 
-const roles = [
-  { value: 'admin', label: 'Administrator' },
-  { value: 'employee', label: 'Pracownik' },
-  { value: 'contact', label: 'Pierwszy kontakt' },
-];
 
 const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess }) => {
   const [form, setForm] = useState({
@@ -16,10 +14,18 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess }) => {
     password: '',
     firstName: '',
     lastName: '',
-    role: '',
+    occupationId: '',
   });
+  
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [occupations, setOccupations] = useState<Occupation[]>([]);
+
+  useEffect(() => {
+  getAllOccupations()
+    .then(setOccupations)
+    .catch(() => setOccupations([]));
+}, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -82,17 +88,17 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess }) => {
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">Rola</label>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Profesja</label>
           <select
-            name="role"
-            value={form.role}
+            name="occupationId"
+            value={form.occupationId}
             onChange={handleChange}
             className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
             required
           >
-            <option value="">Wybierz rolę...</option>
-            {roles.map(r => (
-              <option key={r.value} value={r.value}>{r.label}</option>
+            <option value="">Wybierz profesję...</option>
+            {occupations.map(o => (
+              <option key={o.id} value={o.id}>{o.name}</option>
             ))}
           </select>
         </div>
