@@ -122,8 +122,8 @@ function App() {
     'employees-manage': { title: 'Zarządzaj pracownikami', icon: <Users className="h-6 w-6" /> },
     'patients': { title: 'Podopieczni', icon: <UserIcon className="h-6 w-6" /> },
     'settings': { title: 'Ustawienia', icon: <SettingsIcon className="h-6 w-6" /> },
-  'quizes': { title: 'Quizy', icon: <ListChecks className="h-6 w-6" /> },
-  'tasks': { title: 'Zadania', icon: <ClipboardList className="h-6 w-6" /> },
+    'quizes': { title: 'Quizy', icon: <ListChecks className="h-6 w-6" /> },
+    'tasks': { title: 'Zadania', icon: <ClipboardList className="h-6 w-6" /> },
   };
 
   if (!currentUser) {
