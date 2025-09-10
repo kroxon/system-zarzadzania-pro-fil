@@ -80,6 +80,23 @@ export interface TimeSlot {
   meeting?: Meeting;
 }
 
+//admin
+
+export type Role = 'Admin' | 'FirstContact' | 'Employee';
+
+export interface PendingUser {
+  id: string;
+  name: string;
+  surname: string;
+  email: string;
+  role: Role; //tutaj będzie kluczowa zmiana w przyszłości, role zamienia sie na occupation
+}
+
+export interface ApproveUser{
+  role: Role;
+}
+
+
 //logowanie
 export interface LoginRequest {
   email: string;
@@ -98,19 +115,11 @@ export interface Occupation{
   name: string;
 }
 
-//admin
-
-export type Role = 'Admin' | 'FirstContact' | 'Employee';
-
-export interface PendingUser {
-  id: string;
+//register
+export interface RegisterRequest{
   name: string;
-  surname: string;
+  surname : string;
   email: string;
-  role: Role; //tutaj będzie kluczowa zmiana w przyszłości, role zamienia sie na occupation
+  password: string;
+  occupationId: number
 }
-
-export interface ApproveUser{
-  role: Role;
-}
-
