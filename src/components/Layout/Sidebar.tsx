@@ -16,9 +16,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
 
   // Base items excluding dashboard and groups
   const otherItems: { id: string; label: string; icon: React.ElementType; roles: Array<'admin' | 'employee' | 'contact'> }[] = [
-    { id: 'shared-calendar', label: 'Kalendarz wspólny', icon: Calendar, roles: ['admin', 'employee'] },
-    { id: 'quizes', label: 'Quizy', icon: ListChecks, roles: ['admin', 'employee'] },
-    { id: 'tasks', label: 'Zadania', icon: ClipboardList, roles: ['admin', 'employee'] },
+    { id: 'shared-calendar', label: 'Kalendarz wspólny', icon: Calendar, roles: ['admin', 'employee', 'contact'] },
+    { id: 'quizes', label: 'Quizy', icon: ListChecks, roles: ['admin', 'employee', 'contact'] },
+    { id: 'tasks', label: 'Zadania', icon: ClipboardList, roles: ['admin', 'employee', 'contact'] },
     { id: 'settings', label: 'Ustawienia', icon: Settings, roles: ['admin'] }
   ];
   const availableOther = otherItems.filter(i => i.roles.includes(userRole));
