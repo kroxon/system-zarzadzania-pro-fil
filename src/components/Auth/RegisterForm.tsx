@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import getAllOccupations from '../../utils/api/occupations';
 import { Occupation } from '../../types';
+import { registerUser } from '../../utils/api/auth';
 
 
 interface RegisterFormProps {
@@ -10,11 +11,11 @@ interface RegisterFormProps {
 
 const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess }) => {
   const [form, setForm] = useState({
+    name: '',
+    surname: '',
     email: '',
     password: '',
-    firstName: '',
-    lastName: '',
-    occupationId: '',
+    occupationId: 0,
   });
   
   const [loading, setLoading] = useState(false);
@@ -28,7 +29,11 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess }) => {
 }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    setForm({
+      ...form,
+      [name]: name === 'occupationId' ? Number(value) : value
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -36,12 +41,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess }) => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      if (!res.ok) throw new Error('Błąd rejestracji');
+      await registerUser(form);
+      onRegisterSuccess();
     } catch {
       setError('Rejestracja nie powiodła się');
     } finally {
@@ -56,8 +57,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess }) => {
           <label className="block text-xs font-medium text-gray-700 mb-1">Imię</label>
           <input
             type="text"
-            name="firstName"
-            value={form.firstName}
+            name="name"
+            value={form.name}
             onChange={handleChange}
             className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
             required
@@ -67,8 +68,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess }) => {
           <label className="block text-xs font-medium text-gray-700 mb-1">Nazwisko</label>
           <input
             type="text"
-            name="lastName"
-            value={form.lastName}
+            name="surname"
+            value={form.surname}
             onChange={handleChange}
             className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
             required
