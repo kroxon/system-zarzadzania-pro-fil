@@ -3,10 +3,10 @@ import { User as UserIcon, Lock } from 'lucide-react';
 import RegisterForm from './RegisterForm';
 import { loginUser } from '../../utils/api/auth'
 import { fetchUserById } from '../../utils/api/user';
-import { User } from '../../types';
+
 
 interface LoginFormProps {
-  onLogin: (user: User) => void;
+  onLogin: (user: any) => void;
   onLoginSuccess?: () => void;
 }
 
@@ -64,7 +64,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onLoginSuccess }) => {
       if (response.employeeId && onLogin) {
         try {
           const userData = await fetchUserById(response.employeeId, response.token);
-          onLogin(userData);
+          console.log('Fetched userData:', userData);
+          onLogin(userData); // przekazuj surowy obiekt Employee
         } catch (err) {
           alert('Nie udało się pobrać danych użytkownika');
         }
