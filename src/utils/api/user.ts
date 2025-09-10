@@ -1,9 +1,9 @@
 // this file connects user data after login by it's id
-import { User } from '../../types';
+import { Employee } from '../../types';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
-export const fetchUserById = async (id: string | number, token: string): Promise<User> => {
+export const fetchUserById = async (id: string | number, token: string): Promise<Employee> => {
   const response = await fetch(`${API_URL}/api/employees/${id}`, {
     method: 'GET',
     headers: {
