@@ -97,3 +97,20 @@ export interface Occupation{
   id: number;
   name: string;
 }
+
+//admin
+
+export type Role = 'Admin' | 'FirstContact' | 'Employee';
+
+export interface PendingUser {
+  id: string;
+  name: string;
+  surname: string;
+  email: string;
+  role: Role; //tutaj będzie kluczowa zmiana w przyszłości, role zamienia sie na occupation
+}
+
+export interface ApproveUser{
+  role: Role;
+}
+
