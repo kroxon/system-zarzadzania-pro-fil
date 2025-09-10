@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { User as UserIcon, Lock } from 'lucide-react';
 import RegisterForm from './RegisterForm';
-import { loginUser } from '../../utils/auth'
-import { fetchUserById } from '../../utils/user';
+import { loginUser } from '../../utils/api/auth'
+import { fetchUserById } from '../../utils/api/user';
 import { User } from '../../types';
 
 interface LoginFormProps {
