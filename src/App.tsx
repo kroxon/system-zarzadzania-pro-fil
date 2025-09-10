@@ -11,7 +11,7 @@ import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
 import QuizzesPage from './components/Quizes/QuizList';
 import TasksPage from './components/Tasks/TasksPage';
-import { User, Meeting, Room, Employee } from './types';
+import { User, Meeting, Room } from './types';
 import { 
   saveMeetings, 
   loadMeetings, 
@@ -29,7 +29,6 @@ import {
 } from './utils/storage';
 import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
 import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon, ListChecks, ClipboardList } from 'lucide-react';
-import { fetchUserById } from './utils/api/user';
 import { mapBackendRolesToFrontend } from './utils/roleMapper';
 
 function App() {
