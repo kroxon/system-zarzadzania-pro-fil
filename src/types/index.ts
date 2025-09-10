@@ -1,3 +1,14 @@
+// Employee zgodny z API
+export interface Employee {
+  id: number;
+  name: string;
+  surname: string;
+  email: string;
+  occupationId: number;
+  occupationName: string;
+  info?: string;
+  roles: string[]; // np. ['Admin', 'Employee']
+}
 export interface User {
   id: string;
   name: string;
