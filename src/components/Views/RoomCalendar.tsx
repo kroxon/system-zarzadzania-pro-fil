@@ -75,6 +75,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
   const employees = users.filter(u => u.role === 'employee');
   const sortedEmployees = React.useMemo(() => [...employees].sort((a, b) => a.name.localeCompare(b.name, 'pl')), [employees]);
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
+  const [showEmployeeFilter, setShowEmployeeFilter] = useState(false);
   // State
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewType, setViewType] = useState<'day'|'week'|'month'>('week');
@@ -942,66 +943,67 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
 
   return (
     <div className={`flex flex-col flex-1 h-full min-h-0 overflow-hidden ${viewType==='month'?'space-y-6':'gap-2'} pb-4`}>
-      {/* Unified top bar: date/employee filter left, view type buttons right */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 bg-white rounded-xl shadow-sm border border-gray-200 px-4 py-3 mb-2">
-        {/* Date and employee filter (left/center) */}
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <CalendarHeader
-            currentDate={currentDate}
-            viewType={viewType}
-            onDateChange={setCurrentDate}
-            onViewTypeChange={setViewType}
-            // Przyciski widoku przenosimy na prawo, więc nie będą tu renderowane
-          />
-        </div>
-        <div className="flex-1 flex justify-center items-center min-w-0">
-          <div className="flex flex-wrap gap-2 justify-center">
-            {sortedEmployees.map(emp => {
-              const selected = selectedEmployees.includes(emp.id);
-              return (
-                <button
-                  key={emp.id}
-                  type="button"
-                  onClick={() => setSelectedEmployees(sel =>
-                    selected ? sel.filter(id => id !== emp.id) : [...sel, emp.id]
-                  )}
-                  className={`px-4 py-2 rounded-lg border text-xs font-medium shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1
-                    ${selected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-blue-50'}
-                  `}
-                  style={{ minWidth: 110 }}
-                >
-                  {emp.name}
-                </button>
-              );
-            })}
-            {sortedEmployees.length === 0 && (
-              <span className="text-xs text-gray-400 italic">Brak pracowników</span>
-            )}
+      {/* Pasek górny: data, widok i filtr pracowników w jednym wierszu, filtr po prawej */}
+      <div className="flex flex-row items-start justify-between w-full mb-2 relative">
+        <CalendarHeader
+          currentDate={currentDate}
+          viewType={viewType}
+          onDateChange={setCurrentDate}
+          onViewTypeChange={setViewType}
+        />
+        <button
+          className="px-4 py-2 rounded-lg border border-blue-500 bg-blue-50 text-blue-700 font-medium text-xs hover:bg-blue-100 transition"
+          type="button"
+          onClick={() => setShowEmployeeFilter(v => !v)}
+          id="employee-filter-btn"
+        >
+          Filtruj pracowników
+        </button>
+        {showEmployeeFilter && (
+          <div
+            className="absolute right-0 top-full z-[1000] mt-2 min-w-[260px] max-w-xs w-[320px] bg-white rounded-xl shadow-xl border border-gray-200 p-4 flex flex-col items-center animate-fade-in"
+          >
             <button
-              className="ml-2 px-3 py-1.5 text-xs rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+              className="absolute top-2 right-2 text-gray-400 hover:text-gray-700 text-xl font-bold"
+              onClick={() => setShowEmployeeFilter(false)}
+              aria-label="Zamknij"
+              tabIndex={0}
+            >
+              ×
+            </button>
+            <div className="mb-3 text-base font-semibold text-gray-800">Filtruj po pracownikach</div>
+            <div className="flex flex-wrap gap-2 justify-center w-full mb-3 max-h-40 overflow-y-auto">
+              {sortedEmployees.map(emp => {
+                const selected = selectedEmployees.includes(emp.id);
+                return (
+                  <button
+                    key={emp.id}
+                    type="button"
+                    onClick={() => setSelectedEmployees(sel =>
+                      selected ? sel.filter(id => id !== emp.id) : [...sel, emp.id]
+                    )}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-medium shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1
+                      ${selected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-blue-50'}
+                    `}
+                    style={{ minWidth: 90 }}
+                  >
+                    {emp.name}
+                  </button>
+                );
+              })}
+              {sortedEmployees.length === 0 && (
+                <span className="text-xs text-gray-400 italic">Brak pracowników</span>
+              )}
+            </div>
+            <button
+              className="px-3 py-1.5 text-xs rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 mb-2"
               onClick={() => setSelectedEmployees([])}
               type="button"
             >
               Wyczyść filtr
             </button>
           </div>
-        </div>
-        {/* Przyciski widoku (dzień/tydzień/miesiąc) na prawo */}
-        <div className="flex items-center space-x-2">
-          {(['day', 'week', 'month'] as const).map((type) => (
-            <button
-              key={type}
-              onClick={() => setViewType(type)}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                viewType === type
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              {type === 'day' ? 'Dzień' : type === 'week' ? 'Tydzień' : 'Miesiąc'}
-            </button>
-          ))}
-        </div>
+        )}
       </div>
       <div className="flex-1 min-h-0">{viewType==='day' && renderDayViewMultiRoom()}{viewType==='week' && renderWeekView()}{viewType==='month' && renderMonthView()}</div>
       <MeetingForm isOpen={showMeetingForm} onClose={()=>{ setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); }} onSubmit={handleMeetingFormSubmit} onDelete={onMeetingDelete} users={users} rooms={rooms} meetings={meetings} selectedDate={formatDateForComparison(currentDate)} selectedTime={selectedTime} currentUser={currentUser} editingMeeting={editingMeeting} initialRoomId={formRoomId} selectedEndTime={selectedEndTime} />
