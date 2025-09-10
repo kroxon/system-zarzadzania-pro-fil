@@ -12,8 +12,18 @@ interface TopBarProps {
 }
 
 const TopBar: React.FC<TopBarProps> = ({ currentUser, onLogout, pageTitle, pageIcon }) => {
+  // Używaj tylko currentUser.role
   const getRoleName = (role: string) => {
-    return role === 'admin' ? 'Administrator' : 'Pracownik';
+    switch (role) {
+      case 'admin':
+        return 'Administrator';
+      case 'contact':
+        return 'Kontakt';
+      case 'employee':
+        return 'Pracownik';
+      default:
+        return 'Pracownik';
+    }
   };
 
   return (
