@@ -3,7 +3,7 @@ import { Patient } from '../../types';
 import { Search } from 'lucide-react';
 import { loadMeetings, loadUsers, loadRooms, loadPatients, savePatients, saveTherapistAssignments } from '../../utils/storage';
 
-interface Visit { id: string; patientId: string; date: string; therapist: string; room: string; status: 'zrealizowana' | 'odwołana' | 'zaplanowana'; }
+interface Visit { id: string; patientId: string; date: string; therapist: string; room: string; status: 'zrealizowana' | 'odwołana' | 'zaplanowana' | 'nieobecny'; }
 
 const ASSIGN_KEY = 'schedule_therapist_assignments';
 
@@ -56,6 +56,7 @@ export default function Patients(){
       .map(m=>{
         let status: Visit['status'];
         if(m.status === 'cancelled') status = 'odwołana';
+        else if(m.status === 'absent') status = 'nieobecny';
         else if(m.status === 'in-progress') status = 'zaplanowana';
         else status = m.date > todayStr ? 'zaplanowana' : 'zrealizowana';
         return { id:m.id, patientId:m.patientId!, date:m.date, therapist: userMap.get(m.specialistId) || m.specialistId, room: roomMap.get(m.roomId) || m.roomId, status };
@@ -81,7 +82,7 @@ export default function Patients(){
     setTherapistAssignments(prev => {
       if(!Object.keys(prev).length) return prev;
       const employees = users.filter(u=> u.role==='employee');
-      const nameToId: Record<string,string> = {}; employees.forEach(e=> nameToId[e.name]=e.id);
+      const nameToId: Record<string,string> = {}; employees.forEach(e=> nameToId[e.name]=e
       let changed = false; const next: Record<string,string[]> = {};
       Object.entries(prev).forEach(([pid, arr])=> {
         const conv = arr.map(v=> nameToId[v] || v);
@@ -132,6 +133,13 @@ export default function Patients(){
     return <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] leading-none ${isActive? 'text-green-700 bg-green-50 border-green-200':'text-gray-500 bg-gray-100 border-gray-300'}`}>{status || '—'}</span>;
   };
 
+  // Nowe: helper do wyświetlania inicjałów terapeutów (poprawa czytelności chipów)
+  const getInitials = (name: string) => {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/).slice(0, 2);
+    return parts.map(p => p[0]?.toUpperCase() || '').join('');
+  };
+
   const calcAge = (birthDate?: string) => {
     if(!birthDate) return '—'; const bd = new Date(birthDate); if(isNaN(bd.getTime())) return '—';
     const now = new Date(); let age = now.getFullYear()-bd.getFullYear(); const m = now.getMonth()-bd.getMonth(); if(m<0 || (m===0 && now.getDate()<bd.getDate())) age--; return age + ' lat';
@@ -142,7 +150,8 @@ export default function Patients(){
     total: selectedVisits.length,
     zrealizowana: selectedVisits.filter(v=> v.status==='zrealizowana').length,
     odwolana: selectedVisits.filter(v=> v.status==='odwołana').length,
-    zaplanowana: selectedVisits.filter(v=> v.status==='zaplanowana').length
+    zaplanowana: selectedVisits.filter(v=> v.status==='zaplanowana').length,
+    nieobecny: selectedVisits.filter(v=> v.status==='nieobecny').length
   }),[selectedVisits]);
 
   const startEdit = () => { if(selected) setEditMode(true); };
@@ -295,10 +304,40 @@ export default function Patients(){
                       </p>
                       <div>
                         <p className="mb-1"><strong>Terapeuci:</strong></p>
-                        {!editMode && <div className="flex flex-wrap gap-1">{(therapistAssignments[selected.id]||[]).map(tId => <span key={tId} className="px-2 py-0.5 text-[11px] bg-blue-50 text-blue-700 rounded-full border border-blue-200">{userIdToName[tId] || tId}</span>)}{(therapistAssignments[selected.id]||[]).length===0 && <span className="text-[11px] text-gray-400">Brak</span>}</div>}
+                        {!editMode && (
+                          <>
+                            {(therapistAssignments[selected.id]||[]).length===0 ? (
+                              <span className="text-xs text-gray-400">Brak przypisanych terapeutów</span>
+                            ) : (
+                              <ul className="space-y-2">
+                                {(therapistAssignments[selected.id]||[]).map(tId => {
+                                  const name = userIdToName[tId] || tId;
+                                  return (
+                                    <li key={tId} className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2">
+                                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white text-[11px] font-semibold">{getInitials(name)}</span>
+                                      <span className="text-sm font-medium text-blue-900">{name}</span>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )}
+                          </>
+                        )}
                         {editMode && (
                           <div className="space-y-2">
-                            <div className="flex flex-wrap gap-1">{editForm.therapists.map(tId => <span key={tId} className="px-2 py-0.5 text-[11px] bg-blue-50 text-blue-700 rounded-full border border-blue-200 flex items-center gap-1">{userIdToName[tId]||tId}<button onClick={()=> removeTherapist(tId)} className="text-blue-500 hover:text-blue-700">×</button></span>)}{editForm.therapists.length===0 && <span className="text-[11px] text-gray-400">Brak terapeutów</span>}</div>
+                            <div className="flex flex-wrap gap-2">
+                              {editForm.therapists.map(tId => {
+                                const name = userIdToName[tId] || tId;
+                                return (
+                                  <span key={tId} className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm text-blue-900">
+                                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-semibold">{getInitials(name)}</span>
+                                    <span className="font-medium">{name}</span>
+                                    <button onClick={()=> removeTherapist(tId)} className="ml-1 rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 h-5 w-5 inline-flex items-center justify-center" aria-label={`Usuń terapeutę ${name}`}>×</button>
+                                  </span>
+                                );
+                              })}
+                              {editForm.therapists.length===0 && <span className="text-xs text-gray-400">Brak terapeutów</span>}
+                            </div>
                             <div className="flex items-center gap-2">
                               <select className="px-2 py-1 text-xs border rounded" onChange={e=> { addTherapist(e.target.value); e.target.selectedIndex=0; }}>
                                 <option value="">Dodaj terapeutę...</option>
@@ -308,14 +347,27 @@ export default function Patients(){
                           </div>
                         )}
                       </div>
-                      <div className="mt-4 pt-3 border-t border-gray-200">
-                        {visitCounts.total===0 ? <p className="text-[12px] italic text-gray-400">Brak sesji</p> : (
-                          <div className="space-y-1">
-                            <p className="text-[12px] font-semibold text-gray-700">Sesje łącznie: {visitCounts.total}</p>
-                            <div className="flex flex-wrap gap-1 text-[11px]">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full border bg-green-50 text-green-700 border-green-200">zrealizowane: {visitCounts.zrealizowana}</span>
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full border bg-yellow-50 text-yellow-700 border-yellow-200">zaplanowane: {visitCounts.zaplanowana}</span>
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full border bg-red-50 text-red-600 border-red-200">odwołane: {visitCounts.odwolana}</span>
+                      <div className="mt-4">
+                        <p className="mb-1"><strong>Sesje:</strong></p>
+                        {visitCounts.total===0 ? (
+                          <p className="text-[12px] italic text-gray-400">Brak sesji</p>
+                        ) : (
+                          <div className="grid grid-cols-4 gap-2">
+                            <div className="rounded-lg border border-green-200 bg-green-50 p-2 text-center">
+                              <div className="text-[10px] font-medium text-green-700 tracking-wide uppercase leading-none">Zrealizowane</div>
+                              <div className="mt-1 text-base font-bold text-green-800 leading-none">{visitCounts.zrealizowana}</div>
+                            </div>
+                            <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-center">
+                              <div className="text-[10px] font-medium text-red-700 tracking-wide uppercase leading-none">Odwołane</div>
+                              <div className="mt-1 text-base font-bold text-red-700 leading-none">{visitCounts.odwolana}</div>
+                            </div>
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-center">
+                              <div className="text-[10px] font-medium text-amber-700 tracking-wide uppercase leading-none">Nieobecny</div>
+                              <div className="mt-1 text-base font-bold text-amber-700 leading-none">{visitCounts.nieobecny}</div>
+                            </div>
+                            <div className="rounded-lg border border-blue-200 bg-blue-50 p-2 text-center">
+                              <div className="text-[10px] font-medium text-blue-700 tracking-wide uppercase leading-none">Zaplanowane</div>
+                              <div className="mt-1 text-base font-bold text-blue-800 leading-none">{visitCounts.zaplanowana}</div>
                             </div>
                           </div>
                         )}
@@ -399,7 +451,7 @@ export default function Patients(){
                         <td className="px-3 py-2 whitespace-nowrap">{v.therapist}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{v.room}</td>
                         <td className="px-3 py-2 whitespace-nowrap">
-                          <span className={`inline-flex px-2 py-0.5 rounded-full border ${v.status==='zrealizowana' ? 'bg-green-50 text-green-700 border-green-200' : v.status==='odwołana' ? 'bg-red-50 text-red-600 border-red-200':'bg-yellow-50 text-yellow-700 border-yellow-200'}`}>{v.status}</span>
+                          <span className={`inline-flex px-2 py-0.5 rounded-full border ${v.status==='zrealizowana' ? 'bg-green-50 text-green-700 border-green-200' : v.status==='odwołana' ? 'bg-red-50 text-red-600 border-red-200' : v.status==='nieobecny' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>{v.status}</span>
                         </td>
                       </tr>
                     ))}
