@@ -1,3 +1,5 @@
+import { isInternalThread } from "worker_threads";
+
 // Employee zgodny z API
 export interface Employee {
   id: number;
@@ -134,4 +136,17 @@ export interface RegisterRequest{
   email: string;
   password: string;
   occupationId: number
+}
+
+//events
+export interface Event{
+  id: number;
+  name: string;
+  start: string; //ISO date-time format
+  end: string; //ISO date-time format
+  participantIds: number[];
+  statusId: number;
+  roomId?: number | null;
+  info?: string | null;
+  guest?: string | null;
 }
