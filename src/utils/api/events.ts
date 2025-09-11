@@ -40,7 +40,21 @@ export async function createEvent(data: CreateEvent, token: string): Promise<Eve
 }
 
 // GET /api/events/{id}
+export async function fetchEvent(id: number, token: string): Promise<Event> {
+  const response = await fetch(`${API_URL}/api/events/${id}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
 
+  if (!response.ok) {
+    throw new Error('Nie udało się pobrać wydarzenia');
+  }
+
+  return await response.json();
+}
 
 // DELETE /api/events/{id}
 
@@ -49,4 +63,6 @@ export async function createEvent(data: CreateEvent, token: string): Promise<Eve
 
 
 // PATCH /api/events/{eventId}/persons
+
+
 
