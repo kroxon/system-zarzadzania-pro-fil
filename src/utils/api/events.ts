@@ -1,4 +1,4 @@
-import {  Event, CreateEvent} from '../../types/index';
+import {  Event, CreateEvent, PatchEventPersons} from '../../types/index';
 
 const API_URL = import.meta.env.VITE_API_URL
 
@@ -91,8 +91,22 @@ export async function updateEvent(id: number, data: CreateEvent, token: string):
 }
 
 
-
 // PATCH /api/events/{eventId}/persons
+
+export async function patchEventPersons(eventId: number, data: PatchEventPersons, token: string): Promise<void> {
+  const response = await fetch(`${API_URL}/api/events/${eventId}/persons`, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    throw new Error('Nie udało się zaktualizować uczestników wydarzenia');
+  }
+}
 
 
 
