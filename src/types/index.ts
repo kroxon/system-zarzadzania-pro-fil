@@ -150,3 +150,12 @@ export interface Event{
   info?: string | null;
   guest?: string | null;
 }
+
+export interface CreateEvent {
+  name: string;
+  start: string; // ISO date-time
+  end: string;   // ISO date-time
+  participantIds: number[];
+  roomId?: number | null;
+  info?: string | null;
+}
