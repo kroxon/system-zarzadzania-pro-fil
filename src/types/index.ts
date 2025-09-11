@@ -159,3 +159,8 @@ export interface CreateEvent {
   roomId?: number | null;
   info?: string | null;
 }
+
+export interface PatchEventPersons {
+  addPersonsIds?: number[];
+  removePersonsIds?: number[];
+}
