@@ -1,22 +1,26 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { fetchPendingUsers, approveUser, rejectUser } from '../../utils/api/admin';
+import { PendingUser, Role } from '../../types';
 
-interface SettingsProps {
-	showWeekends: boolean;
-	setShowWeekends: (val: boolean) => void;
-	startHour: number;
-	setStartHour: (val: number) => void;
-	endHour: number;
-	setEndHour: (val: number) => void;
-	setUsersState: (users: any) => void;
-	setRoomsState: (rooms: any) => void;
-	setPatientsState: (patients: any) => void;
-	setMeetings: (meetings: any) => void;
-	loadUsers: () => any;
-	loadRooms: () => any;
-	loadMeetings: () => any;
-	loadAndApplyDemo: () => any;
-	purgeDemo: () => void;
-}
+	type SettingsProps = {
+		showWeekends: boolean;
+		setShowWeekends: (val: boolean) => void;
+		startHour: number;
+		setStartHour: (val: number) => void;
+		endHour: number;
+		setEndHour: (val: number) => void;
+		setUsersState: (users: any) => void;
+		setRoomsState: (rooms: any) => void;
+		setPatientsState: (patients: any) => void;
+		setMeetings: (meetings: any) => void;
+		loadUsers: () => any;
+		loadRooms: () => any;
+		loadMeetings: () => any;
+		loadAndApplyDemo: () => any;
+		purgeDemo: () => void;
+		currentUser?: { role: string; };
+		token?: string;
+	}
 
 const Settings: React.FC<SettingsProps> = ({
 	showWeekends,
@@ -33,8 +37,88 @@ const Settings: React.FC<SettingsProps> = ({
 	loadRooms,
 	loadMeetings,
 	loadAndApplyDemo,
-	purgeDemo
+	purgeDemo,
+	currentUser,
+	token
 }) => {
+	// Pending users state
+	const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
+	const [loadingPending, setLoadingPending] = useState(false);
+	const [errorPending, setErrorPending] = useState<string | null>(null);
+	const [roleSelect, setRoleSelect] = useState<Record<string, Role>>({});
+	const isAdmin = currentUser?.role === 'admin';
+
+	// Fetch pending users only for admin
+	useEffect(() => {
+		if (!isAdmin || !token) return;
+		setLoadingPending(true);
+		fetchPendingUsers(token)
+			.then(setPendingUsers)
+			.catch(e => setErrorPending(e.message))
+			.finally(() => setLoadingPending(false));
+	}, [isAdmin, token]);
+
+	// Approve user
+	const handleApprove = async (userId: string) => {
+		const role = roleSelect[userId] || 'Employee';
+		if (!token) return;
+		try {
+			await approveUser(userId, role, token);
+			setPendingUsers(prev => prev.filter(u => u.id !== userId));
+		} catch (e: any) {
+			alert('Error approving user: ' + e.message);
+		}
+	};
+
+	// Reject user
+	const handleReject = async (userId: string) => {
+		if (!token) return;
+		try {
+			await rejectUser(userId, token);
+			setPendingUsers(prev => prev.filter(u => u.id !== userId));
+		} catch (e: any) {
+			alert('Error rejecting user: ' + e.message);
+		}
+	};
+
+	// Render pending users section (only for admin)
+	const renderPendingUsers = () => (
+		<div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-6">
+			<h3 className="text-lg font-semibold text-gray-900 mb-4">Zarządzanie oczekującymi użytkownikami</h3>
+			{loadingPending && <div>Ładowanie...</div>}
+			{errorPending && <div className="text-red-500">{errorPending}</div>}
+			<ul>
+				{pendingUsers.map(user => (
+					<li key={user.id} className="mb-4 flex items-center justify-between">
+						<div>
+							<span className="font-medium">{user.name} {user.surname}</span> <span className="text-gray-500">({user.email})</span>
+						</div>
+						<div className="flex items-center gap-2">
+							<select
+								value={roleSelect[user.id] || user.role || 'Employee'}
+								onChange={e => setRoleSelect(r => ({ ...r, [user.id]: e.target.value as Role }))}
+								className="border rounded px-2 py-1 text-sm"
+							>
+								<option value="Admin">Admin</option>
+								<option value="FirstContact">FirstContact</option>
+								<option value="Employee">Employee</option>
+							</select>
+							<button
+								onClick={() => handleApprove(user.id)}
+								className="px-3 py-1 rounded bg-green-600 text-white text-sm hover:bg-green-700"
+							>Akceptuj</button>
+							<button
+								onClick={() => handleReject(user.id)}
+								className="px-3 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700"
+							>Odrzuć</button>
+						</div>
+					</li>
+				))}
+			</ul>
+			{!pendingUsers.length && !loadingPending && <div className="text-gray-500">Brak oczekujących użytkowników.</div>}
+		</div>
+	);
+
 	return (
 		<div className="space-y-6">
 			<div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -110,9 +194,10 @@ const Settings: React.FC<SettingsProps> = ({
 					<p className="text-xs text-gray-500">Generuje 5 sal, 7 terapeutów, 20 podopiecznych i spotkania (pon-pt) dla ubiegłego, bieżącego i przyszłego tygodnia. Dane można następnie edytować.</p>
 				</div>
 			</div>
-			<div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-				<p className="text-gray-500 text-center py-8">Dodatkowe ustawienia będą dostępne w przyszłych wersjach</p>
-			</div>
+					<div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+						<p className="text-gray-500 text-center py-8">Dodatkowe ustawienia będą dostępne w przyszłych wersjach</p>
+					</div>
+					{isAdmin && renderPendingUsers()}
 		</div>
 	);
 };
