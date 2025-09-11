@@ -56,7 +56,7 @@ function App() {
   useEffect(()=>{ savePatients(patientsState); },[patientsState]);
   useEffect(()=>{ saveMeetings(meetings); },[meetings]);
 
-  const handleLogin = async (user: any) => {
+  const handleLogin = async (user: any, token?: string) => {
     // Jeśli user ma pole 'roles' (Employee z backendu), wykonaj mapowanie
     if (user && Array.isArray(user.roles)) {
       console.log('Backend roles:', user.roles);
@@ -69,6 +69,7 @@ function App() {
         surname: user.surname,
         role: mappedRole,
         specialization: user.occupationName,
+          token: token || localStorage.getItem('token') || undefined,
         // ...inne pola jeśli potrzebne
       };
       setCurrentUser(frontendUser);
@@ -204,6 +205,8 @@ function App() {
             loadMeetings={loadMeetings}
             loadAndApplyDemo={loadAndApplyDemo}
             purgeDemo={purgeDemo}
+            currentUser={currentUser}
+            token={currentUser?.token || localStorage.getItem('token') || undefined}
           />
         );
       case 'quizes':
