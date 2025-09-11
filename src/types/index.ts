@@ -164,3 +164,10 @@ export interface PatchEventPersons {
   addPersonsIds?: number[];
   removePersonsIds?: number[];
 }
+
+
+//event statuses
+export interface EventStatus{
+  id: number;
+  name: string;
+}
