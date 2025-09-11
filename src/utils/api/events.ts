@@ -71,12 +71,29 @@ export async function deleteEvent(id: number, token: string): Promise<void> {
   }
 }
 
+
 // PUT /api/events/{id}
 
+
+export async function updateEvent(id: number, data: CreateEvent, token: string): Promise<void> {
+  const response = await fetch(`${API_URL}/api/events/${id}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    throw new Error('Nie udało się zaktualizować wydarzenia');
+  }
+}
 
 
 
 // PATCH /api/events/{eventId}/persons
+
 
 
 
