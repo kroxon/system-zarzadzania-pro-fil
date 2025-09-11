@@ -82,7 +82,7 @@ export default function Patients(){
     setTherapistAssignments(prev => {
       if(!Object.keys(prev).length) return prev;
       const employees = users.filter(u=> u.role==='employee');
-      const nameToId: Record<string,string> = {}; employees.forEach(e=> nameToId[e.name]=e
+      const nameToId: Record<string,string> = {}; employees.forEach(e=> nameToId[e.name]=e.id);
       let changed = false; const next: Record<string,string[]> = {};
       Object.entries(prev).forEach(([pid, arr])=> {
         const conv = arr.map(v=> nameToId[v] || v);
@@ -133,7 +133,19 @@ export default function Patients(){
     return <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] leading-none ${isActive? 'text-green-700 bg-green-50 border-green-200':'text-gray-500 bg-gray-100 border-gray-300'}`}>{status || '—'}</span>;
   };
 
-  // Nowe: helper do wyświetlania inicjałów terapeutów (poprawa czytelności chipów)
+  // Czytelna etykieta statusu do panelu szczegółów (bez pastylki)
+  const statusLabel = (status?: string) => {
+    const isActive = status === 'aktywny';
+    const text = isActive ? 'aktywny' : (status || '—');
+    return (
+      <span className={`inline-flex items-center gap-2 font-semibold ${isActive ? 'text-green-700' : 'text-gray-600'}`}>
+        <span className="tracking-wide text-sm md:text-base">{text}</span>
+        <span className={`h-2.5 w-2.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-400'}`} aria-hidden="true" />
+      </span>
+    );
+  };
+
+  // Helper do inicjałów – używany przy wyświetlaniu terapeutów
   const getInitials = (name: string) => {
     if (!name) return '?';
     const parts = name.trim().split(/\s+/).slice(0, 2);
@@ -289,21 +301,21 @@ export default function Patients(){
                   </div>
                   <div className="mt-4 grid grid-cols-3 gap-6 items-start">
                     <div className="space-y-2 text-sm text-gray-600 col-span-1">
-                      <p><strong>Data urodzenia:</strong>{' '}
+                      <p><strong className="text-[0.95rem] font-semibold text-gray-800">Data urodzenia:</strong>{' '}
                         {editMode ? (
                           <input type="date" value={editForm.birthDate} onChange={e=> setEditForm(f=> ({...f, birthDate:e.target.value}))} className="ml-2 px-2 py-1 text-xs border rounded" />
                         ) : <><span className="ml-1">{selected.birthDate || '—'}</span> <span className="ml-2 text-gray-500">({calcAge(selected.birthDate)})</span></>}
                       </p>
-                      <p className="flex items-center"><strong className="mr-1">Status:</strong>{' '}
+                      <p className="flex items-center"><strong className="mr-1 text-[0.95rem] font-semibold text-gray-800">Status:</strong>{' '}
                         {editMode ? (
                           <select value={editForm.status} onChange={e=> setEditForm(f=> ({...f, status:e.target.value}))} className="px-2 py-1 text-xs border rounded">
                             <option value="aktywny">aktywny</option>
                             <option value="nieaktywny">nieaktywny</option>
                           </select>
-                        ) : statusBadge(selected.status)}
+                        ) : statusLabel(selected.status)}
                       </p>
                       <div>
-                        <p className="mb-1"><strong>Terapeuci:</strong></p>
+                        <p className="mb-1"><strong className="text-[0.95rem] font-semibold text-gray-800">Terapeuci:</strong></p>
                         {!editMode && (
                           <>
                             {(therapistAssignments[selected.id]||[]).length===0 ? (
@@ -348,9 +360,9 @@ export default function Patients(){
                         )}
                       </div>
                       <div className="mt-4">
-                        <p className="mb-1"><strong>Sesje:</strong></p>
+                        <p className="mb-1"><strong className="text-[0.95rem] font-semibold text-gray-800">Sesje:</strong></p>
                         {visitCounts.total===0 ? (
-                          <p className="text-[12px] italic text-gray-400">Brak sesji</p>
+                          <p className="text-sm italic text-gray-500">Brak sesji</p>
                         ) : (
                           <div className="grid grid-cols-4 gap-2">
                             <div className="rounded-lg border border-green-200 bg-green-50 p-2 text-center">
@@ -375,12 +387,12 @@ export default function Patients(){
                     </div>
                     <div className="col-span-2 flex flex-col h-full">
                       <div className="flex border-b border-gray-200 mb-3">
-                        <button className={`px-4 py-2 text-xs font-medium -mb-px border-b-2 transition-colors ${activeTab==='info' ? 'border-blue-600 text-blue-700':'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={()=> setActiveTab('info')}>Informacje dodatkowe</button>
-                        <button className={`px-4 py-2 text-xs font-medium -mb-px border-b-2 transition-colors ${activeTab==='sessions' ? 'border-blue-600 text-blue-700':'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={()=> setActiveTab('sessions')}>Notatki z sesji</button>
+                        <button className={`px-4 py-2 text-sm md:text-[0.95rem] font-medium -mb-px border-b-2 transition-colors ${activeTab==='info' ? 'border-blue-600 text-blue-700':'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={()=> setActiveTab('info')}>Informacje dodatkowe</button>
+                        <button className={`px-4 py-2 text-sm md:text-[0.95rem] font-medium -mb-px border-b-2 transition-colors ${activeTab==='sessions' ? 'border-blue-600 text-blue-700':'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={()=> setActiveTab('sessions')}>Notatki z sesji</button>
                       </div>
                       {activeTab==='info' && (
                         <div className="flex-1 flex flex-col">
-                          <label className="text-xs font-semibold text-gray-700 mb-1">Informacje dodatkowe</label>
+                          <label className="text-[0.95rem] font-semibold text-gray-800 mb-1">Informacje dodatkowe</label>
                           {editMode ? (
                             <textarea value={editForm.notes} onChange={e=> setEditForm(f=> ({...f, notes:e.target.value}))} className="flex-1 min-h-[160px] max-h-[300px] overflow-y-auto w-full text-sm p-3 border rounded resize-y leading-relaxed" placeholder="Wpisz dodatkowe informacje..." />
                           ) : (
@@ -392,14 +404,14 @@ export default function Patients(){
                       )}
                       {activeTab==='sessions' && (
                         <div className="flex-1 flex flex-col min-h-[160px] max-h-[300px] overflow-y-auto">
-                          {selectedVisits.length===0 && <div className="text-xs text-gray-500 italic">Brak wizyt do wyświetlenia notatek</div>}
+                          {selectedVisits.length===0 && <div className="text-sm text-gray-600 italic">Brak wizyt do wyświetlenia notatek</div>}
                           <ul className="space-y-2">
                             {selectedVisits.map(v=> {
                               const open = openSessionNotes.has(v.id);
                               const toggle = () => setOpenSessionNotes(prev => { const n = new Set(prev); n.has(v.id)? n.delete(v.id): n.add(v.id); return n; });
                               return (
                                 <li key={v.id} className="border border-gray-200 rounded-lg bg-white overflow-hidden">
-                                  <button onClick={toggle} className="w-full flex items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-50">
+                                  <button onClick={toggle} className="w-full flex items-center justify-between px-3 py-2 text-left text-sm font-medium text-gray-700 hover:bg-gray-50">
                                     <span className="flex items-center gap-2"><span className="text-gray-500">{v.date}</span><span className="text-gray-400">•</span><span>{v.therapist}</span><span className="text-gray-400">•</span><span className="capitalize">{v.status}</span></span>
                                     <span className={`ml-2 inline-flex h-5 w-5 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-500 shadow-sm transition-transform duration-200 ${open? 'rotate-90':''}`}>
                                       <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M6.293 7.293a1 1 0 011.414 0L11 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
@@ -408,9 +420,9 @@ export default function Patients(){
                                   {open && (
                                     <div className="p-3 border-t border-gray-200 bg-gray-50">
                                       {editMode ? (
-                                        <textarea className="w-full text-xs p-2 border rounded resize-y min-h-[80px]" placeholder="Wpisz notatkę z sesji..." value={sessionNotes[v.id]||''} onChange={e=> setSessionNotes(s=> ({...s, [v.id]: e.target.value}))} />
+                                        <textarea className="w-full text-sm p-2 border rounded resize-y min-h-[80px]" placeholder="Wpisz notatkę z sesji..." value={sessionNotes[v.id]||''} onChange={e=> setSessionNotes(s=> ({...s, [v.id]: e.target.value}))} />
                                       ) : (
-                                        <div className="text-xs whitespace-pre-wrap text-gray-700 min-h-[40px]">{(sessionNotes[v.id] || '').trim() || <span className="italic text-gray-400">Brak notatki</span>}</div>
+                                        <div className="text-sm whitespace-pre-wrap text-gray-700 min-h-[40px]">{(sessionNotes[v.id] || '').trim() || <span className="italic text-gray-400">Brak notatki</span>}</div>
                                       )}
                                     </div>
                                   )}
@@ -420,7 +432,7 @@ export default function Patients(){
                           </ul>
                           {selectedVisits.length>0 && openSessionNotes.size>0 && (
                             <div className="mt-3 pt-3 border-t border-gray-200">
-                              <button onClick={()=> setOpenSessionNotes(new Set())} className="px-3 py-1.5 text-[11px] font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md border border-gray-300">Zwiń wszystkie notatki</button>
+                              <button onClick={()=> setOpenSessionNotes(new Set())} className="px-3 py-1.5 text-xs md:text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md border border-gray-300">Zwiń wszystkie notatki</button>
                             </div>
                           )}
                         </div>
