@@ -3,6 +3,7 @@ import { AlertCircle, Trash2, Calendar, Clock } from 'lucide-react';
 import { Meeting, User, Room, Patient } from '../../types';
 import { loadPatients } from '../../utils/storage';
 import { generateTimeSlots } from '../../utils/timeSlots';
+import { isSpecialistAvailable } from '../../utils/specialistAvailability';
 
 const ASSIGN_KEY = 'schedule_therapist_assignments';
 
@@ -372,6 +373,16 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return toMin(formData.endTime) <= toMin(formData.startTime);
   }, [formData.startTime, formData.endTime]);
 
+
+  // Sprawdź dostępność specjalistów (czy są dostępni wg EmployeeCalendar)
+  const unavailableSpecialists = React.useMemo(() => {
+    if (!formData.startTime || !formData.endTime) return [] as string[];
+    return formData.specialistIds.filter(id =>
+      !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime)
+    );
+  }, [formData.specialistIds, formData.startTime, formData.endTime, effectiveDate]);
+
+  // Sprawdź konflikty spotkań (zajętość)
   const conflictedSpecialists = React.useMemo(() => {
     if (!formData.startTime || !formData.endTime) return [] as string[];
     return formData.specialistIds.filter(id =>
@@ -442,8 +453,18 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                   <option value="">Dodaj specjalistę...</option>
                   {users.filter(u=>u.role==='employee').map(u=> {
                     const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
+                    const unavailable = !!(formData.startTime && formData.endTime && !isSpecialistAvailable(u.id, effectiveDate, formData.startTime, formData.endTime));
                     const already = formData.specialistIds.includes(u.id);
-                    return <option key={u.id} value={u.id} disabled={busy || already}>{u.name}{u.specialization? ' – '+u.specialization: ''}{already ? ' (wybrany)' : busy ? ' (zajęty)' : ''}</option>;
+                    let label = u.name + (u.specialization ? ' – ' + u.specialization : '');
+                    if (already) label += ' (wybrany)';
+                    else if (busy) label += ' (zajęty)';
+                    else if (unavailable) label += ' (niedostępny)';
+                    let style = {};
+                    if (busy) style = { color: '#b45309', backgroundColor: '#fef9c3' };
+                    else if (unavailable) style = { color: '#a3a3a3', backgroundColor: '#f3f4f6' };
+                    else style = { color: '#047857', backgroundColor: '#d1fae5' };
+                    // Blokuj wybór jeśli zajęty lub niedostępny lub już wybrany
+                    return <option key={u.id} value={u.id} disabled={busy || unavailable || already} style={style}>{label}</option>;
                   })}
                 </select>
                 <div className="mt-2">
@@ -454,18 +475,32 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                     {formData.specialistIds.map(id=> {
                       const u = users.find(us=>us.id===id);
                       if(!u) return null;
+                      const unavailable = !!(formData.startTime && formData.endTime && !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime));
                       const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
+                      let bg = 'bg-indigo-50 hover:bg-indigo-100';
+                      let text = 'text-gray-900';
+                      if (unavailable) {
+                        bg = 'bg-gray-100';
+                        text = 'text-gray-400';
+                      } else if (busy) {
+                        bg = 'bg-yellow-50 hover:bg-yellow-100';
+                        text = 'text-yellow-800';
+                      } else {
+                        bg = 'bg-emerald-50 hover:bg-emerald-100';
+                        text = 'text-emerald-800';
+                      }
                       return (
                         <li
                           key={id}
-                          className={`flex items-center justify-between p-2.5 transition-colors ${busy ? 'bg-red-50/60' : 'bg-indigo-50 hover:bg-indigo-100'}`}
+                          className={`flex items-center justify-between p-2.5 transition-colors ${bg}`}
                         >
                           <div className="min-w-0 pr-3">
-                            <div className={`text-sm font-semibold leading-5 truncate ${busy ? 'text-red-700' : 'text-gray-900'}`}>{u.name}</div>
+                            <div className={`text-sm font-semibold leading-5 truncate ${text}`}>{u.name}</div>
                             <div className="text-xs text-gray-600 truncate">{u.specialization || 'Specjalista'}</div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            {busy && <span className="text-[11px] text-red-700 px-2 py-0.5 rounded-full bg-red-50 border border-red-200">zajęty</span>}
+                            {busy && !unavailable && <span className="text-[11px] text-yellow-800 px-2 py-0.5 rounded-full bg-yellow-50 border border-yellow-200">zajęty</span>}
+                            {unavailable && <span className="text-[11px] text-gray-500 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200">niedostępny</span>}
                             <button
                               type="button"
                               onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))}
@@ -726,7 +761,13 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                       <span>Data i godzina rozpoczęcia są w przeszłości. Wybierz termin w przyszłości.</span>
                     </div>
                   )}
-                  {!startEndInvalid && !isCreatePastSelection && conflictedSpecialists.length>0 && (
+                  {!startEndInvalid && !isCreatePastSelection && unavailableSpecialists.length>0 && (
+                    <div className="text-xs text-red-700 flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>{unavailableSpecialists.length === 1 ? 'Wybrany specjalista jest niedostępny w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest niedostępny w tym czasie.'}</span>
+                    </div>
+                  )}
+                  {!startEndInvalid && !isCreatePastSelection && unavailableSpecialists.length===0 && conflictedSpecialists.length>0 && (
                     <div className="text-xs text-amber-700 flex items-center gap-1">
                       <AlertCircle className="h-4 w-4" />
                       <span>{conflictedSpecialists.length === 1 ? 'Wybrany specjalista jest zajęty w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest zajęty w tym czasie.'}</span>
@@ -767,7 +808,20 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                </div>
                <div>
                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Notatki</label>
-                 <textarea value={formData.notes} onChange={e=> setFormData({...formData, notes:e.target.value})} rows={4} placeholder="Cel sesji, materiały, obserwacje..." className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast && !canEditThis} />
+                 <textarea
+                   value={formData.notes}
+                   onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                   onInput={e => {
+                     const ta = e.currentTarget;
+                     ta.style.height = 'auto';
+                     ta.style.height = ta.scrollHeight + 'px';
+                   }}
+                   rows={1}
+                   placeholder="Cel sesji, materiały, obserwacje..."
+                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y disabled:opacity-60 disabled:cursor-not-allowed"
+                   disabled={isEditingPast && !canEditThis}
+                   style={{overflow: 'hidden', minHeight: '40px'}}
+                 />
                </div>
                <div className="bg-gray-50 rounded-lg p-4 text-xs text-gray-500 leading-relaxed">
                  Sesja musi zawierać przynajmniej jednego specjalistę. Podopieczny jest opcjonalny. Konflikty czasowe są sprawdzane automatycznie.
@@ -790,7 +844,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
             </div>
             <div className="ml-auto flex items-center gap-3">
               <button type="button" onClick={handleClose} className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">Anuluj</button>
-              <button type="submit" disabled={isEditingPast && !canEditThis} className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed">{editingMeeting? 'Zapisz zmiany':'Utwórz sesję'}</button>
+              <button type="submit" disabled={isEditingPast && !canEditThis || unavailableSpecialists.length>0} className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed">{editingMeeting? 'Zapisz zmiany':'Utwórz sesję'}</button>
             </div>
           </div>
         </form>

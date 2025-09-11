@@ -155,6 +155,7 @@ function App() {
       users: usersState,
       rooms: roomsState,
       meetings,
+      patients: patientsState,
       currentUser,
       onMeetingCreate: handleMeetingCreate,
       onMeetingUpdate: handleMeetingUpdate,
