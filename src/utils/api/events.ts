@@ -57,9 +57,23 @@ export async function fetchEvent(id: number, token: string): Promise<Event> {
 }
 
 // DELETE /api/events/{id}
+export async function deleteEvent(id: number, token: string): Promise<void> {
+  const response = await fetch(`${API_URL}/api/events/${id}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
 
+  if (!response.ok) {
+    throw new Error('Nie udało się usunąć wydarzenia');
+  }
+}
 
 // PUT /api/events/{id}
+
+
 
 
 // PATCH /api/events/{eventId}/persons
