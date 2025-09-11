@@ -15,3 +15,19 @@ const getAllEventStasuses = async (token: string): Promise<EventStatus[]> => {
     }
     return await res.json();
 }
+
+const getEventStatus = async (id: number, token: string): Promise<EventStatus> => {
+    const res = await fetch(`${API_URL}/api/event-statuses/${id}`, {
+        method: 'GET',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+    });
+    if (!res.ok) {
+        throw new Error('Failed to fetch event status');
+    }
+    return await res.json();
+}
+
+export { getAllEventStasuses, getEventStatus };
