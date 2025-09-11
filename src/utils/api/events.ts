@@ -1,4 +1,4 @@
-import { Event } from '../../types/index';
+import {  Event, CreateEvent} from '../../types/index';
 
 const API_URL = import.meta.env.VITE_API_URL
 
@@ -22,6 +22,22 @@ export async function fetchEvents(token: string): Promise<Event[]> {
 
 // POST /api/events
 
+export async function createEvent(data: CreateEvent, token: string): Promise<Event> {
+  const response = await fetch(`${API_URL}/api/events`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    throw new Error('Nie udało się utworzyć wydarzenia');
+  }
+
+  return await response.json();
+}
 
 // GET /api/events/{id}
 
