@@ -18,6 +18,7 @@ export interface User {
   employmentStart?: string; // YYYY-MM-DD
   employmentEnd?: string;   // YYYY-MM-DD
   notes?: string;
+  token?: string;
 }
 
 export interface Patient {
