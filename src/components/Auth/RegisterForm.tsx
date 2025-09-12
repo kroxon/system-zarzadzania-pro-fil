@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import getAllOccupations from '../../utils/api/occupations';
+import { getAllOccupations } from '../../utils/api/occupations';
 import { Occupation } from '../../types';
 import { registerUser } from '../../utils/api/auth';
 
