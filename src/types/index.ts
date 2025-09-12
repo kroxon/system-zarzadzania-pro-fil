@@ -129,6 +129,15 @@ export interface Occupation{
   name: string;
 }
 
+export interface CreateOccupation {
+  name: string;
+}
+
+export interface UpdateOccupation {
+  name: string;
+}
+
+
 //register
 export interface RegisterRequest{
   name: string;
