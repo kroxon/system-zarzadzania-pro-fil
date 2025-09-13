@@ -93,9 +93,9 @@ export const saveUsers = (users: User[]) => localStorage.setItem(STORAGE_KEYS.US
 export const loadUsers = (): User[] => { const s=localStorage.getItem(STORAGE_KEYS.USERS); return s? JSON.parse(s): []; };
 
 // Patients persistence
-import type { Patient } from '../types';
-export const savePatients = (patients: Patient[]) => localStorage.setItem(STORAGE_KEYS.PATIENTS, JSON.stringify(patients));
-export const loadPatients = (): Patient[] => { const s=localStorage.getItem(STORAGE_KEYS.PATIENTS); return s? JSON.parse(s): []; };
+import type { PatientDemo } from '../types';
+export const savePatients = (patients: PatientDemo[]) => localStorage.setItem(STORAGE_KEYS.PATIENTS, JSON.stringify(patients));
+export const loadPatients = (): PatientDemo[] => { const s=localStorage.getItem(STORAGE_KEYS.PATIENTS); return s? JSON.parse(s): []; };
 
 export const markDemoLoaded = () => localStorage.setItem(STORAGE_KEYS.DEMO_FLAG,'1');
 export const isDemoLoaded = () => !!localStorage.getItem(STORAGE_KEYS.DEMO_FLAG);
