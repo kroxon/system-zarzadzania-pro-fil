@@ -23,7 +23,7 @@ export interface User {
   token?: string;
 }
 
-export interface Patient {
+export interface PatientDemo {
   id: string;
   firstName: string;
   lastName: string;
@@ -180,3 +180,31 @@ export interface EventStatus{
   id: number;
   name: string;
 }
+
+//patients
+export interface Patient{
+  id: number;
+  name: string;
+  surname: string;
+  info?: string | null;
+  birthDate: string;
+}
+
+
+export interface CreatePatient{
+  name: string;
+  surname: string;
+  info? : string | null;
+  birthDate: string;
+}
+
+export interface UpdatePatient{
+  name: string;
+  surname: string;
+  info?: string | null;
+  birthDate: string;
+}
+
+
+
+export type PatientStatus = 'aktywny' | 'nieaktywny';
