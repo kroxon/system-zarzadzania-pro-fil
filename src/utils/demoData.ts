@@ -1,4 +1,4 @@
-import { User, Room, Meeting, Patient } from '../types';
+import { User, Room, Meeting, PatientDemo } from '../types';
 import { saveMeetings, saveRooms, saveUsers, savePatients, markDemoLoaded, clearAllData } from './storage';
 import { saveTherapistAssignments } from './storage';
 
@@ -10,7 +10,7 @@ function seedRandom(seed:number){
 
 const roomPalette = ['#facc15', /* żółta */ '#93c5fd', /* jasnoniebieska */ '#ef4444', /* czerwona */ '#f97316', /* pomarańczowa */ '#10b981' /* zielona */];
 
-export interface DemoDataBundle { users: User[]; rooms: Room[]; patients: Patient[]; meetings: Meeting[]; assignments: Record<string,string[]>; }
+export interface DemoDataBundle { users: User[]; rooms: Room[]; patients: PatientDemo[]; meetings: Meeting[]; assignments: Record<string,string[]>; }
 export interface DemoTask {
   id: string;
   title: string;
@@ -73,7 +73,7 @@ export function generateDemoData(seed:number = Date.now()): DemoDataBundle & { q
   // 20 patients (assign 0+ therapists later)
   const patientFirst = ['Jan','Anna','Piotr','Maria','Tomasz','Katarzyna','Michał','Agnieszka','Karolina','Łukasz','Ola','Bartek','Ewa','Igor','Zuzanna','Marek','Paweł','Julia','Natalia','Kamil'];
   const patientLast = ['Kowalski','Nowak','Zieliński','Wiśniewska','Lewandowski','Szymańska','Dąbrowski','Król','Wójcik','Kaczmarek','Lis','Adamski','Bąk','Gajewski','Maj','Kubiak','Pawlak','Walczak','Krawczyk','Baran'];
-  const patients: Patient[] = Array.from({length:20}).map((_,i)=>({ id:'p'+(i+1), firstName:patientFirst[i], lastName:patientLast[i], status: rand()>0.15? 'aktywny':'nieaktywny', birthDate: `${2008 + (i%6)}-${String(1+ (i%12)).padStart(2,'0')}-${String(1+(i%28)).padStart(2,'0')}` }));
+  const patients: PatientDemo[] = Array.from({length:20}).map((_,i)=>({ id:'p'+(i+1), firstName:patientFirst[i], lastName:patientLast[i], status: rand()>0.15? 'aktywny':'nieaktywny', birthDate: `${2008 + (i%6)}-${String(1+ (i%12)).padStart(2,'0')}-${String(1+(i%28)).padStart(2,'0')}` }));
   // Assign therapists to patients: 25% none, otherwise 1-3 random distinct specialists
   const assignments: Record<string,string[]> = {};
   patients.forEach(p=>{
