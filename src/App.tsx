@@ -11,7 +11,7 @@ import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
 import QuizzesPage from './components/Quizes/QuizList';
 import TasksPage from './components/Tasks/TasksPage';
-import { User, Meeting, Room } from './types';
+import { User, Meeting, Room, Patient } from './types';
 import Settings from './components/Views/Settings';
 import { 
   saveMeetings, 
@@ -181,7 +181,7 @@ function App() {
       case 'employee-calendar':
         return <EmployeeCalendar {...commonProps} />;
       case 'room-calendar':
-        return <RoomCalendar {...commonProps} />;
+        return <RoomCalendar {...commonProps} patients={patientsState as any as Patient[]} />;
       case 'rooms-manage':
         return <RoomsManage rooms={roomsState} onRoomsChange={setRoomsState} userRole={currentUser!.role} />;
       case 'employees-manage':
