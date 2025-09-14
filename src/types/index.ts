@@ -1,4 +1,3 @@
-import { isInternalThread } from "worker_threads";
 
 // Employee zgodny z API
 export interface Employee {
