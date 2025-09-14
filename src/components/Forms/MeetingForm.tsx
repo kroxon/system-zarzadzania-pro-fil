@@ -1,3 +1,4 @@
+// ...existing code...
 import React, { useState, useEffect, useRef } from 'react';
 import { AlertCircle, Trash2, Calendar, Clock } from 'lucide-react';
 import { Meeting, User, Room, Patient } from '../../types';
@@ -128,7 +129,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
 
   const filteredPatients = React.useMemo(()=> {
     if(patientAssignmentFilter === 'przypisani') {
-      return effectivePatients.filter(p => assignedPatientIds.has(p.id));
+      return effectivePatients.filter(p => assignedPatientIds.has(String(p.id)));
     }
     return effectivePatients;
   }, [effectivePatients, patientAssignmentFilter, assignedPatientIds]);
@@ -203,7 +204,12 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     const primaryPatientId = formData.patientIds[0];
     // Use effectivePatients (prop patients or loaded from storage) to resolve names
     const patientNamesList = formData.patientIds.map(id => {
-      const p = effectivePatients.find(pp=> pp.id===id); return p ? `${p.firstName} ${p.lastName}` : id;
+  const p = effectivePatients.find(pp=> pp.id===id);
+  if (!p) return id;
+  // Support both PatientDemo and Patient
+  const firstName = 'firstName' in p ? p.firstName : p.name;
+  const lastName = 'lastName' in p ? p.lastName : p.surname;
+  return `${firstName} ${lastName}`;
     });
     onSubmit({
       specialistId: primarySpec,
@@ -554,7 +560,9 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                     )}
                     {formData.patientIds.map(pid=>{
                       const p = effectivePatients.find(pp=>pp.id===pid); if(!p) return null;
-                      const fullName = `${p.firstName} ${p.lastName}`;
+                      const firstName = 'firstName' in p ? p.firstName : p.name;
+                      const lastName = 'lastName' in p ? p.lastName : p.surname;
+                      const fullName = `${firstName} ${lastName}`;
                       return (
                         <li
                           key={pid}
@@ -587,8 +595,10 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 >
                   <option value="">Dodaj podopiecznego...</option>
                   {filteredPatients.map(p=> {
-                    const selected = formData.patientIds.includes(p.id);
-                    return <option key={p.id} value={p.id} disabled={selected}>{p.firstName} {p.lastName}{selected ? ' (dodany)':''}</option>;
+                    const selected = formData.patientIds.includes(String(p.id));
+                    const firstName = 'firstName' in p ? p.firstName : p.name;
+                    const lastName = 'lastName' in p ? p.lastName : p.surname;
+                    return <option key={p.id} value={p.id} disabled={selected}>{firstName} {lastName}{selected ? ' (dodany)':''}</option>;
                   })}
                   {filteredPatients.length===0 && <option value="" disabled>{patientAssignmentFilter==='przypisani'? (formData.specialistIds.length? 'Brak przypisanych':'Najpierw wybierz specjalistę') : 'Brak wyników'}</option>}
                 </select>
