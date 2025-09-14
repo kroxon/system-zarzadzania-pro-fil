@@ -451,7 +451,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                 if (m.patientId) {
                   const patient = patients.find(p => p.id === m.patientId);
                   if (patient) {
-                    patientName = `${patient.firstName} ${patient.lastName}`;
+                    patientName = `${patient.name} ${patient.surname}`;
                   }
                 }
                 const tooltipText = `${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}${patientName ? `\nPacjent: ${patientName}` : ''}`;
@@ -713,7 +713,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                     ? getRoomStyle(room)
                     : { backgroundColor: '#f3f4f6', borderColor: '#d1d5db', color: '#9ca3af', filter: 'grayscale(0.7) brightness(1.08)' };
                   const moveGhost = (
-                    <div key={m.id+"_moveGhost"} className={`absolute left-1 right-1 rounded-md ${ghostPaddingClass} ${ghostMarginClass} text-[11px] shadow-lg cursor-grabbing overflow-hidden flex items-center justify-center border ring-2 ring-blue-400 !border-2 !border-blue-400`} style={{top:ghostTop, height:ghostHeight, transform:`translateY(${movePixelOffset}px)`, transition:'none', zIndex:65, ...colorStyle}}>
+                    <div key={m.id+"_moveGhost"} className={`absolute left-1 right-1 rounded-md ${ghostPaddingClass} ${ghostMarginClass} text-[11px] shadow-lg cursor-grabbing overflow-hidden flex items-center justify-center border-2 !border-blue-400 ring-2 ring-blue-400`} style={{top:ghostTop, height:ghostHeight, transform:`translateY(${movePixelOffset}px)`, transition:'none', zIndex:65, ...colorStyle}}>
                       {ghostContent}
                     </div>
                   );
@@ -899,7 +899,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                       </div>
                       <div className="flex-1 px-2 pb-2">
                         <div className="flex flex-row flex-wrap gap-1 items-start content-start justify-center">
-                          {rooms.slice(0,5).map((room, idx) => {
+                          {rooms.slice(0,5).map((room) => {
                             const rc = getRoomStyle(room);
                             const roomMeetings = dayMeetings.filter(m => m.roomId === room.id);
                             const tooltipTxt = `${room.name}\nSpotkań: ${roomMeetings.length}`;
@@ -917,7 +917,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                           })}
                         </div>
                         <div className="flex flex-row flex-wrap gap-1 items-center justify-center mt-1 text-[11px] text-gray-600">
-                          {rooms.slice(0,5).map((room, idx) => {
+                          {rooms.slice(0,5).map((room) => {
                             const roomMeetings = dayMeetings.filter(m => m.roomId === room.id);
                             return (
                               <span key={room.id+"_count"} className="w-5 text-center">{roomMeetings.length}</span>
