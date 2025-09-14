@@ -207,3 +207,18 @@ export interface UpdatePatient{
 
 
 export type PatientStatus = 'aktywny' | 'nieaktywny';
+
+//rooms
+
+export interface RoomAPI {
+  id: number;
+  name: string;
+}
+
+export interface CreateRoom {
+  name: string;
+}
+
+export interface UpdateRoom {
+  name: string;
+}
