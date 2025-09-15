@@ -3,7 +3,7 @@ import { Patient } from '../../types';
 import { Search } from 'lucide-react';
 import { loadMeetings, loadUsers, loadRooms, loadPatients, savePatients, saveTherapistAssignments } from '../../utils/storage';
 
-interface Visit { id: string; patientId: string; date: string; therapist: string; room: string; status: 'zrealizowana' | 'odwołana' | 'zaplanowana' | 'nieobecny'; }
+interface Visit { id: string; patientId: string; date: string; therapists: string[]; room: string; status: 'zrealizowana' | 'odwołana' | 'zaplanowana' | 'nieobecny'; }
 
 const ASSIGN_KEY = 'schedule_therapist_assignments';
 
@@ -47,6 +47,36 @@ export default function Patients(){
   const [statusFilter, setStatusFilter] = useState<'aktywny'|'nieaktywny'|'wszyscy'>('aktywny');
   const [assignmentFilter, setAssignmentFilter] = useState<'wszyscy'|'przypisani'>('wszyscy');
 
+  // Date picker state and helpers (modern dialog)
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [dpMonth, setDpMonth] = useState<Date>(new Date());
+  const monthNames = ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
+  const daysOfWeek = ['Pn','Wt','Śr','Cz','Pt','So','Nd'];
+  const formatDateYMD = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  };
+  const getMonthGrid = (month: Date) => {
+    const first = new Date(month.getFullYear(), month.getMonth(), 1);
+    const offset = (first.getDay() + 6) % 7; // Monday-first
+    const start = new Date(first);
+    start.setDate(first.getDate() - offset);
+    return Array.from({length: 42}, (_, i) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      return { d, current: d.getMonth() === month.getMonth() };
+    });
+  };
+  const openDatePicker = () => {
+    const base = editForm.birthDate ? new Date(editForm.birthDate) : new Date();
+    const m = new Date(base.getFullYear(), base.getMonth(), 1);
+    setDpMonth(m);
+    setShowDatePicker(true);
+  };
+  const closeDatePicker = () => setShowDatePicker(false);
+
   const visits: Visit[] = useMemo(()=>{
     const userMap = new Map(users.map(u=> [u.id, u.name]));
     const roomMap = new Map(rooms.map(r=> [r.id, r.name]));
@@ -59,7 +89,9 @@ export default function Patients(){
         else if(m.status === 'absent') status = 'nieobecny';
         else if(m.status === 'in-progress') status = 'zaplanowana';
         else status = m.date > todayStr ? 'zaplanowana' : 'zrealizowana';
-        return { id:m.id, patientId:m.patientId!, date:m.date, therapist: userMap.get(m.specialistId) || m.specialistId, room: roomMap.get(m.roomId) || m.roomId, status };
+        const therapistIds = (m.specialistIds && m.specialistIds.length ? m.specialistIds : (m.specialistId ? [m.specialistId] : []));
+        const therapists = therapistIds.map(id => userMap.get(id) || id).filter(Boolean);
+        return { id:m.id, patientId:m.patientId!, date:m.date, therapists, room: roomMap.get(m.roomId) || m.roomId, status };
       })
       .sort((a,b)=> a.date.localeCompare(b.date));
   },[meetings, users, rooms]);
@@ -130,7 +162,7 @@ export default function Patients(){
 
   const statusBadge = (status?: string) => {
     const isActive = status === 'aktywny';
-    return <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] leading-none ${isActive? 'text-green-700 bg-green-50 border-green-200':'text-gray-500 bg-gray-100 border-gray-300'}`}>{status || '—'}</span>;
+    return <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[12px] leading-none ${isActive? 'text-green-700 bg-green-50 border-green-200':'text-gray-500 bg-gray-100 border-gray-300'}`}>{status || '—'}</span>;
   };
 
   // Czytelna etykieta statusu do panelu szczegółów (bez pastylki)
@@ -145,19 +177,20 @@ export default function Patients(){
     );
   };
 
-  // Helper do inicjałów – używany przy wyświetlaniu terapeutów
-  const getInitials = (name: string) => {
-    if (!name) return '?';
-    const parts = name.trim().split(/\s+/).slice(0, 2);
-    return parts.map(p => p[0]?.toUpperCase() || '').join('');
+  // Czytelny status wizyty (bez pastylki) z kropką po prawej
+  const visitStatusLabel = (status: Visit['status']) => {
+    const color = status === 'zrealizowana' ? 'green' : status === 'odwołana' ? 'red' : status === 'nieobecny' ? 'amber' : 'blue';
+    const textColor = color === 'green' ? 'text-green-700' : color === 'red' ? 'text-red-600' : color === 'amber' ? 'text-amber-700' : 'text-blue-700';
+    return (
+      <span className={`font-semibold capitalize ${textColor}`}>{status}</span>
+    );
   };
 
-  const calcAge = (birthDate?: string) => {
-    if(!birthDate) return '—'; const bd = new Date(birthDate); if(isNaN(bd.getTime())) return '—';
-    const now = new Date(); let age = now.getFullYear()-bd.getFullYear(); const m = now.getMonth()-bd.getMonth(); if(m<0 || (m===0 && now.getDate()<bd.getDate())) age--; return age + ' lat';
-  };
+  const selectedVisits = useMemo(()=> {
+    if(!selected) return [] as Visit[];
+    return [...visits.filter(v=> v.patientId===selected.id)].sort((a,b)=> b.date.localeCompare(a.date));
+  }, [selected, visits]);
 
-  const selectedVisits = selected ? visits.filter(v=> v.patientId===selected.id) : [];
   const visitCounts = useMemo(()=> ({
     total: selectedVisits.length,
     zrealizowana: selectedVisits.filter(v=> v.status==='zrealizowana').length,
@@ -264,9 +297,17 @@ export default function Patients(){
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
               {filtered.map(p => (
-                <tr key={p.id} onClick={()=> setSelected(p)} className={`cursor-pointer hover:bg-blue-50 ${selected?.id===p.id? 'bg-blue-50/70':''}`}>
-                  <td className="px-3 py-1.5 text-[13px] text-gray-900 whitespace-nowrap">{p.firstName} {p.lastName}</td>
-                  <td className="px-3 py-1.5 text-[11px]">{statusBadge(p.status)}</td>
+                <tr
+                  key={p.id}
+                  onClick={()=> setSelected(p)}
+                  className={`cursor-pointer hover:bg-blue-50 transition-colors ${selected?.id===p.id? 'bg-blue-50/80':''}`}
+                >
+                  <td className="px-3 py-2.5">
+                    <div className="min-w-0">
+                      <span className={`block truncate text-[16px] leading-tight ${selected?.id===p.id ? 'font-semibold text-blue-900' : 'text-gray-900'}`}>{p.firstName} {p.lastName}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 text-[13px] whitespace-nowrap">{statusBadge(p.status)}</td>
                 </tr>
               ))}
               {filtered.length===0 && <tr><td colSpan={2} className="px-3 py-4 text-center text-sm text-gray-500">Brak podopiecznych</td></tr>}
@@ -303,15 +344,102 @@ export default function Patients(){
                     <div className="space-y-2 text-sm text-gray-600 col-span-1">
                       <p><strong className="text-[0.95rem] font-semibold text-gray-800">Data urodzenia:</strong>{' '}
                         {editMode ? (
-                          <input type="date" value={editForm.birthDate} onChange={e=> setEditForm(f=> ({...f, birthDate:e.target.value}))} className="ml-2 px-2 py-1 text-xs border rounded" />
-                        ) : <><span className="ml-1">{selected.birthDate || '—'}</span> <span className="ml-2 text-gray-500">({calcAge(selected.birthDate)})</span></>}
+                          // Birth date picker trigger + dialog
+                          <>
+                            <button
+                              type="button"
+                              onClick={openDatePicker}
+                              className="ml-2 inline-flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg border border-gray-300 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            >
+                              <svg className="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                              <span>{editForm.birthDate || 'Wybierz datę'}</span>
+                            </button>
+                            {showDatePicker && (
+                              <div
+                                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
+                                onClick={closeDatePicker}
+                                role="dialog"
+                                aria-modal="true"
+                                aria-label="Wybierz datę urodzenia"
+                              >
+                                <div
+                                  className="w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-gray-100 overflow-hidden"
+                                  onClick={e=> e.stopPropagation()}
+                                >
+                                  <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-50 to-blue-50 border-b border-gray-200">
+                                    <button
+                                      type="button"
+                                      onClick={()=> setDpMonth(m => new Date(m.getFullYear(), m.getMonth()-1, 1))}
+                                      className="p-2 rounded-lg text-gray-600 hover:bg-white/70"
+                                      aria-label="Poprzedni miesiąc"
+                                    >
+                                      <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M12.707 15.707a1 1 0 01-1.414 0l-5-5a1 1 0 010-1.414l5-5a1 1 0 111.414 1.414L8.414 10l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd"/></svg>
+                                    </button>
+                                    <div className="text-sm font-semibold text-gray-800">
+                                      {monthNames[dpMonth.getMonth()]} {dpMonth.getFullYear()}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={()=> setDpMonth(m => new Date(m.getFullYear(), m.getMonth()+1, 1))}
+                                      className="p-2 rounded-lg text-gray-600 hover:bg-white/70"
+                                      aria-label="Następny miesiąc"
+                                    >
+                                      <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M7.293 4.293a1 1 0 011.414 0l5 5a1 1 0 010 1.414l-5 5a1 1 0 11-1.414-1.414L11.586 10 7.293 5.707a1 1 0 010-1.414z" clipRule="evenodd"/></svg>
+                                    </button>
+                                  </div>
+                                  <div className="p-4">
+                                    <div className="grid grid-cols-7 gap-1 text-[11px] text-gray-500 mb-1">
+                                      {daysOfWeek.map(d=> (<div key={d} className="text-center py-1">{d}</div>))}
+                                    </div>
+                                    <div className="grid grid-cols-7 gap-1">
+                                      {getMonthGrid(dpMonth).map(({d, current}, idx)=>{
+                                        const selected = !!editForm.birthDate && formatDateYMD(d) === editForm.birthDate;
+                                        return (
+                                          <button
+                                            key={idx}
+                                            type="button"
+                                            onClick={()=> { setEditForm(f=> ({...f, birthDate: formatDateYMD(d)})); closeDatePicker(); }}
+                                            className={
+                                              `h-9 rounded-lg text-sm `+
+                                              (selected ? 'bg-blue-600 text-white font-semibold shadow' : current ? 'text-gray-800 hover:bg-blue-50' : 'text-gray-400 hover:bg-gray-50')
+                                            }
+                                          >
+                                            {d.getDate()}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                  <div className="px-4 py-3 border-t border-gray-200 flex justify-end gap-2 bg-gray-50">
+                                    <button type="button" onClick={closeDatePicker} className="px-3 py-1.5 text-sm font-medium rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100">Anuluj</button>
+                                    {editForm.birthDate && (
+                                      <button type="button" onClick={()=> { setEditForm(f=> ({...f, birthDate: ''})); closeDatePicker(); }} className="px-3 py-1.5 text-sm font-medium rounded-lg bg-red-50 border border-red-200 text-red-700 hover:bg-red-100">Wyczyść</button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : <>
+                              <span className="ml-1">{selected.birthDate || '—'}</span>
+                              <span className="ml-2 text-gray-500">{(() => { if(!selected.birthDate) return '(—)'; const bd = new Date(selected.birthDate); if(isNaN(bd.getTime())) return '(—)'; const now = new Date(); let age = now.getFullYear() - bd.getFullYear(); const m = now.getMonth() - bd.getMonth(); if(m < 0 || (m === 0 && now.getDate() < bd.getDate())) age--; return `(${age} lat)`; })()}</span>
+                            </>}
                       </p>
                       <p className="flex items-center"><strong className="mr-1 text-[0.95rem] font-semibold text-gray-800">Status:</strong>{' '}
                         {editMode ? (
-                          <select value={editForm.status} onChange={e=> setEditForm(f=> ({...f, status:e.target.value}))} className="px-2 py-1 text-xs border rounded">
-                            <option value="aktywny">aktywny</option>
-                            <option value="nieaktywny">nieaktywny</option>
-                          </select>
+                          <div className="relative inline-block">
+                            <select
+                              value={editForm.status}
+                              onChange={e=> setEditForm(f=> ({...f, status:e.target.value}))}
+                              className="appearance-none px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white pr-8 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            >
+                              <option value="aktywny">aktywny</option>
+                              <option value="nieaktywny">nieaktywny</option>
+                            </select>
+                            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
+                              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.024l3.71-3.793a.75.75 0 111.08 1.04l-4.24 4.336a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
+                            </span>
+                          </div>
                         ) : statusLabel(selected.status)}
                       </p>
                       <div>
@@ -326,7 +454,7 @@ export default function Patients(){
                                   const name = userIdToName[tId] || tId;
                                   return (
                                     <li key={tId} className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2">
-                                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white text-[11px] font-semibold">{getInitials(name)}</span>
+                                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white text-[11px] font-semibold">{(name? name.trim().split(/\s+/).slice(0,2).map(p=>p[0]?.toUpperCase()||'').join(''):'?')}</span>
                                       <span className="text-sm font-medium text-blue-900">{name}</span>
                                     </li>
                                   );
@@ -342,7 +470,7 @@ export default function Patients(){
                                 const name = userIdToName[tId] || tId;
                                 return (
                                   <span key={tId} className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm text-blue-900">
-                                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-semibold">{getInitials(name)}</span>
+                                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-semibold">{(name? name.trim().split(/\s+/).slice(0,2).map(p=>p[0]?.toUpperCase()||'').join(''):'?')}</span>
                                     <span className="font-medium">{name}</span>
                                     <button onClick={()=> removeTherapist(tId)} className="ml-1 rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 h-5 w-5 inline-flex items-center justify-center" aria-label={`Usuń terapeutę ${name}`}>×</button>
                                   </span>
@@ -351,10 +479,18 @@ export default function Patients(){
                               {editForm.therapists.length===0 && <span className="text-xs text-gray-400">Brak terapeutów</span>}
                             </div>
                             <div className="flex items-center gap-2">
-                              <select className="px-2 py-1 text-xs border rounded" onChange={e=> { addTherapist(e.target.value); e.target.selectedIndex=0; }}>
-                                <option value="">Dodaj terapeutę...</option>
-                                {users.filter(u=> u.role==='employee').filter(u=> !editForm.therapists.includes(u.id)).map(u=> <option key={u.id} value={u.id}>{u.name}</option>)}
-                              </select>
+                              <div className="relative inline-block">
+                                <select
+                                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white pr-8 appearance-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                  onChange={e=> { addTherapist(e.target.value); e.target.selectedIndex=0; }}
+                                >
+                                  <option value="">Dodaj terapeutę...</option>
+                                  {users.filter(u=> u.role==='employee').filter(u=> !editForm.therapists.includes(u.id)).map(u=> <option key={u.id} value={u.id}>{u.name}</option>)}
+                                </select>
+                                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
+                                  <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.024l3.71-3.793a.75.75 0 111.08 1.04l-4.24 4.336a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
+                                </span>
+                              </div>
                             </div>
                           </div>
                         )}
@@ -412,7 +548,13 @@ export default function Patients(){
                               return (
                                 <li key={v.id} className="border border-gray-200 rounded-lg bg-white overflow-hidden">
                                   <button onClick={toggle} className="w-full flex items-center justify-between px-3 py-2 text-left text-sm font-medium text-gray-700 hover:bg-gray-50">
-                                    <span className="flex items-center gap-2"><span className="text-gray-500">{v.date}</span><span className="text-gray-400">•</span><span>{v.therapist}</span><span className="text-gray-400">•</span><span className="capitalize">{v.status}</span></span>
+                                    <span className="flex items-center gap-3">
+                                      <span className="text-gray-600">{v.date}</span>
+                                      {v.therapists.length>0 && (
+                                        <span className="text-gray-700 truncate">{v.therapists.join(', ')}</span>
+                                      )}
+                                      {visitStatusLabel(v.status)}
+                                    </span>
                                     <span className={`ml-2 inline-flex h-5 w-5 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-500 shadow-sm transition-transform duration-200 ${open? 'rotate-90':''}`}>
                                       <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M6.293 7.293a1 1 0 011.414 0L11 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
                                     </span>
@@ -447,24 +589,24 @@ export default function Patients(){
             <div className="border-t border-gray-200 pt-4 mt-6">
               <h3 className="text-sm font-semibold text-gray-800 mb-3">Historia wizyt</h3>
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
+                <table className="w-full text-sm">
                   <thead className="bg-gray-50 border border-gray-200">
                     <tr className="text-gray-600">
-                      <th className="px-3 py-2 text-left font-medium">Data</th>
-                      <th className="px-3 py-2 text-left font-medium">Terapeuta</th>
-                      <th className="px-3 py-2 text-left font-medium">Sala</th>
-                      <th className="px-3 py-2 text-left font-medium">Status</th>
+                      <th className="px-3 py-2 text-left font-medium text-[0.95rem]">Data</th>
+                      <th className="px-3 py-2 text-left font-medium text-[0.95rem]">Specjaliści</th>
+                      <th className="px-3 py-2 text-left font-medium text-[0.95rem]">Sala</th>
+                      <th className="px-3 py-2 text-left font-medium text-[0.95rem]">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 border border-gray-200 border-t-0">
                     {selectedVisits.map(v=> (
                       <tr key={v.id} className="hover:bg-gray-50">
                         <td className="px-3 py-2 whitespace-nowrap">{v.date}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">{v.therapist}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">{v.room}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          <span className={`inline-flex px-2 py-0.5 rounded-full border ${v.status==='zrealizowana' ? 'bg-green-50 text-green-700 border-green-200' : v.status==='odwołana' ? 'bg-red-50 text-red-600 border-red-200' : v.status==='nieobecny' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>{v.status}</span>
+                        <td className="px-3 py-2">
+                          <div className="text-sm text-gray-800 whitespace-normal leading-snug">{v.therapists.join(', ') || '—'}</div>
                         </td>
+                        <td className="px-3 py-2 whitespace-nowrap">{v.room}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{visitStatusLabel(v.status)}</td>
                       </tr>
                     ))}
                     {selectedVisits.length===0 && <tr><td colSpan={4} className="px-3 py-4 text-center text-gray-500">Brak wizyt</td></tr>}
