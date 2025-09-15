@@ -1,14 +1,31 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Patient } from '../../types';
+// Using demo UI shape for patients for now. When backend is ready, map API <-> UI.
+import type { PatientDemo } from '../../types';
 import { Search } from 'lucide-react';
 import { loadMeetings, loadUsers, loadRooms, loadPatients, savePatients, saveTherapistAssignments } from '../../utils/storage';
+
+/*
+Backend integration (commented plan):
+- API Patient shape (see types.Patient): { id: number; name: string; surname: string; birthDate: string; info?: string | null }
+- UI shape used here: PatientDemo { id: string; firstName; lastName; birthDate?; status?; notes?; therapists? }
+- Mappers:
+  // function mapPatientApiToUi(p: Patient): PatientDemo {
+  //   return { id: String(p.id), firstName: p.name, lastName: p.surname, birthDate: p.birthDate || '' };
+  // }
+  // function mapPatientUiToApi(u: PatientDemo): Partial<Patient> {
+  //   return { id: Number(u.id), name: u.firstName, surname: u.lastName, birthDate: u.birthDate || '' };
+  // }
+- To switch to backend later:
+  - Replace loadPatients/savePatients calls with API fetch/post using these mappers.
+  - Keep UI types unchanged to avoid refactors in the view.
+*/
 
 interface Visit { id: string; patientId: string; date: string; therapists: string[]; room: string; status: 'zrealizowana' | 'odwołana' | 'zaplanowana' | 'nieobecny'; }
 
 const ASSIGN_KEY = 'schedule_therapist_assignments';
 
 export default function Patients(){
-  const [patients, setPatients] = useState<Patient[]>(() => loadPatients());
+  const [patients, setPatients] = useState<PatientDemo[]>(() => loadPatients());
   const [meetings, setMeetings] = useState(() => loadMeetings());
   const [users, setUsers] = useState(() => loadUsers());
   const [rooms, setRooms] = useState(() => loadRooms());
@@ -43,7 +60,7 @@ export default function Patients(){
   const [activeTab, setActiveTab] = useState<'info'|'sessions'>('info');
 
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState<Patient | null>(null);
+  const [selected, setSelected] = useState<PatientDemo | null>(null);
   const [statusFilter, setStatusFilter] = useState<'aktywny'|'nieaktywny'|'wszyscy'>('aktywny');
   const [assignmentFilter, setAssignmentFilter] = useState<'wszyscy'|'przypisani'>('wszyscy');
 
@@ -237,7 +254,7 @@ export default function Patients(){
   const openAdd = () => { setNewPatientForm(emptyNew); setNewErrors([]); setShowAddModal(true); };
   const cancelAdd = () => { if(creating) return; setShowAddModal(false); };
 
-  const submitAdd = (e:React.FormEvent) => { e.preventDefault(); if(!validateNew()) return; setCreating(true); const id = 'p'+Date.now().toString(36); const patient: Patient = { id, firstName:newPatientForm.firstName.trim(), lastName:newPatientForm.lastName.trim(), birthDate:newPatientForm.birthDate || undefined, status: newPatientForm.status as any, therapists: newPatientForm.therapists }; setPatients(prev => [...prev, patient]); // persist via effect
+  const submitAdd = (e:React.FormEvent) => { e.preventDefault(); if(!validateNew()) return; setCreating(true); const id = 'p'+Date.now().toString(36); const patient: PatientDemo = { id, firstName:newPatientForm.firstName.trim(), lastName:newPatientForm.lastName.trim(), birthDate:newPatientForm.birthDate || undefined, status: newPatientForm.status as any, therapists: newPatientForm.therapists, notes: newPatientForm.notes?.trim()||undefined }; setPatients(prev => [...prev, patient]); // persist via effect
     if(newPatientForm.therapists.length){ setTherapistAssignments(prev => ({ ...prev, [id]: [...newPatientForm.therapists] })); }
     if(newPatientForm.notes.trim()){ setPatientNotes(prev => ({ ...prev, [id]: newPatientForm.notes.trim() })); }
     setCreating(false); setShowAddModal(false); setSelected(patient); };
