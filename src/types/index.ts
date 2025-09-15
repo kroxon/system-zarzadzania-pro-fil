@@ -222,3 +222,25 @@ export interface CreateRoom {
 export interface UpdateRoom {
   name: string;
 }
+
+
+//workhours
+
+export interface WorkHours{
+  id: number;
+  start: string;
+  end: string;
+  employeeId: number;
+}
+
+export interface CreateWorkHours{
+  start: string;
+  end: string;
+  employeeId: number;
+}
+
+export interface UpdateWorkHours{
+  start: string;
+  end: string;
+  employeeId: number;
+}
