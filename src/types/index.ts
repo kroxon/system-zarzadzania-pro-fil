@@ -6,10 +6,19 @@ export interface Employee {
   surname: string;
   email: string;
   occupationId: number;
-  occupationName: string;
-  info?: string;
-  roles: string[]; // np. ['Admin', 'Employee']
+  occupationName: string; //np. terapeuta 
+  info?: string | null;
+  roles: string[]; // admin, contact, employee
 }
+
+export interface UpdateEmployee {
+  name: string;
+  surname: string;
+  info?: string | null;
+  email: string;
+  occupationId: number;
+}
+
 export interface User {
   id: string;
   name: string;
