@@ -3,7 +3,7 @@ import { Patient } from '../../types';
 import { Search } from 'lucide-react';
 import { loadMeetings, loadUsers, loadRooms, loadPatients, savePatients, saveTherapistAssignments } from '../../utils/storage';
 
-interface Visit { id: string; patientId: string; date: string; therapist: string; room: string; status: 'zrealizowana' | 'odwołana' | 'zaplanowana'; }
+interface Visit { id: string; patientId: string; date: string; therapists: string[]; room: string; status: 'zrealizowana' | 'odwołana' | 'zaplanowana' | 'nieobecny'; }
 
 const ASSIGN_KEY = 'schedule_therapist_assignments';
 
@@ -47,6 +47,36 @@ export default function Patients(){
   const [statusFilter, setStatusFilter] = useState<'aktywny'|'nieaktywny'|'wszyscy'>('aktywny');
   const [assignmentFilter, setAssignmentFilter] = useState<'wszyscy'|'przypisani'>('wszyscy');
 
+  // Date picker state and helpers (modern dialog)
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [dpMonth, setDpMonth] = useState<Date>(new Date());
+  const monthNames = ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
+  const daysOfWeek = ['Pn','Wt','Śr','Cz','Pt','So','Nd'];
+  const formatDateYMD = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  };
+  const getMonthGrid = (month: Date) => {
+    const first = new Date(month.getFullYear(), month.getMonth(), 1);
+    const offset = (first.getDay() + 6) % 7; // Monday-first
+    const start = new Date(first);
+    start.setDate(first.getDate() - offset);
+    return Array.from({length: 42}, (_, i) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      return { d, current: d.getMonth() === month.getMonth() };
+    });
+  };
+  const openDatePicker = () => {
+    const base = editForm.birthDate ? new Date(editForm.birthDate) : new Date();
+    const m = new Date(base.getFullYear(), base.getMonth(), 1);
+    setDpMonth(m);
+    setShowDatePicker(true);
+  };
+  const closeDatePicker = () => setShowDatePicker(false);
+
   const visits: Visit[] = useMemo(()=>{
     const userMap = new Map(users.map(u=> [u.id, u.name]));
     const roomMap = new Map(rooms.map(r=> [r.id, r.name]));
@@ -56,9 +86,12 @@ export default function Patients(){
       .map(m=>{
         let status: Visit['status'];
         if(m.status === 'cancelled') status = 'odwołana';
+        else if(m.status === 'absent') status = 'nieobecny';
         else if(m.status === 'in-progress') status = 'zaplanowana';
         else status = m.date > todayStr ? 'zaplanowana' : 'zrealizowana';
-        return { id:m.id, patientId:m.patientId!, date:m.date, therapist: userMap.get(m.specialistId) || m.specialistId, room: roomMap.get(m.roomId) || m.roomId, status };
+        const therapistIds = (m.specialistIds && m.specialistIds.length ? m.specialistIds : (m.specialistId ? [m.specialistId] : []));
+        const therapists = therapistIds.map(id => userMap.get(id) || id).filter(Boolean);
+        return { id:m.id, patientId:m.patientId!, date:m.date, therapists, room: roomMap.get(m.roomId) || m.roomId, status };
       })
       .sort((a,b)=> a.date.localeCompare(b.date));
   },[meetings, users, rooms]);
@@ -129,20 +162,41 @@ export default function Patients(){
 
   const statusBadge = (status?: string) => {
     const isActive = status === 'aktywny';
-    return <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] leading-none ${isActive? 'text-green-700 bg-green-50 border-green-200':'text-gray-500 bg-gray-100 border-gray-300'}`}>{status || '—'}</span>;
+    return <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[12px] leading-none ${isActive? 'text-green-700 bg-green-50 border-green-200':'text-gray-500 bg-gray-100 border-gray-300'}`}>{status || '—'}</span>;
   };
 
-  const calcAge = (birthDate?: string) => {
-    if(!birthDate) return '—'; const bd = new Date(birthDate); if(isNaN(bd.getTime())) return '—';
-    const now = new Date(); let age = now.getFullYear()-bd.getFullYear(); const m = now.getMonth()-bd.getMonth(); if(m<0 || (m===0 && now.getDate()<bd.getDate())) age--; return age + ' lat';
+  // Czytelna etykieta statusu do panelu szczegółów (bez pastylki)
+  const statusLabel = (status?: string) => {
+    const isActive = status === 'aktywny';
+    const text = isActive ? 'aktywny' : (status || '—');
+    return (
+      <span className={`inline-flex items-center gap-2 font-semibold ${isActive ? 'text-green-700' : 'text-gray-600'}`}>
+        <span className="tracking-wide text-sm md:text-base">{text}</span>
+        <span className={`h-2.5 w-2.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-400'}`} aria-hidden="true" />
+      </span>
+    );
   };
 
-  const selectedVisits = selected ? visits.filter(v=> v.patientId===selected.id) : [];
+  // Czytelny status wizyty (bez pastylki) z kropką po prawej
+  const visitStatusLabel = (status: Visit['status']) => {
+    const color = status === 'zrealizowana' ? 'green' : status === 'odwołana' ? 'red' : status === 'nieobecny' ? 'amber' : 'blue';
+    const textColor = color === 'green' ? 'text-green-700' : color === 'red' ? 'text-red-600' : color === 'amber' ? 'text-amber-700' : 'text-blue-700';
+    return (
+      <span className={`font-semibold capitalize ${textColor}`}>{status}</span>
+    );
+  };
+
+  const selectedVisits = useMemo(()=> {
+    if(!selected) return [] as Visit[];
+    return [...visits.filter(v=> v.patientId===selected.id)].sort((a,b)=> b.date.localeCompare(a.date));
+  }, [selected, visits]);
+
   const visitCounts = useMemo(()=> ({
     total: selectedVisits.length,
     zrealizowana: selectedVisits.filter(v=> v.status==='zrealizowana').length,
     odwolana: selectedVisits.filter(v=> v.status==='odwołana').length,
-    zaplanowana: selectedVisits.filter(v=> v.status==='zaplanowana').length
+    zaplanowana: selectedVisits.filter(v=> v.status==='zaplanowana').length,
+    nieobecny: selectedVisits.filter(v=> v.status==='nieobecny').length
   }),[selectedVisits]);
 
   const startEdit = () => { if(selected) setEditMode(true); };
@@ -243,9 +297,17 @@ export default function Patients(){
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
               {filtered.map(p => (
-                <tr key={p.id} onClick={()=> setSelected(p)} className={`cursor-pointer hover:bg-blue-50 ${selected?.id===p.id? 'bg-blue-50/70':''}`}>
-                  <td className="px-3 py-1.5 text-[13px] text-gray-900 whitespace-nowrap">{p.firstName} {p.lastName}</td>
-                  <td className="px-3 py-1.5 text-[11px]">{statusBadge(p.status)}</td>
+                <tr
+                  key={p.id}
+                  onClick={()=> setSelected(p)}
+                  className={`cursor-pointer hover:bg-blue-50 transition-colors ${selected?.id===p.id? 'bg-blue-50/80':''}`}
+                >
+                  <td className="px-3 py-2.5">
+                    <div className="min-w-0">
+                      <span className={`block truncate text-[16px] leading-tight ${selected?.id===p.id ? 'font-semibold text-blue-900' : 'text-gray-900'}`}>{p.firstName} {p.lastName}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 text-[13px] whitespace-nowrap">{statusBadge(p.status)}</td>
                 </tr>
               ))}
               {filtered.length===0 && <tr><td colSpan={2} className="px-3 py-4 text-center text-sm text-gray-500">Brak podopiecznych</td></tr>}
@@ -280,42 +342,180 @@ export default function Patients(){
                   </div>
                   <div className="mt-4 grid grid-cols-3 gap-6 items-start">
                     <div className="space-y-2 text-sm text-gray-600 col-span-1">
-                      <p><strong>Data urodzenia:</strong>{' '}
+                      <p><strong className="text-[0.95rem] font-semibold text-gray-800">Data urodzenia:</strong>{' '}
                         {editMode ? (
-                          <input type="date" value={editForm.birthDate} onChange={e=> setEditForm(f=> ({...f, birthDate:e.target.value}))} className="ml-2 px-2 py-1 text-xs border rounded" />
-                        ) : <><span className="ml-1">{selected.birthDate || '—'}</span> <span className="ml-2 text-gray-500">({calcAge(selected.birthDate)})</span></>}
+                          // Birth date picker trigger + dialog
+                          <>
+                            <button
+                              type="button"
+                              onClick={openDatePicker}
+                              className="ml-2 inline-flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg border border-gray-300 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            >
+                              <svg className="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                              <span>{editForm.birthDate || 'Wybierz datę'}</span>
+                            </button>
+                            {showDatePicker && (
+                              <div
+                                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
+                                onClick={closeDatePicker}
+                                role="dialog"
+                                aria-modal="true"
+                                aria-label="Wybierz datę urodzenia"
+                              >
+                                <div
+                                  className="w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-gray-100 overflow-hidden"
+                                  onClick={e=> e.stopPropagation()}
+                                >
+                                  <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-50 to-blue-50 border-b border-gray-200">
+                                    <button
+                                      type="button"
+                                      onClick={()=> setDpMonth(m => new Date(m.getFullYear(), m.getMonth()-1, 1))}
+                                      className="p-2 rounded-lg text-gray-600 hover:bg-white/70"
+                                      aria-label="Poprzedni miesiąc"
+                                    >
+                                      <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M12.707 15.707a1 1 0 01-1.414 0l-5-5a1 1 0 010-1.414l5-5a1 1 0 111.414 1.414L8.414 10l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd"/></svg>
+                                    </button>
+                                    <div className="text-sm font-semibold text-gray-800">
+                                      {monthNames[dpMonth.getMonth()]} {dpMonth.getFullYear()}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={()=> setDpMonth(m => new Date(m.getFullYear(), m.getMonth()+1, 1))}
+                                      className="p-2 rounded-lg text-gray-600 hover:bg-white/70"
+                                      aria-label="Następny miesiąc"
+                                    >
+                                      <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M7.293 4.293a1 1 0 011.414 0l5 5a1 1 0 010 1.414l-5 5a1 1 0 11-1.414-1.414L11.586 10 7.293 5.707a1 1 0 010-1.414z" clipRule="evenodd"/></svg>
+                                    </button>
+                                  </div>
+                                  <div className="p-4">
+                                    <div className="grid grid-cols-7 gap-1 text-[11px] text-gray-500 mb-1">
+                                      {daysOfWeek.map(d=> (<div key={d} className="text-center py-1">{d}</div>))}
+                                    </div>
+                                    <div className="grid grid-cols-7 gap-1">
+                                      {getMonthGrid(dpMonth).map(({d, current}, idx)=>{
+                                        const selected = !!editForm.birthDate && formatDateYMD(d) === editForm.birthDate;
+                                        return (
+                                          <button
+                                            key={idx}
+                                            type="button"
+                                            onClick={()=> { setEditForm(f=> ({...f, birthDate: formatDateYMD(d)})); closeDatePicker(); }}
+                                            className={
+                                              `h-9 rounded-lg text-sm `+
+                                              (selected ? 'bg-blue-600 text-white font-semibold shadow' : current ? 'text-gray-800 hover:bg-blue-50' : 'text-gray-400 hover:bg-gray-50')
+                                            }
+                                          >
+                                            {d.getDate()}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                  <div className="px-4 py-3 border-t border-gray-200 flex justify-end gap-2 bg-gray-50">
+                                    <button type="button" onClick={closeDatePicker} className="px-3 py-1.5 text-sm font-medium rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100">Anuluj</button>
+                                    {editForm.birthDate && (
+                                      <button type="button" onClick={()=> { setEditForm(f=> ({...f, birthDate: ''})); closeDatePicker(); }} className="px-3 py-1.5 text-sm font-medium rounded-lg bg-red-50 border border-red-200 text-red-700 hover:bg-red-100">Wyczyść</button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : <>
+                              <span className="ml-1">{selected.birthDate || '—'}</span>
+                              <span className="ml-2 text-gray-500">{(() => { if(!selected.birthDate) return '(—)'; const bd = new Date(selected.birthDate); if(isNaN(bd.getTime())) return '(—)'; const now = new Date(); let age = now.getFullYear() - bd.getFullYear(); const m = now.getMonth() - bd.getMonth(); if(m < 0 || (m === 0 && now.getDate() < bd.getDate())) age--; return `(${age} lat)`; })()}</span>
+                            </>}
                       </p>
-                      <p className="flex items-center"><strong className="mr-1">Status:</strong>{' '}
+                      <p className="flex items-center"><strong className="mr-1 text-[0.95rem] font-semibold text-gray-800">Status:</strong>{' '}
                         {editMode ? (
-                          <select value={editForm.status} onChange={e=> setEditForm(f=> ({...f, status:e.target.value}))} className="px-2 py-1 text-xs border rounded">
-                            <option value="aktywny">aktywny</option>
-                            <option value="nieaktywny">nieaktywny</option>
-                          </select>
-                        ) : statusBadge(selected.status)}
+                          <div className="relative inline-block">
+                            <select
+                              value={editForm.status}
+                              onChange={e=> setEditForm(f=> ({...f, status:e.target.value}))}
+                              className="appearance-none px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white pr-8 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            >
+                              <option value="aktywny">aktywny</option>
+                              <option value="nieaktywny">nieaktywny</option>
+                            </select>
+                            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
+                              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.024l3.71-3.793a.75.75 0 111.08 1.04l-4.24 4.336a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
+                            </span>
+                          </div>
+                        ) : statusLabel(selected.status)}
                       </p>
                       <div>
-                        <p className="mb-1"><strong>Terapeuci:</strong></p>
-                        {!editMode && <div className="flex flex-wrap gap-1">{(therapistAssignments[selected.id]||[]).map(tId => <span key={tId} className="px-2 py-0.5 text-[11px] bg-blue-50 text-blue-700 rounded-full border border-blue-200">{userIdToName[tId] || tId}</span>)}{(therapistAssignments[selected.id]||[]).length===0 && <span className="text-[11px] text-gray-400">Brak</span>}</div>}
+                        <p className="mb-1"><strong className="text-[0.95rem] font-semibold text-gray-800">Terapeuci:</strong></p>
+                        {!editMode && (
+                          <>
+                            {(therapistAssignments[selected.id]||[]).length===0 ? (
+                              <span className="text-xs text-gray-400">Brak przypisanych terapeutów</span>
+                            ) : (
+                              <ul className="space-y-2">
+                                {(therapistAssignments[selected.id]||[]).map(tId => {
+                                  const name = userIdToName[tId] || tId;
+                                  return (
+                                    <li key={tId} className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2">
+                                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white text-[11px] font-semibold">{(name? name.trim().split(/\s+/).slice(0,2).map(p=>p[0]?.toUpperCase()||'').join(''):'?')}</span>
+                                      <span className="text-sm font-medium text-blue-900">{name}</span>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )}
+                          </>
+                        )}
                         {editMode && (
                           <div className="space-y-2">
-                            <div className="flex flex-wrap gap-1">{editForm.therapists.map(tId => <span key={tId} className="px-2 py-0.5 text-[11px] bg-blue-50 text-blue-700 rounded-full border border-blue-200 flex items-center gap-1">{userIdToName[tId]||tId}<button onClick={()=> removeTherapist(tId)} className="text-blue-500 hover:text-blue-700">×</button></span>)}{editForm.therapists.length===0 && <span className="text-[11px] text-gray-400">Brak terapeutów</span>}</div>
+                            <div className="flex flex-wrap gap-2">
+                              {editForm.therapists.map(tId => {
+                                const name = userIdToName[tId] || tId;
+                                return (
+                                  <span key={tId} className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm text-blue-900">
+                                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-semibold">{(name? name.trim().split(/\s+/).slice(0,2).map(p=>p[0]?.toUpperCase()||'').join(''):'?')}</span>
+                                    <span className="font-medium">{name}</span>
+                                    <button onClick={()=> removeTherapist(tId)} className="ml-1 rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 h-5 w-5 inline-flex items-center justify-center" aria-label={`Usuń terapeutę ${name}`}>×</button>
+                                  </span>
+                                );
+                              })}
+                              {editForm.therapists.length===0 && <span className="text-xs text-gray-400">Brak terapeutów</span>}
+                            </div>
                             <div className="flex items-center gap-2">
-                              <select className="px-2 py-1 text-xs border rounded" onChange={e=> { addTherapist(e.target.value); e.target.selectedIndex=0; }}>
-                                <option value="">Dodaj terapeutę...</option>
-                                {users.filter(u=> u.role==='employee').filter(u=> !editForm.therapists.includes(u.id)).map(u=> <option key={u.id} value={u.id}>{u.name}</option>)}
-                              </select>
+                              <div className="relative inline-block">
+                                <select
+                                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white pr-8 appearance-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                  onChange={e=> { addTherapist(e.target.value); e.target.selectedIndex=0; }}
+                                >
+                                  <option value="">Dodaj terapeutę...</option>
+                                  {users.filter(u=> u.role==='employee').filter(u=> !editForm.therapists.includes(u.id)).map(u=> <option key={u.id} value={u.id}>{u.name}</option>)}
+                                </select>
+                                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
+                                  <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.024l3.71-3.793a.75.75 0 111.08 1.04l-4.24 4.336a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
+                                </span>
+                              </div>
                             </div>
                           </div>
                         )}
                       </div>
-                      <div className="mt-4 pt-3 border-t border-gray-200">
-                        {visitCounts.total===0 ? <p className="text-[12px] italic text-gray-400">Brak sesji</p> : (
-                          <div className="space-y-1">
-                            <p className="text-[12px] font-semibold text-gray-700">Sesje łącznie: {visitCounts.total}</p>
-                            <div className="flex flex-wrap gap-1 text-[11px]">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full border bg-green-50 text-green-700 border-green-200">zrealizowane: {visitCounts.zrealizowana}</span>
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full border bg-yellow-50 text-yellow-700 border-yellow-200">zaplanowane: {visitCounts.zaplanowana}</span>
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full border bg-red-50 text-red-600 border-red-200">odwołane: {visitCounts.odwolana}</span>
+                      <div className="mt-4">
+                        <p className="mb-1"><strong className="text-[0.95rem] font-semibold text-gray-800">Sesje:</strong></p>
+                        {visitCounts.total===0 ? (
+                          <p className="text-sm italic text-gray-500">Brak sesji</p>
+                        ) : (
+                          <div className="grid grid-cols-4 gap-2">
+                            <div className="rounded-lg border border-green-200 bg-green-50 p-2 text-center">
+                              <div className="text-[10px] font-medium text-green-700 tracking-wide uppercase leading-none">Zrealizowane</div>
+                              <div className="mt-1 text-base font-bold text-green-800 leading-none">{visitCounts.zrealizowana}</div>
+                            </div>
+                            <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-center">
+                              <div className="text-[10px] font-medium text-red-700 tracking-wide uppercase leading-none">Odwołane</div>
+                              <div className="mt-1 text-base font-bold text-red-700 leading-none">{visitCounts.odwolana}</div>
+                            </div>
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-center">
+                              <div className="text-[10px] font-medium text-amber-700 tracking-wide uppercase leading-none">Nieobecny</div>
+                              <div className="mt-1 text-base font-bold text-amber-700 leading-none">{visitCounts.nieobecny}</div>
+                            </div>
+                            <div className="rounded-lg border border-blue-200 bg-blue-50 p-2 text-center">
+                              <div className="text-[10px] font-medium text-blue-700 tracking-wide uppercase leading-none">Zaplanowane</div>
+                              <div className="mt-1 text-base font-bold text-blue-800 leading-none">{visitCounts.zaplanowana}</div>
                             </div>
                           </div>
                         )}
@@ -323,12 +523,12 @@ export default function Patients(){
                     </div>
                     <div className="col-span-2 flex flex-col h-full">
                       <div className="flex border-b border-gray-200 mb-3">
-                        <button className={`px-4 py-2 text-xs font-medium -mb-px border-b-2 transition-colors ${activeTab==='info' ? 'border-blue-600 text-blue-700':'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={()=> setActiveTab('info')}>Informacje dodatkowe</button>
-                        <button className={`px-4 py-2 text-xs font-medium -mb-px border-b-2 transition-colors ${activeTab==='sessions' ? 'border-blue-600 text-blue-700':'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={()=> setActiveTab('sessions')}>Notatki z sesji</button>
+                        <button className={`px-4 py-2 text-sm md:text-[0.95rem] font-medium -mb-px border-b-2 transition-colors ${activeTab==='info' ? 'border-blue-600 text-blue-700':'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={()=> setActiveTab('info')}>Informacje dodatkowe</button>
+                        <button className={`px-4 py-2 text-sm md:text-[0.95rem] font-medium -mb-px border-b-2 transition-colors ${activeTab==='sessions' ? 'border-blue-600 text-blue-700':'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={()=> setActiveTab('sessions')}>Notatki z sesji</button>
                       </div>
                       {activeTab==='info' && (
                         <div className="flex-1 flex flex-col">
-                          <label className="text-xs font-semibold text-gray-700 mb-1">Informacje dodatkowe</label>
+                          <label className="text-[0.95rem] font-semibold text-gray-800 mb-1">Informacje dodatkowe</label>
                           {editMode ? (
                             <textarea value={editForm.notes} onChange={e=> setEditForm(f=> ({...f, notes:e.target.value}))} className="flex-1 min-h-[160px] max-h-[300px] overflow-y-auto w-full text-sm p-3 border rounded resize-y leading-relaxed" placeholder="Wpisz dodatkowe informacje..." />
                           ) : (
@@ -340,15 +540,21 @@ export default function Patients(){
                       )}
                       {activeTab==='sessions' && (
                         <div className="flex-1 flex flex-col min-h-[160px] max-h-[300px] overflow-y-auto">
-                          {selectedVisits.length===0 && <div className="text-xs text-gray-500 italic">Brak wizyt do wyświetlenia notatek</div>}
+                          {selectedVisits.length===0 && <div className="text-sm text-gray-600 italic">Brak wizyt do wyświetlenia notatek</div>}
                           <ul className="space-y-2">
                             {selectedVisits.map(v=> {
                               const open = openSessionNotes.has(v.id);
                               const toggle = () => setOpenSessionNotes(prev => { const n = new Set(prev); n.has(v.id)? n.delete(v.id): n.add(v.id); return n; });
                               return (
                                 <li key={v.id} className="border border-gray-200 rounded-lg bg-white overflow-hidden">
-                                  <button onClick={toggle} className="w-full flex items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-50">
-                                    <span className="flex items-center gap-2"><span className="text-gray-500">{v.date}</span><span className="text-gray-400">•</span><span>{v.therapist}</span><span className="text-gray-400">•</span><span className="capitalize">{v.status}</span></span>
+                                  <button onClick={toggle} className="w-full flex items-center justify-between px-3 py-2 text-left text-sm font-medium text-gray-700 hover:bg-gray-50">
+                                    <span className="flex items-center gap-3">
+                                      <span className="text-gray-600">{v.date}</span>
+                                      {v.therapists.length>0 && (
+                                        <span className="text-gray-700 truncate">{v.therapists.join(', ')}</span>
+                                      )}
+                                      {visitStatusLabel(v.status)}
+                                    </span>
                                     <span className={`ml-2 inline-flex h-5 w-5 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-500 shadow-sm transition-transform duration-200 ${open? 'rotate-90':''}`}>
                                       <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M6.293 7.293a1 1 0 011.414 0L11 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
                                     </span>
@@ -356,9 +562,9 @@ export default function Patients(){
                                   {open && (
                                     <div className="p-3 border-t border-gray-200 bg-gray-50">
                                       {editMode ? (
-                                        <textarea className="w-full text-xs p-2 border rounded resize-y min-h-[80px]" placeholder="Wpisz notatkę z sesji..." value={sessionNotes[v.id]||''} onChange={e=> setSessionNotes(s=> ({...s, [v.id]: e.target.value}))} />
+                                        <textarea className="w-full text-sm p-2 border rounded resize-y min-h-[80px]" placeholder="Wpisz notatkę z sesji..." value={sessionNotes[v.id]||''} onChange={e=> setSessionNotes(s=> ({...s, [v.id]: e.target.value}))} />
                                       ) : (
-                                        <div className="text-xs whitespace-pre-wrap text-gray-700 min-h-[40px]">{(sessionNotes[v.id] || '').trim() || <span className="italic text-gray-400">Brak notatki</span>}</div>
+                                        <div className="text-sm whitespace-pre-wrap text-gray-700 min-h-[40px]">{(sessionNotes[v.id] || '').trim() || <span className="italic text-gray-400">Brak notatki</span>}</div>
                                       )}
                                     </div>
                                   )}
@@ -368,7 +574,7 @@ export default function Patients(){
                           </ul>
                           {selectedVisits.length>0 && openSessionNotes.size>0 && (
                             <div className="mt-3 pt-3 border-t border-gray-200">
-                              <button onClick={()=> setOpenSessionNotes(new Set())} className="px-3 py-1.5 text-[11px] font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md border border-gray-300">Zwiń wszystkie notatki</button>
+                              <button onClick={()=> setOpenSessionNotes(new Set())} className="px-3 py-1.5 text-xs md:text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md border border-gray-300">Zwiń wszystkie notatki</button>
                             </div>
                           )}
                         </div>
@@ -383,24 +589,24 @@ export default function Patients(){
             <div className="border-t border-gray-200 pt-4 mt-6">
               <h3 className="text-sm font-semibold text-gray-800 mb-3">Historia wizyt</h3>
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
+                <table className="w-full text-sm">
                   <thead className="bg-gray-50 border border-gray-200">
                     <tr className="text-gray-600">
-                      <th className="px-3 py-2 text-left font-medium">Data</th>
-                      <th className="px-3 py-2 text-left font-medium">Terapeuta</th>
-                      <th className="px-3 py-2 text-left font-medium">Sala</th>
-                      <th className="px-3 py-2 text-left font-medium">Status</th>
+                      <th className="px-3 py-2 text-left font-medium text-[0.95rem]">Data</th>
+                      <th className="px-3 py-2 text-left font-medium text-[0.95rem]">Specjaliści</th>
+                      <th className="px-3 py-2 text-left font-medium text-[0.95rem]">Sala</th>
+                      <th className="px-3 py-2 text-left font-medium text-[0.95rem]">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 border border-gray-200 border-t-0">
                     {selectedVisits.map(v=> (
                       <tr key={v.id} className="hover:bg-gray-50">
                         <td className="px-3 py-2 whitespace-nowrap">{v.date}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">{v.therapist}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">{v.room}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          <span className={`inline-flex px-2 py-0.5 rounded-full border ${v.status==='zrealizowana' ? 'bg-green-50 text-green-700 border-green-200' : v.status==='odwołana' ? 'bg-red-50 text-red-600 border-red-200':'bg-yellow-50 text-yellow-700 border-yellow-200'}`}>{v.status}</span>
+                        <td className="px-3 py-2">
+                          <div className="text-sm text-gray-800 whitespace-normal leading-snug">{v.therapists.join(', ') || '—'}</div>
                         </td>
+                        <td className="px-3 py-2 whitespace-nowrap">{v.room}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{visitStatusLabel(v.status)}</td>
                       </tr>
                     ))}
                     {selectedVisits.length===0 && <tr><td colSpan={4} className="px-3 py-4 text-center text-gray-500">Brak wizyt</td></tr>}
