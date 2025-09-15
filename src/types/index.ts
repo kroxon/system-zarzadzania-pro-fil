@@ -122,6 +122,31 @@ export interface LoginResponse{
   employeeId: string | number;
 }
 
+//register
+export interface RegisterRequest{
+  name: string;
+  surname : string;
+  email: string;
+  password: string;
+  occupationId: number
+}
+
+//forgot password
+
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+
+//reset password
+
+export interface ResetPasswordRequest {
+  email: string;
+  token: string;
+  newPassword: string;
+}
+
+
 //occupations
 export interface Occupation{
   id: number;
@@ -137,14 +162,7 @@ export interface UpdateOccupation {
 }
 
 
-//register
-export interface RegisterRequest{
-  name: string;
-  surname : string;
-  email: string;
-  password: string;
-  occupationId: number
-}
+
 
 //events
 export interface Event{
