@@ -1,3 +1,15 @@
+// GET /api/patients/{id}/report
+export async function fetchPatientReport(id: number, token: string): Promise<Blob> {
+	const API_URL = import.meta.env.VITE_API_URL;
+	const res = await fetch(`${API_URL}/api/patients/${id}/report`, {
+		headers: {
+			'Authorization': `Bearer ${token}`,
+			'Accept': 'application/pdf'
+		}
+	});
+	if (!res.ok) throw new Error('Failed to fetch patient report');
+	return await res.blob();
+}
 
 import { Patient, CreatePatient, UpdatePatient } from '../../types';
 const API_URL = import.meta.env.VITE_API_URL;
