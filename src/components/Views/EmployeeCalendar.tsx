@@ -282,19 +282,29 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
                       {note && <div className="text-[11px] md:text-[12px] leading-snug opacity-90 whitespace-pre-wrap break-words line-clamp-6">{note}</div>}
                     </div>
                   ); })}
-                  {dayMeetings.map(m=> { const { startIndex, endIndex } = meetingToIndices(m); const topPct=(startIndex/ totalSlots)*100; const heightPct=((endIndex-startIndex)/ totalSlots)*100; const specNames=getSpecialistNames(m); const patientLabel=getPatientNames(m); const roomName=getRoomName(m.roomId); const timeLabel = `${m.startTime}-${m.endTime}`; const openAbove = startIndex > (totalSlots/2); return (
-                    <div key={m.id} className="group absolute left-2 right-2 rounded-md bg-yellow-100/95 text-yellow-900 shadow-md text-[11px] px-2 py-1 pointer-events-auto z-40" style={{ top:`${topPct}%`, height:`${heightPct}%` }}>
-                      <div className="flex items-center gap-2 overflow-hidden w-full">
-                        <span className="font-semibold shrink-0 whitespace-nowrap leading-4">{timeLabel}</span>
-                        <span className="opacity-60">•</span>
-                        <span className="truncate whitespace-nowrap min-w-0 max-w-[24%] leading-4">{roomName}</span>
-                        <span className="opacity-60">•</span>
-                        <span className="truncate whitespace-nowrap min-w-0 max-w-[36%] leading-4">{specNames}</span>
-                        {patientLabel && (<>
-                          <span className="opacity-60">•</span>
-                          <span className="truncate whitespace-nowrap min-w-0 max-w-[36%] leading-4">{patientLabel}</span>
-                        </>)}
-                      </div>
+                  {dayMeetings.map(m=> { const { startIndex, endIndex } = meetingToIndices(m); const topPct=(startIndex/ totalSlots)*100; const heightPct=((endIndex-startIndex)/ totalSlots)*100; const specNames=getSpecialistNames(m); const patientLabel=getPatientNames(m); const roomName=getRoomName(m.roomId); const timeLabel = `${m.startTime}-${m.endTime}`; const openAbove = startIndex > (totalSlots/2); const durationSlots = endIndex - startIndex; const isTall = durationSlots > 1; const showRoomInline = durationSlots >= 3; const meetingName = ((m as any)?.name || '').trim(); return (
+                    <div key={m.id} className="group absolute left-[10%] right-[10%] rounded-md bg-yellow-100/95 text-yellow-900 shadow-md text-[11px] px-2 py-1 pointer-events-auto z-40" style={{ top:`${topPct}%`, height:`${heightPct}%` }}>
+                      {isTall ? (
+                        <div className="flex flex-col overflow-hidden w-full">
+                          <div className="font-semibold leading-4">{timeLabel}</div>
+                          {meetingName && (<div className="truncate font-medium leading-4">{meetingName}</div>)}
+                          {patientLabel && (<div className="truncate leading-4">{patientLabel}</div>)}
+                          {m.guestName && (<div className="truncate leading-4">{m.guestName}</div>)}
+                          {showRoomInline && (<div className="truncate text-[10px] leading-4 opacity-80">{roomName}</div>)}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 overflow-hidden w-full">
+                          <span className="font-semibold shrink-0 whitespace-nowrap leading-4">{timeLabel}</span>
+                          {meetingName ? (
+                            <span className="flex-1 truncate whitespace-nowrap min-w-0 leading-4">{meetingName}</span>
+                          ) : (
+                            <>
+                              {patientLabel && (<span className="flex-1 truncate whitespace-nowrap min-w-0 leading-4">{patientLabel}</span>)}
+                              {m.guestName && (<span className="truncate whitespace-nowrap shrink-0 leading-4">{m.guestName}</span>)}
+                            </>
+                          )}
+                        </div>
+                      )}
                       {/* Custom tooltip */}
                       <div className={`pointer-events-none absolute ${openAbove? 'bottom-full mb-1':'top-full mt-1'} left-1/2 -translate-x-1/2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity duration-150 z-50`}> 
                         <div className="max-w-xs rounded-lg bg-white text-gray-900 shadow-xl border border-gray-200 px-3 py-2 text-[12px] leading-snug">
