@@ -1,6 +1,5 @@
-// ...existing code...
 import React, { useState, useEffect, useRef } from 'react';
-import { AlertCircle, Trash2, Calendar, Clock } from 'lucide-react';
+import { Calendar, Clock, Trash2, AlertCircle } from 'lucide-react';
 import { Meeting, User, Room, Patient } from '../../types';
 import { loadPatients } from '../../utils/storage';
 import { generateTimeSlots } from '../../utils/timeSlots';
@@ -36,6 +35,7 @@ interface MeetingFormState {
   status: Meeting['status'];
   specialistIds: string[]; // NEW multi
   patientIds: string[];    // NEW multi
+  meetingName: string;     // NEW: display name/title for the meeting
 }
 
 const MeetingForm: React.FC<MeetingFormProps> = ({
@@ -87,7 +87,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     notes: '',
     status: 'present',
     specialistIds: currentUser.role === 'employee' ? [currentUser.id] : [],
-    patientIds: []
+    patientIds: [],
+    meetingName: ''
   });
 
   const [errors, setErrors] = useState<string[]>([]);
@@ -147,7 +148,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
         notes: editingMeeting.notes || '',
         status: editingMeeting.status,
         specialistIds: editingMeeting.specialistIds || [editingMeeting.specialistId],
-        patientIds: editingMeeting.patientIds || (editingMeeting.patientId ? [editingMeeting.patientId] : [])
+        patientIds: editingMeeting.patientIds || (editingMeeting.patientId ? [editingMeeting.patientId] : []),
+        meetingName: (editingMeeting as any)?.name || ''
       }));
     } else {
       setFormData({
@@ -160,7 +162,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
         notes: '',
         status: 'present',
         specialistIds: currentUser.role === 'employee' ? [currentUser.id] : [],
-        patientIds: []
+        patientIds: [],
+        meetingName: ''
       });
     }
   }, [editingMeeting, currentUser, selectedTime, initialRoomId, selectedEndTime]);
@@ -225,8 +228,9 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       createdBy: currentUser.id,
       specialistIds: formData.specialistIds,
       patientIds: formData.patientIds,
-      patientNamesList
-    });
+      patientNamesList,
+      name: formData.meetingName
+    } as any);
     onClose();
   };
 
@@ -372,6 +376,9 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const timeOptions = React.useMemo(()=> generateTimeSlots(7, 20), []);
   const [startOpen, setStartOpen] = useState(false);
   const [endOpen, setEndOpen] = useState(false);
+  // NEW: custom dropdown states for specialists and patients
+  const [specOpen, setSpecOpen] = useState(false);
+  const [patientsOpen, setPatientsOpen] = useState(false);
 
   // Inline computed validations for live feedback on time and collisions
   const startEndInvalid = React.useMemo(() => {
@@ -419,6 +426,22 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return n.getHours() * 60 + n.getMinutes();
   }, []);
 
+  // NEW: refs for outside-click handling on custom dropdowns
+  const specMenuRef = useRef<HTMLDivElement|null>(null);
+  const patientsMenuRef = useRef<HTMLDivElement|null>(null);
+
+  // NEW: close dropdowns on outside click
+  useEffect(() => {
+    if (!isOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (specMenuRef.current && !specMenuRef.current.contains(t)) setSpecOpen(false);
+      if (patientsMenuRef.current && !patientsMenuRef.current.contains(t)) setPatientsOpen(false);
+    };
+    document.addEventListener('mousedown', onDown, true);
+    return () => document.removeEventListener('mousedown', onDown, true);
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   return (
@@ -432,6 +455,20 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 <Calendar className="h-5 w-5" />
               </span>
               <h2 id="meetingFormTitle" className="text-lg font-semibold text-gray-900">{editingMeeting ? 'Edytuj spotkanie' : 'Nowe spotkanie'}</h2>
+            </div>
+          </div>
+          {/* Meeting name - full width below header */}
+          <div>
+            <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Nazwa spotkania</label>
+            <div>
+              <input
+                type="text"
+                value={formData.meetingName}
+                onChange={e=> setFormData(fd=> ({...fd, meetingName: e.target.value}))}
+                placeholder="Np. Spotkanie konsulatacyjne"
+                className="w-full px-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-gray-900 shadow-sm hover:bg-indigo-50 focus:outline-none focus:ring-0 disabled:opacity-60 disabled:cursor-not-allowed text-xl"
+                disabled={isEditingPast}
+              />
             </div>
           </div>
           {errors.length>0 && (
@@ -449,30 +486,73 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
             <div className="col-span-12 lg:col-span-4 space-y-6">
               <div>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Specjaliści</label>
-                {/* Select first, then selected specialists list */}
-                <select
-                  onChange={(e)=>{ const v=e.target.value; if(v) setFormData(fd=> fd.specialistIds.includes(v)? fd : {...fd, specialistIds:[...fd.specialistIds, v]}); e.target.selectedIndex=0; }}
-                  value=""
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed"
-                  disabled={isEditingPast}
-                >
-                  <option value="">Dodaj specjalistę...</option>
-                  {users.filter(u=>u.role==='employee').map(u=> {
-                    const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
-                    const unavailable = !!(formData.startTime && formData.endTime && !isSpecialistAvailable(u.id, effectiveDate, formData.startTime, formData.endTime));
-                    const already = formData.specialistIds.includes(u.id);
-                    let label = u.name + (u.specialization ? ' – ' + u.specialization : '');
-                    if (already) label += ' (wybrany)';
-                    else if (busy) label += ' (zajęty)';
-                    else if (unavailable) label += ' (niedostępny)';
-                    let style = {};
-                    if (busy) style = { color: '#b45309', backgroundColor: '#fef9c3' };
-                    else if (unavailable) style = { color: '#a3a3a3', backgroundColor: '#f3f4f6' };
-                    else style = { color: '#047857', backgroundColor: '#d1fae5' };
-                    // Blokuj wybór jeśli zajęty lub niedostępny lub już wybrany
-                    return <option key={u.id} value={u.id} disabled={busy || unavailable || already} style={style}>{label}</option>;
-                  })}
-                </select>
+                {/* Custom dropdown trigger instead of native select */}
+                <div className="relative" ref={specMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => { if (isEditingPast) return; setSpecOpen(o=>!o); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); }}
+                    className="w-full px-3 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:outline-none focus:ring-0 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-between"
+                    disabled={isEditingPast}
+                  >
+                    <span className="text-sm text-gray-700 truncate">Dodaj specjalistę...</span>
+                    <svg className={`h-4 w-4 text-gray-500 transition-transform ${specOpen? 'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.38a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
+                  </button>
+                  {specOpen && !isEditingPast && (
+                    <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto text-[15px]">
+                      <ul className="py-1">
+                        {users.filter(u=>u.role==='employee').map(u=> {
+                          const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
+                          const unavailable = !!(formData.startTime && formData.endTime && !isSpecialistAvailable(u.id, effectiveDate, formData.startTime, formData.endTime));
+                          const already = formData.specialistIds.includes(u.id);
+                          const isAvailable = !busy && !unavailable;
+                          const disabledOpt = busy || unavailable || already;
+
+                          // Less intense backgrounds; selected (already) highlighted in blue
+                          const baseBg = already ? 'bg-indigo-50' : (unavailable ? 'bg-red-50' : busy ? 'bg-amber-50' : 'bg-emerald-50');
+                          const hoverBg = already ? 'hover:bg-indigo-100' : (unavailable ? 'hover:bg-red-100' : busy ? 'hover:bg-amber-100' : 'hover:bg-emerald-100');
+                          const leftBorder = already ? 'border-l-4 border-indigo-300' : (unavailable ? 'border-l-4 border-red-300' : busy ? 'border-l-4 border-amber-300' : 'border-l-4 border-emerald-300');
+                          const nameColor = already ? 'text-indigo-900' : (unavailable ? 'text-red-900' : busy ? 'text-amber-900' : 'text-emerald-900');
+                          const disabledClass = 'cursor-not-allowed';
+                          return (
+                            <li key={u.id}>
+                              <button
+                                type="button"
+                                disabled={disabledOpt}
+                                onClick={() => { if (disabledOpt) return; setFormData(fd=> fd.specialistIds.includes(u.id)? fd : {...fd, specialistIds:[...fd.specialistIds, u.id]}); setSpecOpen(false); }}
+                                className={`w-full flex items-center justify-between gap-2 px-3 py-3 text-left ${baseBg} ${hoverBg} ${leftBorder} ${disabledOpt? disabledClass:''}`}
+                              >
+                                <div className="min-w-0 flex items-center gap-2">
+                                  <div className="min-w-0">
+                                    <div className={`font-semibold truncate ${nameColor}`}>{u.name}</div>
+                                    <div className="text-[13px] text-gray-700 truncate">{u.specialization || 'Specjalista'}</div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {isAvailable && !already && (
+                                    <span className="text-[10px] text-emerald-900 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300">dostępny</span>
+                                  )}
+                                  {busy && !unavailable && (
+                                    <span className="text-[10px] text-amber-900 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300">zajęty</span>
+                                  )}
+                                  {unavailable && (
+                                    <span className="text-[10px] text-red-900 px-2 py-0.5 rounded-full bg-red-100 border border-red-300">niedostępny</span>
+                                  )}
+                                  {already && (
+                                    <span className="text-[10px] text-indigo-700 px-2 py-0.5 rounded-full bg-indigo-100 border border-indigo-300">wybrany</span>
+                                  )}
+                                </div>
+                              </button>
+                            </li>
+                          );
+                        })}
+                        {users.filter(u=>u.role==='employee').length===0 && (
+                          <li className="px-3 py-2 text-xs text-gray-400">Brak pracowników</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                {/* Selected specialists list */}
                 <div className="mt-2">
                   <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-40 overflow-auto">
                     {formData.specialistIds.length===0 && (
@@ -485,21 +565,11 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                       const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
                       let bg = 'bg-indigo-50 hover:bg-indigo-100';
                       let text = 'text-gray-900';
-                      if (unavailable) {
-                        bg = 'bg-gray-100';
-                        text = 'text-gray-400';
-                      } else if (busy) {
-                        bg = 'bg-yellow-50 hover:bg-yellow-100';
-                        text = 'text-yellow-800';
-                      } else {
-                        bg = 'bg-emerald-50 hover:bg-emerald-100';
-                        text = 'text-emerald-800';
-                      }
+                      if (unavailable) { bg = 'bg-gray-100'; text = 'text-gray-400'; }
+                      else if (busy) { bg = 'bg-yellow-50 hover:bg-yellow-100'; text = 'text-yellow-800'; }
+                      else { bg = 'bg-emerald-50 hover:bg-emerald-100'; text = 'text-emerald-800'; }
                       return (
-                        <li
-                          key={id}
-                          className={`flex items-center justify-between p-2.5 transition-colors ${bg}`}
-                        >
+                        <li key={id} className={`flex items-center justify-between p-2.5 transition-colors ${bg}`}>
                           <div className="min-w-0 pr-3">
                             <div className={`text-sm font-semibold leading-5 truncate ${text}`}>{u.name}</div>
                             <div className="text-xs text-gray-600 truncate">{u.specialization || 'Specjalista'}</div>
@@ -507,16 +577,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                           <div className="flex items-center gap-2 shrink-0">
                             {busy && !unavailable && <span className="text-[11px] text-yellow-800 px-2 py-0.5 rounded-full bg-yellow-50 border border-yellow-200">zajęty</span>}
                             {unavailable && <span className="text-[11px] text-gray-500 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200">niedostępny</span>}
-                            <button
-                              type="button"
-                              onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                              aria-label="Usuń specjalistę"
-                              title="Usuń"
-                              disabled={isEditingPast}
-                            >
-                              ×
-                            </button>
+                            <button type="button" onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed" aria-label="Usuń specjalistę" title="Usuń" disabled={isEditingPast}>×</button>
                           </div>
                         </li>
                       );
@@ -528,83 +589,65 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Podopieczni</label>
                 <div className="mb-1 flex items-center gap-3">
                   <div className="inline-flex text-[11px] rounded-lg overflow-hidden border border-indigo-300 bg-indigo-50">
-                    <button type="button"
-                      onClick={()=> setPatientAssignmentFilter('wszyscy')}
-                      className={`px-3 py-1.5 font-medium transition-colors ${patientAssignmentFilter==='wszyscy' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`}
-                      disabled={isEditingPast}
-                    >Wszyscy</button>
-                    <button type="button"
-                      onClick={()=> setPatientAssignmentFilter('przypisani')}
-                      className={`px-3 py-1.5 font-medium transition-colors border-l border-indigo-300 ${patientAssignmentFilter==='przypisani' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`}
-                      disabled={isEditingPast}
-                    >Przypisani</button>
+                    <button type="button" onClick={()=> setPatientAssignmentFilter('wszyscy')} className={`px-3 py-1.5 font-medium transition-colors ${patientAssignmentFilter==='wszyscy' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`} disabled={isEditingPast}>Wszyscy</button>
+                    <button type="button" onClick={()=> setPatientAssignmentFilter('przypisani')} className={`px-3 py-1.5 font-medium transition-colors border-l border-indigo-300 ${patientAssignmentFilter==='przypisani' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`} disabled={isEditingPast}>Przypisani</button>
                   </div>
                 </div>
                 {patientAssignmentFilter==='przypisani' && (
                   <div className="mb-2">
                     {formData.specialistIds.length===0 ? (
-                      <div className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-amber-700">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l6.518 11.598c.75 1.335-.213 2.998-1.742 2.998H3.48c-1.53 0-2.492-1.663-1.743-2.998L8.257 3.1zM11 14a1 1 0 10-2 0 1 1 0 002 0zm-.25-6.75a.75.75 0 00-1.5 0v3.5a.75.75 0 001.5 0v-3.5z" clipRule="evenodd" /></svg>
-                        <span>Wybierz specjalistę aby zobaczyć przypisanych</span>
-                      </div>
+                      <div className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-amber-700"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l6.518 11.598c.75 1.335-.213 2.998-1.742 2.998H3.48c-1.53 0-2.492-1.663-1.743-2.998L8.257 3.1zM11 14a1 1 0 10-2 0 1 1 0 002 0zm-.25-6.75a.75.75 0 00-1.5 0v3.5a.75.75 0 001.5 0v-3.5z" clipRule="evenodd" /></svg><span>Wybierz specjalistę aby zobaczyć przypisanych</span></div>
                     ) : (filteredPatients.length===0 ? (
                       <div className="text-[10px] px-2 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-700">Brak wspólnych przypisanych pacjentów</div>
                     ) : null)}
                   </div>
                 )}
-                {/* Selected patients list first, then select below it */}
+                {/* Selected patients list first */}
                 <div className="mt-2">
                   <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-44 overflow-auto">
-                    {formData.patientIds.length===0 && (
-                      <li className="p-3 text-sm text-gray-400">Brak</li>
-                    )}
+                    {formData.patientIds.length===0 && (<li className="p-3 text-sm text-gray-400">Brak</li>)}
                     {formData.patientIds.map(pid=>{
                       const p = effectivePatients.find(pp=>pp.id===pid); if(!p) return null;
                       const firstName = 'firstName' in p ? p.firstName : p.name;
                       const lastName = 'lastName' in p ? p.lastName : p.surname;
                       const fullName = `${firstName} ${lastName}`;
                       return (
-                        <li
-                          key={pid}
-                          className="flex items-center justify-between p-2.5 transition-colors bg-emerald-50 hover:bg-emerald-100"
-                        >
-                          <div className="min-w-0 pr-3">
-                            <div className="text-sm font-semibold leading-5 text-gray-900 truncate">{fullName}</div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={()=> setFormData(fd=>({...fd, patientIds: fd.patientIds.filter(x=>x!==pid)}))}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                            aria-label="Usuń podopiecznego"
-                            title="Usuń"
-                            disabled={isEditingPast}
-                          >
-                            ×
-                          </button>
+                        <li key={pid} className="flex items-center justify-between p-2.5 transition-colors bg-emerald-50 hover:bg-emerald-100">
+                          <div className="min-w-0 pr-3"><div className="text-sm font-semibold leading-5 text-gray-900 truncate">{fullName}</div></div>
+                          <button type="button" onClick={()=> setFormData(fd=>({...fd, patientIds: fd.patientIds.filter(x=>x!==pid)}))} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed" aria-label="Usuń podopiecznego" title="Usuń" disabled={isEditingPast}>×</button>
                         </li>
                       );
                     })}
                   </ul>
                 </div>
-                {/* Select moved below list */}
-                <select
-                  onChange={(e)=>{ const v=e.target.value; if(v) setFormData(fd=> fd.patientIds.includes(v)? fd : {...fd, patientIds:[...fd.patientIds, v]}); e.target.selectedIndex=0; }}
-                  value=""
-                  className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed"
-                  disabled={isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)}
-                >
-                  <option value="">Dodaj podopiecznego...</option>
-                  {filteredPatients.map(p=> {
-                    const selected = formData.patientIds.includes(String(p.id));
-                    const firstName = 'firstName' in p ? p.firstName : p.name;
-                    const lastName = 'lastName' in p ? p.lastName : p.surname;
-                    return <option key={p.id} value={p.id} disabled={selected}>{firstName} {lastName}{selected ? ' (dodany)':''}</option>;
-                  })}
-                  {filteredPatients.length===0 && <option value="" disabled>{patientAssignmentFilter==='przypisani'? (formData.specialistIds.length? 'Brak przypisanych':'Najpierw wybierz specjalistę') : 'Brak wyników'}</option>}
-                </select>
-                {effectivePatients.length===0 && (
-                  <p className="mt-1 text-[11px] text-red-500">Brak zarejestrowanych podopiecznych – dodaj w module Pacjenci.</p>
-                )}
+                {/* Custom dropdown for adding patients */}
+                <div className="relative mt-2" ref={patientsMenuRef}>
+                  <button type="button" onClick={() => { if (isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) return; setPatientsOpen(o=>!o); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); }} className="w-full px-3 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:outline-none focus:ring-0 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-between" disabled={isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)}>
+                    <span className="text-sm text-gray-700 truncate">Dodaj podopiecznego...</span>
+                    <svg className={`h-4 w-4 text-gray-500 transition-transform ${patientsOpen? 'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.38a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
+                  </button>
+                  {patientsOpen && !(isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) && (
+                    <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto text-sm">
+                      <ul className="py-1">
+                        {filteredPatients.map(p=> {
+                          const already = formData.patientIds.includes(String(p.id));
+                          const firstName = 'firstName' in p ? p.firstName : p.name;
+                          const lastName = 'lastName' in p ? p.lastName : p.surname;
+                          return (
+                            <li key={p.id}>
+                              <button type="button" disabled={already} onClick={()=> { if (already) return; setFormData(fd=> fd.patientIds.includes(String(p.id)) ? fd : {...fd, patientIds:[...fd.patientIds, String(p.id)]}); setPatientsOpen(false); }} className={`w-full text-left px-3 py-2 hover:bg-indigo-50 ${already? 'opacity-40 cursor-not-allowed':''}`}>
+                                {firstName} {lastName}{already ? ' (dodany)' : ''}
+                              </button>
+                            </li>
+                          );
+                        })}
+                        {filteredPatients.length===0 && (
+                          <li className="px-3 py-2 text-xs text-gray-400">{patientAssignmentFilter==='przypisani'? (formData.specialistIds.length? 'Brak przypisanych':'Najpierw wybierz specjalistę') : 'Brak wyników'}</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Sala</label>
@@ -656,7 +699,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 {/* Date picker */}
                 <div className="relative min-w-0">
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Data</label>
-                  <button type="button" disabled={isEditingPast} onClick={()=> setDateOpen(o=>!o)} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-300 disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                  <button type="button" disabled={isEditingPast} onClick={()=> setDateOpen(o=>!o)} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
                     <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Calendar className="h-3.5 w-3.5" /></span>
                     {formatPolishDate(effectiveDate)}
                   </button>
@@ -696,7 +739,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 {/* Start time picker */}
                 <div className="relative min-w-0">
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Start</label>
-                  <button type="button" disabled={isEditingPast} onClick={()=> { setStartOpen(o=>!o); setEndOpen(false); }} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-300 disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                  <button type="button" disabled={isEditingPast} onClick={()=> { setStartOpen(o=>!o); setEndOpen(false); }} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
                     <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
                     {formData.startTime || 'Wybierz...'}
                   </button>
@@ -726,7 +769,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 {/* End time picker */}
                 <div className="relative min-w-0">
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Koniec</label>
-                  <button type="button" disabled={isEditingPast} onClick={()=> { setEndOpen(o=>!o); setStartOpen(false); }} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-300 disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                  <button type="button" disabled={isEditingPast} onClick={()=> { setEndOpen(o=>!o); setStartOpen(false); }} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
                     <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
                     {formData.endTime || 'Wybierz...'}
                   </button>
@@ -813,7 +856,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 )}
                 <div className={!isEditingPast ? 'col-span-2' : ''}>
                    <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Gość (opcjonalnie)</label>
-                   <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast} />
+                   <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast} />
                  </div>
                </div>
                <div>
@@ -828,7 +871,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                    }}
                    rows={1}
                    placeholder="Cel sesji, materiały, obserwacje..."
-                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y disabled:opacity-60 disabled:cursor-not-allowed"
+                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 resize-y disabled:opacity-60 disabled:cursor-not-allowed"
                    disabled={isEditingPast && !canEditThis}
                    style={{overflow: 'hidden', minHeight: '40px'}}
                  />
