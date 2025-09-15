@@ -67,6 +67,8 @@ export default function Patients(){
   // Date picker state and helpers (modern dialog)
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dpMonth, setDpMonth] = useState<Date>(new Date());
+  // Focus refs for dialogs
+  const datePickerOverlayRef = useRef<HTMLDivElement|null>(null);
   const monthNames = ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
   const daysOfWeek = ['Pn','Wt','Śr','Cz','Pt','So','Nd'];
   const formatDateYMD = (d: Date) => {
@@ -93,6 +95,13 @@ export default function Patients(){
     setShowDatePicker(true);
   };
   const closeDatePicker = () => setShowDatePicker(false);
+
+  // When date picker opens, focus overlay so ESC works
+  useEffect(()=>{
+    if(showDatePicker){
+      requestAnimationFrame(()=> datePickerOverlayRef.current?.focus());
+    }
+  }, [showDatePicker]);
 
   const visits: Visit[] = useMemo(()=>{
     const userMap = new Map(users.map(u=> [u.id, u.name]));
@@ -227,21 +236,59 @@ export default function Patients(){
     setEditMode(false);
   };
 
+  // Delete currently selected patient (logic only)
+  const deleteSelected = () => {
+    if(!selected) return;
+    const id = selected.id;
+    setPatients(prev => prev.filter(p => p.id !== id));
+    setTherapistAssignments(prev => {
+      if(!(id in prev)) return prev;
+      const next = { ...prev }; delete next[id]; return next;
+    });
+    setPatientNotes(prev => {
+      if(!(id in prev)) return prev;
+      const next = { ...prev }; delete next[id]; return next;
+    });
+    setSessionNotes(prev => {
+      if(!selectedVisits.length) return prev;
+      const next = { ...prev }; selectedVisits.forEach(v => { delete next[v.id]; }); return next;
+    });
+    setOpenSessionNotes(new Set());
+    setSelected(null);
+  };
+
+  // Persist patients to storage (prevents unused import and keeps demo data saved)
   useEffect(()=> { try { savePatients(patients); } catch {} },[patients]);
 
+  // Helpers for adding/removing therapists in edit mode (used in JSX)
   const addTherapist = (id:string) => { if(!id || !selected) return; setEditForm(f => f.therapists.includes(id) ? f : { ...f, therapists:[...f.therapists, id] }); };
   const removeTherapist = (id:string) => setEditForm(f => ({ ...f, therapists: f.therapists.filter(t=> t!==id) }));
+
+  // Delete modal logic (open/cancel/confirm)
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const openDeleteModal = () => { if(selected) setShowDeleteModal(true); };
+  const cancelDelete = () => { if(deleting) return; setShowDeleteModal(false); };
+  const confirmDelete = () => {
+    if(!selected) return;
+    setDeleting(true);
+    deleteSelected();
+    setDeleting(false);
+    setShowDeleteModal(false);
+  };
+
+  // Accessibility refs
+  const addBtnRef = useRef<HTMLButtonElement|null>(null);
+  const modalRef = useRef<HTMLDivElement|null>(null);
+  const firstFieldRef = useRef<HTMLInputElement|null>(null);
+  const prevFocusRef = useRef<HTMLElement | null>(null);
+  const deleteModalRef = useRef<HTMLDivElement|null>(null);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const emptyNew = { firstName:'', lastName:'', birthDate:'', status:'aktywny', therapists:[] as string[], notes:'' };
   const [newPatientForm, setNewPatientForm] = useState<typeof emptyNew>(emptyNew);
   const [newErrors, setNewErrors] = useState<string[]>([]);
-  // Accessibility refs
-  const addBtnRef = useRef<HTMLButtonElement|null>(null);
-  const modalRef = useRef<HTMLDivElement|null>(null);
-  const firstFieldRef = useRef<HTMLInputElement|null>(null);
-  const prevFocusRef = useRef<HTMLElement | null>(null);
 
   const validateNew = () => {
     const errs: string[] = [];
@@ -271,6 +318,19 @@ export default function Patients(){
       prevFocusRef.current?.focus?.();
     }
   }, [showAddModal]);
+
+  // Match delete modal behavior with other dialogs (scroll lock + focus restore)
+  useEffect(()=>{
+    if(showDeleteModal){
+      prevFocusRef.current = document.activeElement as HTMLElement;
+      document.body.style.overflow = 'hidden';
+      // focus container so ESC/Tab trapping works
+      requestAnimationFrame(()=> deleteModalRef.current?.focus());
+    } else {
+      document.body.style.overflow = '';
+      prevFocusRef.current?.focus?.();
+    }
+  }, [showDeleteModal]);
 
   return (
     <div className="space-y-6">
@@ -348,7 +408,12 @@ export default function Patients(){
                       ) : `${selected.firstName} ${selected.lastName}`}
                     </h2>
                     <div className="flex items-center gap-2 ml-4">
-                      {!editMode && <button onClick={startEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700">Edytuj</button>}
+                      {!editMode && (
+                        <>
+                          <button onClick={openDeleteModal} className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Usuń</button>
+                          <button onClick={startEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700">Edytuj</button>
+                        </>
+                      )}
                       {editMode && (
                         <>
                           <button onClick={saveEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-green-600 text-white hover:bg-green-700">Zapisz</button>
@@ -373,8 +438,11 @@ export default function Patients(){
                             </button>
                             {showDatePicker && (
                               <div
+                                ref={datePickerOverlayRef}
+                                tabIndex={-1}
                                 className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
                                 onClick={closeDatePicker}
+                                onKeyDown={(e)=> { if(e.key==='Escape'){ e.stopPropagation(); closeDatePicker(); } }}
                                 role="dialog"
                                 aria-modal="true"
                                 aria-label="Wybierz datę urodzenia"
@@ -718,6 +786,64 @@ export default function Patients(){
                 <button type="submit" disabled={creating} className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-60">{creating? 'Zapisywanie...':'Utwórz'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showDeleteModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center p-6 bg-black/40 backdrop-blur-sm overflow-y-auto"
+          onKeyDown={(e)=> {
+            if(e.key==='Escape'){ e.stopPropagation(); cancelDelete(); }
+            if(e.key==='Tab' && deleteModalRef.current){
+              const focusables = Array.from(deleteModalRef.current.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"))
+                .filter(el => !el.hasAttribute('disabled'));
+              if(!focusables.length) return;
+              const first = focusables[0];
+              const last = focusables[focusables.length-1];
+              if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); }
+              else if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+            }
+          }}
+          aria-modal="true"
+          role="dialog"
+          aria-labelledby="deletePatientTitle"
+        >
+          <div
+            ref={deleteModalRef}
+            tabIndex={-1}
+            className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in slide-in-from-top-2"
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-red-200 bg-gradient-to-r from-red-50 to-rose-50 rounded-t-2xl">
+              <h3 id="deletePatientTitle" className="text-lg font-semibold text-red-800 flex items-center gap-2">
+                <svg className="h-5 w-5 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                Usuń podopiecznego
+              </h3>
+              <button onClick={cancelDelete} className="p-2 rounded-lg hover:bg-white/70" aria-label="Zamknij">
+                <svg className="h-5 w-5 text-gray-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+              </button>
+            </div>
+            <div className="px-6 py-4 space-y-3">
+              <p className="text-sm text-gray-700">
+                Usuniesz podopiecznego:
+                <span className="font-semibold text-gray-900"> {selected?.firstName} {selected?.lastName}</span>.
+              </p>
+              <div className="text-sm text-gray-700">
+                <p className="font-medium text-gray-800 mb-1">Dodatkowo zostaną trwale usunięte:</p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  <li>Przypisania terapeutów ({selected ? (therapistAssignments[selected.id]||[]).length : 0})</li>
+                  <li>Notatki podopiecznego</li>
+                  <li>Notatki z sesji ({selectedVisits.length})</li>
+                </ul>
+                <p className="mt-2 text-[13px] text-red-700">Tej operacji nie można cofnąć.</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200">
+              <button onClick={cancelDelete} className="px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700">Anuluj</button>
+              <button onClick={confirmDelete} className="px-4 py-2 text-sm font-semibold rounded-lg bg-red-600 text-white shadow hover:bg-red-700 focus:ring-2 focus:ring-offset-2 focus:ring-red-500" disabled={deleting}>
+                {deleting ? 'Usuwanie...' : 'Usuń'}
+              </button>
+            </div>
           </div>
         </div>
       )}
