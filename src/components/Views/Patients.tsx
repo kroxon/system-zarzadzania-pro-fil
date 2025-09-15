@@ -62,11 +62,28 @@ export default function Patients(){
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<PatientDemo | null>(null);
   const [statusFilter, setStatusFilter] = useState<'aktywny'|'nieaktywny'|'wszyscy'>('aktywny');
-  const [assignmentFilter, setAssignmentFilter] = useState<'wszyscy'|'przypisani'>('wszyscy');
+  // Replace generic assignment filter with a specialist single-select filter
+  const [specialistFilter, setSpecialistFilter] = useState<'wszyscy' | string>('wszyscy');
+  // Custom dropdown state/refs for filters
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
+  const [showSpecialistMenu, setShowSpecialistMenu] = useState(false);
+  const statusBtnRef = useRef<HTMLButtonElement|null>(null);
+  const statusMenuRef = useRef<HTMLDivElement|null>(null);
+  const specialistBtnRef = useRef<HTMLButtonElement|null>(null);
+  const specialistMenuRef = useRef<HTMLDivElement|null>(null);
+  // Edit-mode dropdowns (status and therapists)
+  const [showEditStatusMenu, setShowEditStatusMenu] = useState(false);
+  const editStatusBtnRef = useRef<HTMLButtonElement|null>(null);
+  const editStatusMenuRef = useRef<HTMLDivElement|null>(null);
+  const [showEditTherMenu, setShowEditTherMenu] = useState(false);
+  const editTherBtnRef = useRef<HTMLButtonElement|null>(null);
+  const editTherMenuRef = useRef<HTMLDivElement|null>(null);
 
   // Date picker state and helpers (modern dialog)
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dpMonth, setDpMonth] = useState<Date>(new Date());
+  // Focus refs for dialogs
+  const datePickerOverlayRef = useRef<HTMLDivElement|null>(null);
   const monthNames = ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
   const daysOfWeek = ['Pn','Wt','Śr','Cz','Pt','So','Nd'];
   const formatDateYMD = (d: Date) => {
@@ -93,6 +110,13 @@ export default function Patients(){
     setShowDatePicker(true);
   };
   const closeDatePicker = () => setShowDatePicker(false);
+
+  // When date picker opens, focus overlay so ESC works
+  useEffect(()=>{
+    if(showDatePicker){
+      requestAnimationFrame(()=> datePickerOverlayRef.current?.focus());
+    }
+  }, [showDatePicker]);
 
   const visits: Visit[] = useMemo(()=>{
     const userMap = new Map(users.map(u=> [u.id, u.name]));
@@ -125,123 +149,235 @@ export default function Patients(){
     const m: Record<string,string> = {}; users.forEach(u=> m[u.id]=u.name); return m;
   },[users]);
 
-  useEffect(()=>{ try { saveTherapistAssignments(therapistAssignments); } catch {} },[therapistAssignments]);
+  const getStatusLabel = (v: 'aktywny'|'nieaktywny'|'wszyscy') => v==='aktywny' ? 'Aktywni' : v==='nieaktywny' ? 'Nieaktywni' : 'Wszyscy';
 
-  useEffect(()=> {
-    setTherapistAssignments(prev => {
-      if(!Object.keys(prev).length) return prev;
-      const employees = users.filter(u=> u.role==='employee');
-      const nameToId: Record<string,string> = {}; employees.forEach(e=> nameToId[e.name]=e.id);
-      let changed = false; const next: Record<string,string[]> = {};
-      Object.entries(prev).forEach(([pid, arr])=> {
-        const conv = arr.map(v=> nameToId[v] || v);
-        if(conv.some((v,i)=> v!==arr[i])) changed = true;
-        next[pid] = Array.from(new Set(conv));
-      });
-      return changed ? next : prev;
-    });
+  // Precompute sorted employees: label "Nazwisko Imię" and sort by last name then first name (case/diacritics insensitive)
+  const employeesSorted = useMemo(()=>{
+    const strip = (s:string)=> s.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase();
+    return users
+      .filter(u=> u.role==='employee')
+      .map(u=> {
+        const parts = (u.name||'').trim().split(/\s+/).filter(Boolean);
+        const last = parts.length>1 ? parts[parts.length-1] : '';
+        const first = parts.length>1 ? parts.slice(0,-1).join(' ') : (parts[0]||'');
+        const label = last ? `${last} ${first}` : first;
+        const sortKey = `${strip(last)} ${strip(first)}`;
+        return { id: u.id, label, sortKey };
+      })
+      .sort((a,b)=> a.sortKey.localeCompare(b.sortKey));
   },[users]);
 
-  useEffect(()=> {
-    if(selected){
-      setActiveTab('info');
-      setEditMode(false);
-      setEditForm({
-        firstName: selected.firstName || '',
-        lastName: selected.lastName || '',
-        birthDate: selected.birthDate || '',
-        status: selected.status || 'aktywny',
-        therapists: therapistAssignments[selected.id] || [],
-        notes: patientNotes[selected.id] || ''
-      });
-    }
-  },[selected, therapistAssignments, patientNotes]);
+  useEffect(()=>{ try { saveTherapistAssignments(therapistAssignments); } catch {} },[therapistAssignments]);
 
-  const normalize = (s:string) => s.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase();
+  // Persist patients to storage (demo)
+  useEffect(()=>{ try { savePatients(patients); } catch {} }, [patients]);
 
+  // Close dropdowns on outside click
+  useEffect(()=>{
+    const handler = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if(showStatusMenu && !statusMenuRef.current?.contains(t) && !statusBtnRef.current?.contains(t)) setShowStatusMenu(false);
+      if(showSpecialistMenu && !specialistMenuRef.current?.contains(t) && !specialistBtnRef.current?.contains(t)) setShowSpecialistMenu(false);
+      // Edit-mode dropdowns
+      if(showEditStatusMenu && !editStatusMenuRef.current?.contains(t) && !editStatusBtnRef.current?.contains(t)) setShowEditStatusMenu(false);
+      if(showEditTherMenu && !editTherMenuRef.current?.contains(t) && !editTherBtnRef.current?.contains(t)) setShowEditTherMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showStatusMenu, showSpecialistMenu, showEditStatusMenu, showEditTherMenu]);
+
+  // Normalization for search (diacritics-insensitive)
+  const normalize = (s: string) => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+
+  // Filtered patients list for the left panel
   const filtered = useMemo(()=>{
-    let list = patients.filter(p => assignmentFilter==='wszyscy' ? true : (therapistAssignments[p.id]||[]).length>0);
-    const q = query.trim();
-    if(q){
-      const tokens = normalize(q).split(/\s+/).filter(Boolean);
-      if(tokens.length){
-        list = list.filter(p => {
-          const fullName = normalize(`${p.firstName} ${p.lastName}`);
-          const therapistNames = (therapistAssignments[p.id]||[]).map(id => normalize(userIdToName[id]||'')).join(' ');
-          const searchable = `${fullName} ${therapistNames}`;
-          return tokens.every(t => searchable.includes(t));
-        });
-      }
-    }
-    if(statusFilter !== 'wszyscy') list = list.filter(p => p.status === statusFilter);
-    return list;
-  },[patients, assignmentFilter, therapistAssignments, query, statusFilter, userIdToName]);
+    const q = normalize(query);
+    const list = patients.slice();
+    const byText = list.filter(p => {
+      const fn = normalize(p.firstName);
+      const ln = normalize(p.lastName);
+      const full1 = `${fn} ${ln}`;
+      const full2 = `${ln} ${fn}`;
+      return !q || fn.includes(q) || ln.includes(q) || full1.includes(q) || full2.includes(q);
+    });
+    const byStatus = byText.filter(p => {
+      const st = (p.status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
+      return statusFilter==='wszyscy' ? true : st===statusFilter;
+    });
+    const bySpecialist = byStatus.filter(p => {
+      if(specialistFilter==='wszyscy') return true;
+      const assigned = therapistAssignments[p.id] || [];
+      return assigned.includes(String(specialistFilter));
+    });
+    // sort by last name, then first name
+    return bySpecialist.sort((a,b)=> {
+      const lnA = normalize(a.lastName); const lnB = normalize(b.lastName);
+      if(lnA!==lnB) return lnA.localeCompare(lnB);
+      return normalize(a.firstName).localeCompare(normalize(b.firstName));
+    });
+  }, [patients, query, statusFilter, specialistFilter, therapistAssignments]);
 
-  const statusBadge = (status?: string) => {
-    const isActive = status === 'aktywny';
-    return <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[12px] leading-none ${isActive? 'text-green-700 bg-green-50 border-green-200':'text-gray-500 bg-gray-100 border-gray-300'}`}>{status || '—'}</span>;
-  };
-
-  // Czytelna etykieta statusu do panelu szczegółów (bez pastylki)
-  const statusLabel = (status?: string) => {
-    const isActive = status === 'aktywny';
-    const text = isActive ? 'aktywny' : (status || '—');
+  const statusLabel = (status?: string): JSX.Element => {
+    const st = (status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
+    const color = st==='aktywny' ? 'bg-green-500' : 'bg-gray-400';
     return (
-      <span className={`inline-flex items-center gap-2 font-semibold ${isActive ? 'text-green-700' : 'text-gray-600'}`}>
-        <span className="tracking-wide text-sm md:text-base">{text}</span>
-        <span className={`h-2.5 w-2.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-400'}`} aria-hidden="true" />
+      <span className="inline-flex items-center gap-2 text-sm text-gray-800">
+        <span className={`inline-block h-2.5 w-2.5 rounded-full ${color}`} aria-hidden="true" />
+        <span className="capitalize">{st}</span>
       </span>
     );
   };
 
-  // Czytelny status wizyty (bez pastylki) z kropką po prawej
-  const visitStatusLabel = (status: Visit['status']) => {
-    const color = status === 'zrealizowana' ? 'green' : status === 'odwołana' ? 'red' : status === 'nieobecny' ? 'amber' : 'blue';
-    const textColor = color === 'green' ? 'text-green-700' : color === 'red' ? 'text-red-600' : color === 'amber' ? 'text-amber-700' : 'text-blue-700';
+  const statusBadge = (status?: string): JSX.Element => {
+    const st = (status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
+    const color = st==='aktywny' ? 'bg-green-500' : 'bg-gray-400';
     return (
-      <span className={`font-semibold capitalize ${textColor}`}>{status}</span>
+      <span className="inline-flex items-center gap-1.5 text-xs text-gray-700">
+        <span className={`inline-block h-2 w-2 rounded-full ${color}`} aria-hidden="true" />
+        <span className="capitalize">{st}</span>
+      </span>
     );
   };
 
-  const selectedVisits = useMemo(()=> {
+  const visitStatusLabel = (status: Visit['status']): JSX.Element => {
+    const map: Record<Visit['status'], { color: string; text: string }> = {
+      'zrealizowana': { color: 'text-green-700', text: 'zrealizowana' },
+      'odwołana': { color: 'text-red-700', text: 'odwołana' },
+      'zaplanowana': { color: 'text-blue-700', text: 'zaplanowana' },
+      'nieobecny': { color: 'text-amber-700', text: 'nieobecny' }
+    };
+    const dot: Record<Visit['status'], string> = {
+      'zrealizowana': 'bg-green-500',
+      'odwołana': 'bg-red-500',
+      'zaplanowana': 'bg-blue-500',
+      'nieobecny': 'bg-amber-400'
+    };
+    return (
+      <span className={`inline-flex items-center gap-1.5 text-xs ${map[status].color}`}>
+        <span className={`inline-block h-2 w-2 rounded-full ${dot[status]}`} aria-hidden="true" />
+        <span className="capitalize">{map[status].text}</span>
+      </span>
+    );
+  };
+
+  // Selected patient's visits (newest first)
+  const selectedVisits = useMemo(()=>{
     if(!selected) return [] as Visit[];
-    return [...visits.filter(v=> v.patientId===selected.id)].sort((a,b)=> b.date.localeCompare(a.date));
-  }, [selected, visits]);
+    return visits.filter(v => v.patientId === selected.id).sort((a,b)=> b.date.localeCompare(a.date));
+  }, [visits, selected]);
 
-  const visitCounts = useMemo(()=> ({
-    total: selectedVisits.length,
-    zrealizowana: selectedVisits.filter(v=> v.status==='zrealizowana').length,
-    odwolana: selectedVisits.filter(v=> v.status==='odwołana').length,
-    zaplanowana: selectedVisits.filter(v=> v.status==='zaplanowana').length,
-    nieobecny: selectedVisits.filter(v=> v.status==='nieobecny').length
-  }),[selectedVisits]);
+  // Session tiles counts
+  const visitCounts = useMemo(()=>{
+    if(!selected) return { total: 0, zrealizowana: 0, odwolana: 0, nieobecny: 0, zaplanowana: 0 };
+    const vs = visits.filter(v => v.patientId === selected.id);
+    const acc = { total: vs.length, zrealizowana: 0, odwolana: 0, nieobecny: 0, zaplanowana: 0 };
+    vs.forEach(v => {
+      if(v.status==='zrealizowana') acc.zrealizowana++;
+      else if(v.status==='odwołana') acc.odwolana++;
+      else if(v.status==='nieobecny') acc.nieobecny++;
+      else acc.zaplanowana++;
+    });
+    return acc;
+  }, [visits, selected]);
 
-  const startEdit = () => { if(selected) setEditMode(true); };
-  const cancelEdit = () => { if(!selected) return; setEditMode(false); setEditForm({ firstName:selected.firstName, lastName:selected.lastName, birthDate:selected.birthDate||'', status:selected.status||'aktywny', therapists: therapistAssignments[selected.id]||[], notes: patientNotes[selected.id]||'' }); };
+  const addTherapist = (id: string) => {
+    if(!id) return;
+    setEditForm(f => f.therapists.includes(id) ? f : { ...f, therapists: [...f.therapists, id] });
+  };
+  const removeTherapist = (id: string) => {
+    setEditForm(f => ({ ...f, therapists: f.therapists.filter(t => t !== id) }));
+  };
+
+  const startEdit = () => {
+    if(!selected) return;
+    setEditForm({
+      firstName: selected.firstName || '',
+      lastName: selected.lastName || '',
+      birthDate: selected.birthDate || '',
+      status: (selected.status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny',
+      therapists: [...(therapistAssignments[selected.id] || selected.therapists || [])],
+      notes: (patientNotes[selected.id] ?? selected.notes ?? '')
+    });
+    setEditMode(true);
+  };
+
   const saveEdit = () => {
     if(!selected) return;
-    setPatients(prev => prev.map(p=> p.id===selected.id ? { ...p, firstName:editForm.firstName, lastName:editForm.lastName, birthDate:editForm.birthDate, status: editForm.status } : p));
-    setTherapistAssignments(prev => ({ ...prev, [selected.id]: editForm.therapists }));
-    setPatientNotes(prev => ({ ...prev, [selected.id]: editForm.notes }));
-    setSelected(prev => prev ? { ...prev, firstName:editForm.firstName, lastName:editForm.lastName, birthDate:editForm.birthDate, status: editForm.status } : prev);
+    const updated: PatientDemo = {
+      ...selected,
+      firstName: editForm.firstName.trim(),
+      lastName: editForm.lastName.trim(),
+      birthDate: editForm.birthDate || undefined,
+      status: editForm.status,
+      notes: editForm.notes?.trim() || undefined
+    };
+    setPatients(prev => prev.map(p => p.id === selected.id ? updated : p));
+    // Persist therapist assignments
+    setTherapistAssignments(prev => {
+      const next = { ...prev };
+      const unique = Array.from(new Set(editForm.therapists));
+      if(unique.length) next[selected.id] = unique; else delete next[selected.id];
+      return next;
+    });
+    // Persist patient notes map
+    setPatientNotes(prev => {
+      const next = { ...prev };
+      const txt = (editForm.notes || '').trim();
+      if(txt) next[selected.id] = txt; else delete next[selected.id];
+      return next;
+    });
+    setSelected(updated);
     setEditMode(false);
   };
 
-  useEffect(()=> { try { savePatients(patients); } catch {} },[patients]);
+  const cancelEdit = () => {
+    setEditMode(false);
+    setShowDatePicker(false);
+  };
 
-  const addTherapist = (id:string) => { if(!id || !selected) return; setEditForm(f => f.therapists.includes(id) ? f : { ...f, therapists:[...f.therapists, id] }); };
-  const removeTherapist = (id:string) => setEditForm(f => ({ ...f, therapists: f.therapists.filter(t=> t!==id) }));
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Delete selected patient and related data
+  const deleteSelected = () => {
+    if(!selected) return;
+    const id = selected.id;
+    // Remove patient
+    setPatients(prev => prev.filter(p => p.id !== id));
+    // Remove therapist assignments
+    setTherapistAssignments(prev => { const n = { ...prev }; delete n[id]; return n; });
+    // Remove patient notes
+    setPatientNotes(prev => { const n = { ...prev }; delete n[id]; return n; });
+    // Remove session notes for this patient's visits
+    const vIds = visits.filter(v => v.patientId === id).map(v => v.id);
+    setSessionNotes(prev => { const n = { ...prev }; vIds.forEach(vid => { delete n[vid]; }); return n; });
+    // Reset selection and open notes
+    setSelected(null);
+    setOpenSessionNotes(new Set());
+  };
+
+  const openDeleteModal = () => { if(selected) setShowDeleteModal(true); };
+  const cancelDelete = () => { if(deleting) return; setShowDeleteModal(false); };
+  const confirmDelete = () => {
+    if(!selected) return;
+    setDeleting(true);
+    deleteSelected();
+    setDeleting(false);
+    setShowDeleteModal(false);
+  };
+
+  // Accessibility refs
+  const addBtnRef = useRef<HTMLButtonElement|null>(null);
+  const modalRef = useRef<HTMLDivElement|null>(null);
+  const firstFieldRef = useRef<HTMLInputElement|null>(null);
+  const prevFocusRef = useRef<HTMLElement | null>(null);
+  const deleteModalRef = useRef<HTMLDivElement|null>(null);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const emptyNew = { firstName:'', lastName:'', birthDate:'', status:'aktywny', therapists:[] as string[], notes:'' };
   const [newPatientForm, setNewPatientForm] = useState<typeof emptyNew>(emptyNew);
   const [newErrors, setNewErrors] = useState<string[]>([]);
-  // Accessibility refs
-  const addBtnRef = useRef<HTMLButtonElement|null>(null);
-  const modalRef = useRef<HTMLDivElement|null>(null);
-  const firstFieldRef = useRef<HTMLInputElement|null>(null);
-  const prevFocusRef = useRef<HTMLElement | null>(null);
 
   const validateNew = () => {
     const errs: string[] = [];
@@ -272,26 +408,119 @@ export default function Patients(){
     }
   }, [showAddModal]);
 
+  // Match delete modal behavior with other dialogs (scroll lock + focus restore)
+  useEffect(()=>{
+    if(showDeleteModal){
+      prevFocusRef.current = document.activeElement as HTMLElement;
+      document.body.style.overflow = 'hidden';
+      // focus container so ESC/Tab trapping works
+      requestAnimationFrame(()=> deleteModalRef.current?.focus());
+    } else {
+      document.body.style.overflow = '';
+      prevFocusRef.current?.focus?.();
+    }
+  }, [showDeleteModal]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center flex-wrap gap-3">
         <div className="flex-1 max-w-sm bg-white rounded-xl shadow-sm border border-gray-200 p-3 flex items-center space-x-2 relative">
           <Search className="h-4 w-4 text-gray-400" />
-          <input value={query} onChange={e=> setQuery(e.target.value)} placeholder="Szukaj (imię/nazwisko podopiecznego lub terapeuty)" className="flex-1 bg-transparent outline-none text-sm pr-6" />
+          <input value={query} onChange={e=> setQuery(e.target.value)} placeholder="Szukaj podopiecznego (imię lub nazwisko)" className="flex-1 bg-transparent outline-none text-sm pr-6" />
           {query && <button type="button" onClick={()=> setQuery('')} className="absolute right-3 text-gray-400 hover:text-gray-600" aria-label="Wyczyść">×</button>}
         </div>
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-2">
-          <select value={statusFilter} onChange={e=> setStatusFilter(e.target.value as any)} className="text-xs bg-transparent outline-none">
-            <option value="aktywny">Aktywni</option>
-            <option value="nieaktywny">Nieaktywni</option>
-            <option value="wszyscy">Wszyscy</option>
-          </select>
+        {/* Status filter dropdown */}
+        <div className="relative">
+          <button
+            ref={statusBtnRef}
+            type="button"
+            onClick={()=> setShowStatusMenu(v=>!v)}
+            className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-xl bg-white border border-gray-200 shadow-sm hover:bg-gray-50"
+            aria-haspopup="listbox"
+            aria-expanded={showStatusMenu}
+          >
+            <span className="text-gray-700">{getStatusLabel(statusFilter)}</span>
+            <svg className={`h-4 w-4 text-gray-400 transition-transform ${showStatusMenu?'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.02l3.71-3.79a.75.75 0 111.08 1.04l-4.24 4.34a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
+          </button>
+          {showStatusMenu && (
+            <div
+              ref={statusMenuRef}
+              role="listbox"
+              tabIndex={-1}
+              onKeyDown={(e)=> { if(e.key==='Escape'){ e.preventDefault(); setShowStatusMenu(false); statusBtnRef.current?.focus(); } }}
+              className="absolute z-50 mt-2 w-48 overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 border border-gray-100"
+            >
+              {(['aktywny','nieaktywny','wszyscy'] as const).map(opt => (
+                <button
+                  type="button"
+                  key={opt}
+                  onClick={()=> { setStatusFilter(opt); setShowStatusMenu(false); }}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm hover:bg-gray-50 ${statusFilter===opt? 'bg-indigo-50 text-indigo-700':'text-gray-700'}`}
+                  role="option"
+                  aria-selected={statusFilter===opt}
+                >
+                  <span>{getStatusLabel(opt)}</span>
+                  {statusFilter===opt && (
+                    <svg className="h-4 w-4 text-indigo-600" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M16.704 5.29a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8.75 11.836l6.543-6.543a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-2">
-          <select value={assignmentFilter} onChange={e=> setAssignmentFilter(e.target.value as any)} className="text-xs bg-transparent outline-none">
-            <option value="wszyscy">Wszyscy (bez filtra)</option>
-            <option value="przypisani">Tylko z terapeutą</option>
-          </select>
+        {/* Specialist filter dropdown */}
+        <div className="relative">
+          <button
+            ref={specialistBtnRef}
+            type="button"
+            onClick={()=> setShowSpecialistMenu(v=>!v)}
+            className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-xl bg-white border border-gray-200 shadow-sm hover:bg-gray-50 min-w-[14rem] justify-between"
+            aria-haspopup="listbox"
+            aria-expanded={showSpecialistMenu}
+          >
+            <span className="truncate text-gray-700">{specialistFilter==='wszyscy' ? 'Wszyscy specjaliści' : (employeesSorted.find(e=> e.id===specialistFilter)?.label || '—')}</span>
+            <svg className={`h-4 w-4 text-gray-400 transition-transform ${showSpecialistMenu?'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.02l3.71-3.79a.75.75 0 111.08 1.04l-4.24 4.34a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
+          </button>
+          {showSpecialistMenu && (
+            <div
+              ref={specialistMenuRef}
+              role="listbox"
+              tabIndex={-1}
+              onKeyDown={(e)=> { if(e.key==='Escape'){ e.preventDefault(); setShowSpecialistMenu(false); specialistBtnRef.current?.focus(); } }}
+              className="absolute z-50 mt-2 w-72 overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 border border-gray-100"
+            >
+              <div className="max-h-64 overflow-y-auto py-1">
+                <button
+                  type="button"
+                  onClick={()=> { setSpecialistFilter('wszyscy'); setShowSpecialistMenu(false); }}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${specialistFilter==='wszyscy'? 'bg-indigo-50 text-indigo-700':'text-gray-700'}`}
+                  role="option"
+                  aria-selected={specialistFilter==='wszyscy'}
+                >
+                  <span>Wszyscy specjaliści</span>
+                  {specialistFilter==='wszyscy' && (
+                    <svg className="h-4 w-4 text-indigo-600" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M16.704 5.29a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8.75 11.836l6.543-6.543a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+                  )}
+                </button>
+                <div className="my-1 border-t border-gray-100" />
+                {employeesSorted.map(emp => (
+                  <button
+                    type="button"
+                    key={emp.id}
+                    onClick={()=> { setSpecialistFilter(emp.id); setShowSpecialistMenu(false); }}
+                    className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${specialistFilter===emp.id? 'bg-indigo-50 text-indigo-700':'text-gray-700'}`}
+                    role="option"
+                    aria-selected={specialistFilter===emp.id}
+                  >
+                    <span className="truncate">{emp.label}</span>
+                    {specialistFilter===emp.id && (
+                      <svg className="h-4 w-4 text-indigo-600" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M16.704 5.29a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8.75 11.836l6.543-6.543a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <button
           type="button"
@@ -348,7 +577,12 @@ export default function Patients(){
                       ) : `${selected.firstName} ${selected.lastName}`}
                     </h2>
                     <div className="flex items-center gap-2 ml-4">
-                      {!editMode && <button onClick={startEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700">Edytuj</button>}
+                      {!editMode && (
+                        <>
+                          <button onClick={openDeleteModal} className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Usuń</button>
+                          <button onClick={startEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700">Edytuj</button>
+                        </>
+                      )}
                       {editMode && (
                         <>
                           <button onClick={saveEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-green-600 text-white hover:bg-green-700">Zapisz</button>
@@ -373,8 +607,11 @@ export default function Patients(){
                             </button>
                             {showDatePicker && (
                               <div
+                                ref={datePickerOverlayRef}
+                                tabIndex={-1}
                                 className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
                                 onClick={closeDatePicker}
+                                onKeyDown={(e)=> { if(e.key==='Escape'){ e.stopPropagation(); closeDatePicker(); } }}
                                 role="dialog"
                                 aria-modal="true"
                                 aria-label="Wybierz datę urodzenia"
@@ -445,17 +682,42 @@ export default function Patients(){
                       <p className="flex items-center"><strong className="mr-1 text-[0.95rem] font-semibold text-gray-800">Status:</strong>{' '}
                         {editMode ? (
                           <div className="relative inline-block">
-                            <select
-                              value={editForm.status}
-                              onChange={e=> setEditForm(f=> ({...f, status:e.target.value}))}
-                              className="appearance-none px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white pr-8 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            <button
+                              ref={editStatusBtnRef}
+                              type="button"
+                              onClick={()=> setShowEditStatusMenu(v=>!v)}
+                              className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-xl bg-white border border-gray-300 shadow-sm hover:bg-gray-50"
+                              aria-haspopup="listbox"
+                              aria-expanded={showEditStatusMenu}
                             >
-                              <option value="aktywny">aktywny</option>
-                              <option value="nieaktywny">nieaktywny</option>
-                            </select>
-                            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
-                              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.024l3.71-3.793a.75.75 0 111.08 1.04l-4.24 4.336a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
-                            </span>
+                              <span className="capitalize text-gray-700">{editForm.status}</span>
+                              <svg className={`h-4 w-4 text-gray-400 transition-transform ${showEditStatusMenu?'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.024l3.71-3.793a.75.75 0 111.08 1.04l-4.24 4.336a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
+                            </button>
+                            {showEditStatusMenu && (
+                              <div
+                                ref={editStatusMenuRef}
+                                role="listbox"
+                                tabIndex={-1}
+                                onKeyDown={(e)=> { if(e.key==='Escape'){ e.preventDefault(); setShowEditStatusMenu(false); editStatusBtnRef.current?.focus(); } }}
+                                className="absolute z-50 mt-2 w-44 overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 border border-gray-100"
+                              >
+                                {(['aktywny','nieaktywny'] as const).map(opt => (
+                                  <button
+                                    type="button"
+                                    key={opt}
+                                    onClick={()=> { setEditForm(f=> ({...f, status: opt})); setShowEditStatusMenu(false); }}
+                                    className={`w-full flex items-center justify-between px-3 py-2.5 text-sm hover:bg-gray-50 ${editForm.status===opt? 'bg-indigo-50 text-indigo-700':'text-gray-700'}`}
+                                    role="option"
+                                    aria-selected={editForm.status===opt}
+                                  >
+                                    <span className="capitalize">{opt}</span>
+                                    {editForm.status===opt && (
+                                      <svg className="h-4 w-4 text-indigo-600" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M16.704 5.29a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8.75 11.836l6.543-6.543a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         ) : statusLabel(selected.status)}
                       </p>
@@ -497,16 +759,44 @@ export default function Patients(){
                             </div>
                             <div className="flex items-center gap-2">
                               <div className="relative inline-block">
-                                <select
-                                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white pr-8 appearance-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                  onChange={e=> { addTherapist(e.target.value); e.target.selectedIndex=0; }}
+                                <button
+                                  ref={editTherBtnRef}
+                                  type="button"
+                                  onClick={()=> setShowEditTherMenu(v=>!v)}
+                                  className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-xl bg-white border border-gray-300 shadow-sm hover:bg-gray-50 min-w-[14rem] justify-between"
+                                  aria-haspopup="listbox"
+                                  aria-expanded={showEditTherMenu}
                                 >
-                                  <option value="">Dodaj terapeutę...</option>
-                                  {users.filter(u=> u.role==='employee').filter(u=> !editForm.therapists.includes(u.id)).map(u=> <option key={u.id} value={u.id}>{u.name}</option>)}
-                                </select>
-                                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
-                                  <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.024l3.71-3.793a.75.75 0 111.08 1.04l-4.24 4.336a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
-                                </span>
+                                  <span className="truncate text-gray-700">Dodaj terapeutę...</span>
+                                  <svg className={`h-4 w-4 text-gray-400 transition-transform ${showEditTherMenu?'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.02l3.71-3.79a.75.75 0 111.08 1.04l-4.24 4.34a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
+                                </button>
+                                {showEditTherMenu && (
+                                  <div
+                                    ref={editTherMenuRef}
+                                    role="listbox"
+                                    tabIndex={-1}
+                                    onKeyDown={(e)=> { if(e.key==='Escape'){ e.preventDefault(); setShowEditTherMenu(false); editTherBtnRef.current?.focus(); } }}
+                                    className="absolute z-50 mt-2 w-72 overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 border border-gray-100"
+                                  >
+                                    <div className="max-h-64 overflow-y-auto py-1">
+                                      {employeesSorted.filter(emp => !editForm.therapists.includes(emp.id)).map(emp => (
+                                        <button
+                                          type="button"
+                                          key={emp.id}
+                                          onClick={()=> { addTherapist(emp.id); setShowEditTherMenu(false); }}
+                                          className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 text-gray-700"
+                                          role="option"
+                                        >
+                                          <span className="truncate">{emp.label}</span>
+                                          <svg className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd"/></svg>
+                                        </button>
+                                      ))}
+                                      {employeesSorted.filter(emp => !editForm.therapists.includes(emp.id)).length===0 && (
+                                        <div className="px-3 py-2 text-sm text-gray-500">Wszyscy terapeuci są już dodani</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -718,6 +1008,64 @@ export default function Patients(){
                 <button type="submit" disabled={creating} className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-60">{creating? 'Zapisywanie...':'Utwórz'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showDeleteModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center p-6 bg-black/40 backdrop-blur-sm overflow-y-auto"
+          onKeyDown={(e)=> {
+            if(e.key==='Escape'){ e.stopPropagation(); cancelDelete(); }
+            if(e.key==='Tab' && deleteModalRef.current){
+              const focusables = Array.from(deleteModalRef.current.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"))
+                .filter(el => !el.hasAttribute('disabled'));
+              if(!focusables.length) return;
+              const first = focusables[0];
+              const last = focusables[focusables.length-1];
+              if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); }
+              else if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+            }
+          }}
+          aria-modal="true"
+          role="dialog"
+          aria-labelledby="deletePatientTitle"
+        >
+          <div
+            ref={deleteModalRef}
+            tabIndex={-1}
+            className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in slide-in-from-top-2"
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-red-200 bg-gradient-to-r from-red-50 to-rose-50 rounded-t-2xl">
+              <h3 id="deletePatientTitle" className="text-lg font-semibold text-red-800 flex items-center gap-2">
+                <svg className="h-5 w-5 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                Usuń podopiecznego
+              </h3>
+              <button onClick={cancelDelete} className="p-2 rounded-lg hover:bg-white/70" aria-label="Zamknij">
+                <svg className="h-5 w-5 text-gray-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10  8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+              </button>
+            </div>
+            <div className="px-6 py-4 space-y-3">
+              <p className="text-sm text-gray-700">
+                Usuniesz podopiecznego:
+                <span className="font-semibold text-gray-900"> {selected?.firstName} {selected?.lastName}</span>.
+              </p>
+              <div className="text-sm text-gray-700">
+                <p className="font-medium text-gray-800 mb-1">Dodatkowo zostaną trwale usunięte:</p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  <li>Przypisania terapeutów ({selected ? (therapistAssignments[selected.id]||[]).length : 0})</li>
+                  <li>Notatki podopiecznego</li>
+                  <li>Notatki z sesji ({selectedVisits.length})</li>
+                </ul>
+                <p className="mt-2 text-[13px] text-red-700">Tej operacji nie można cofnąć.</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200">
+              <button onClick={cancelDelete} className="px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700">Anuluj</button>
+              <button onClick={confirmDelete} className="px-4 py-2 text-sm font-semibold rounded-lg bg-red-600 text-white shadow hover:bg-red-700 focus:ring-2 focus:ring-offset-2 focus:ring-red-500" disabled={deleting}>
+                {deleting ? 'Usuwanie...' : 'Usuń'}
+              </button>
+            </div>
           </div>
         </div>
       )}
