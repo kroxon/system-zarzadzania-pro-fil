@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, Users, MapPin, Settings, BarChart3, User, ListChecks, ClipboardList } from 'lucide-react';
+import { /* Calendar, */ Users, MapPin, Settings, BarChart3, User, /* ListChecks, */ ClipboardList } from 'lucide-react';
 
 interface SidebarProps {
   currentView: string;
@@ -16,8 +16,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
 
   // Base items excluding dashboard and groups
   const otherItems: { id: string; label: string; icon: React.ElementType; roles: Array<'admin' | 'employee' | 'contact'> }[] = [
-    { id: 'shared-calendar', label: 'Kalendarz wspólny', icon: Calendar, roles: ['admin', 'employee', 'contact'] },
-    { id: 'quizes', label: 'Quizy', icon: ListChecks, roles: ['admin', 'employee', 'contact'] },
+    // Wyłączone tymczasowo: Kalendarz wspólny
+    // { id: 'shared-calendar', label: 'Kalendarz wspólny', icon: Calendar, roles: ['admin', 'employee', 'contact'] },
+    // Wyłączone tymczasowo: Quizy
+    // { id: 'quizes', label: 'Quizy', icon: ListChecks, roles: ['admin', 'employee', 'contact'] },
     { id: 'tasks', label: 'Zadania', icon: ClipboardList, roles: ['admin', 'employee', 'contact'] },
     { id: 'settings', label: 'Ustawienia', icon: Settings, roles: ['admin'] }
   ];
