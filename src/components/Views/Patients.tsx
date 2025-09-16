@@ -25,7 +25,8 @@ interface Visit { id: string; patientId: string; date: string; therapists: strin
 const ASSIGN_KEY = 'schedule_therapist_assignments';
 
 export default function Patients(){
-  const [patients, setPatients] = useState<PatientDemo[]>(() => loadPatients());
+  // Odcięcie od danych demo: nie wyświetlaj żadnych pacjentów
+  const [patients, setPatients] = useState<PatientDemo[]>([]);
   const [meetings, setMeetings] = useState(() => loadMeetings());
   const [users, setUsers] = useState(() => loadUsers());
   const [rooms, setRooms] = useState(() => loadRooms());
@@ -60,6 +61,7 @@ export default function Patients(){
   const [activeTab, setActiveTab] = useState<'info'|'sessions'>('info');
 
   const [query, setQuery] = useState('');
+  // Nie można wybrać żadnego pacjenta
   const [selected, setSelected] = useState<PatientDemo | null>(null);
   const [statusFilter, setStatusFilter] = useState<'aktywny'|'nieaktywny'|'wszyscy'>('aktywny');
   // Replace generic assignment filter with a specialist single-select filter
@@ -190,32 +192,8 @@ export default function Patients(){
   const normalize = (s: string) => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
   // Filtered patients list for the left panel
-  const filtered = useMemo(()=>{
-    const q = normalize(query);
-    const list = patients.slice();
-    const byText = list.filter(p => {
-      const fn = normalize(p.firstName);
-      const ln = normalize(p.lastName);
-      const full1 = `${fn} ${ln}`;
-      const full2 = `${ln} ${fn}`;
-      return !q || fn.includes(q) || ln.includes(q) || full1.includes(q) || full2.includes(q);
-    });
-    const byStatus = byText.filter(p => {
-      const st = (p.status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
-      return statusFilter==='wszyscy' ? true : st===statusFilter;
-    });
-    const bySpecialist = byStatus.filter(p => {
-      if(specialistFilter==='wszyscy') return true;
-      const assigned = therapistAssignments[p.id] || [];
-      return assigned.includes(String(specialistFilter));
-    });
-    // sort by last name, then first name
-    return bySpecialist.sort((a,b)=> {
-      const lnA = normalize(a.lastName); const lnB = normalize(b.lastName);
-      if(lnA!==lnB) return lnA.localeCompare(lnB);
-      return normalize(a.firstName).localeCompare(normalize(b.firstName));
-    });
-  }, [patients, query, statusFilter, specialistFilter, therapistAssignments]);
+  // Lista pacjentów zawsze pusta
+  const filtered = useMemo(() => [], [patients, query, statusFilter, specialistFilter, therapistAssignments]);
 
   const statusLabel = (status?: string): JSX.Element => {
     const st = (status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
@@ -542,21 +520,8 @@ export default function Patients(){
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
-              {filtered.map(p => (
-                <tr
-                  key={p.id}
-                  onClick={()=> setSelected(p)}
-                  className={`cursor-pointer hover:bg-blue-50 transition-colors ${selected?.id===p.id? 'bg-blue-50/80':''}`}
-                >
-                  <td className="px-3 py-2.5">
-                    <div className="min-w-0">
-                      <span className={`block truncate text-[16px] leading-tight ${selected?.id===p.id ? 'font-semibold text-blue-900' : 'text-gray-900'}`}>{p.firstName} {p.lastName}</span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 text-[13px] whitespace-nowrap">{statusBadge(p.status)}</td>
-                </tr>
-              ))}
-              {filtered.length===0 && <tr><td colSpan={2} className="px-3 py-4 text-center text-sm text-gray-500">Brak podopiecznych</td></tr>}
+              {/* Usunięto renderowanie wierszy pacjentów, lista zawsze pusta */}
+              <tr><td colSpan={2} className="px-3 py-4 text-center text-sm text-gray-500">Brak podopiecznych</td></tr>
             </tbody>
           </table>
         </div>
