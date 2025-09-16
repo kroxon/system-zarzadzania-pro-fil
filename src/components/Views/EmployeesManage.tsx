@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User } from '../../types';
 import { X, Pencil, Trash2, ChevronDown } from 'lucide-react';
-import { fetchEmployees, fetchEmployee, updateEmployee } from '../../utils/api/employees';
+import { fetchEmployees, fetchEmployee, updateEmployee, deleteEmployee } from '../../utils/api/employees';
 import { mapBackendRolesToFrontend } from '../../utils/roleMapper';
 import type { Employee as ApiEmployee, Occupation } from '../../types';
 import { getAllOccupations } from '../../utils/api/occupations';
@@ -297,14 +297,6 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
     setFormData(blankForm);
   };
 
-  // Helper to choose primary role from roles array (expects frontend role names)
-  const primaryRoleFromArray = (roles?: string[]): 'admin' | 'contact' | 'employee' => {
-    if (!roles || roles.length === 0) return 'employee';
-    if (roles.includes('admin')) return 'admin';
-    if (roles.includes('contact')) return 'contact';
-    return 'employee';
-  };
-
   // NEW: Properly derive primary role from backend roles array
   const backendPrimaryRoleFromArray = (roles?: string[]): 'admin' | 'contact' | 'employee' => {
     if (!roles || roles.length === 0) return 'employee';
@@ -321,31 +313,43 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
 
   const isInactive = (u: User) => !!u.employmentEnd && (!u.employmentStart || u.employmentEnd < new Date().toISOString().split('T')[0]);
 
-  // State for custom backend-only dialog
-  const [showBackendDialog, setShowBackendDialog] = useState(false);
-  const [backendDialogLoading, setBackendDialogLoading] = useState(false);
-  const [backendDialogError, setBackendDialogError] = useState<string | null>(null);
-  const [backendDialogData, setBackendDialogData] = useState<ApiEmployee[]>([]);
+  // Delete confirmation state (backend users)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; surname: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const openBackendDialog = async () => {
-    setShowBackendDialog(true);
-    setBackendDialogLoading(true);
-    setBackendDialogError(null);
-    setBackendDialogData([]);
+  // Open delete confirmation for backend users; fallback to default for demo users
+  const openDeleteDialog = (u: User) => {
+    const isBackend = backendUsersState.some(b => b.id === u.id);
+    if (!isBackend) {
+      // use existing demo deletion flow
+      handleDelete(u.id);
+      return;
+    }
+    const idNum = Number(u.id);
+    if (!Number.isFinite(idNum)) return;
+    setDeleteTarget({ id: idNum, name: u.name || '', surname: u.surname || '' });
+    setDeleteError(null);
+    setShowDeleteDialog(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    const token = getAuthToken();
+    if (!token) { setDeleteError('Brak tokenu uwierzytelniającego'); return; }
+    setIsDeleting(true);
+    setDeleteError(null);
     try {
-      const token = getAuthToken();
-      if (!token) {
-        setBackendDialogError('Brak tokenu uwierzytelniającego');
-        return;
-      }
-      const fresh = await fetchEmployees(token);
-      setBackendDialogData(fresh);
-      // Also update the main backend list to keep it fresh
-      setBackendUsersState(mapApiEmployeesToUsers(fresh));
-    } catch (err) {
-      setBackendDialogError('Nie udało się pobrać listy pracowników');
+      await deleteEmployee(deleteTarget.id, token);
+      await refreshBackendUsers();
+      if (onBackendRefresh) await onBackendRefresh();
+      setShowDeleteDialog(false);
+      setDeleteTarget(null);
+    } catch (e) {
+      setDeleteError('Nie udało się usunąć pracownika');
     } finally {
-      setBackendDialogLoading(false);
+      setIsDeleting(false);
     }
   };
 
@@ -353,12 +357,6 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div className="text-sm text-gray-500">Liczba pracowników: {demoUsersToShow.length + backendUsersToShow.length}</div>
-        <button
-          onClick={openBackendDialog}
-          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg shadow-sm hover:bg-blue-700 transition-colors"
-        >
-          test
-        </button>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
@@ -424,7 +422,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                   <button onClick={() => openEditModal(u)} className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-xs border border-blue-200">
                     <Pencil className="w-3 h-3 mr-1"/>Edytuj
                   </button>
-                  <button type="button" disabled className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-400 rounded text-xs border border-gray-200 cursor-not-allowed" title="Usuwanie backendowych pracowników dostępne po podłączeniu API">
+                  <button onClick={() => openDeleteDialog(u)} className="inline-flex items-center px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 text-xs border border-red-200">
                     <Trash2 className="w-3 h-3 mr-1"/>Usuń
                   </button>
                 </td>
@@ -690,55 +688,32 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
         </div>
       )}
 
-      {/* Custom backend-only dialog */}
-      {showBackendDialog && (
+      {/* Delete confirmation dialog */}
+      {showDeleteDialog && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900">Pracownicy (backend)</h2>
-              <button onClick={() => setShowBackendDialog(false)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md border border-red-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-red-100">
+              <h3 className="text-lg font-semibold text-gray-900">Potwierdź usunięcie</h3>
+              <button onClick={() => { if (!isDeleting) setShowDeleteDialog(false); }} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
                 <X className="h-5 w-5 text-gray-500" />
               </button>
             </div>
-            <div className="px-6 py-5">
-              {backendDialogLoading && (
-                <div className="text-sm text-gray-500">Ładowanie…</div>
+            <div className="px-6 py-5 space-y-4">
+              <p className="text-sm text-gray-700">
+                Czy na pewno chcesz usunąć pracownika <span className="font-medium">{deleteTarget?.name} {deleteTarget?.surname}</span>? Tej operacji nie można cofnąć.
+              </p>
+              {deleteError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{deleteError}</div>
               )}
-              {backendDialogError && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{backendDialogError}</div>
-              )}
-              {!backendDialogLoading && !backendDialogError && (
-                backendDialogData.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Imię</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Nazwisko</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Specjalizacja</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-100">
-                        {backendDialogData.map(e => (
-                          <tr key={e.id} className="hover:bg-gray-50">
-                            <td className="px-4 py-2 text-sm text-gray-900">{e.name}</td>
-                            <td className="px-4 py-2 text-sm text-gray-900">{e.surname}</td>
-                            <td className="px-4 py-2 text-sm text-gray-600">{e.email}</td>
-                            <td className="px-4 py-2 text-sm text-gray-600">{e.occupationName} (#{e.occupationId})</td>
-                            <td className="px-4 py-2 text-xs text-gray-600">{e.roles?.join(', ')}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="text-sm text-gray-500">Brak pracowników</div>
-                )
-              )}
-              <div className="flex justify-end mt-4">
-                <button onClick={() => setShowBackendDialog(false)} className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-sm">Zamknij</button>
+              <div className="flex justify-end space-x-3 pt-2">
+                <button type="button" onClick={() => setShowDeleteDialog(false)} disabled={isDeleting} className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-sm">Anuluj</button>
+                <button type="button" onClick={handleConfirmDelete} disabled={isDeleting} className="px-4 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg transition-colors text-sm inline-flex items-center min-w-[120px] justify-center">
+                  {isDeleting ? (
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  ) : (
+                    'Usuń'
+                  )}
+                </button>
               </div>
             </div>
           </div>
