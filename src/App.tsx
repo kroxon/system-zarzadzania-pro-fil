@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Layout/Sidebar';
 import TopBar from './components/Layout/TopBar';
 import Dashboard from './components/Views/Dashboard';
@@ -44,37 +44,48 @@ function App() {
   const [showWeekends, setShowWeekends] = useState(false);
   const [startHour, setStartHour] = useState(8);
   const [endHour, setEndHour] = useState(17);
+  // NEW: flag to avoid persisting when syncing backend employees
+  const [suppressUsersPersist, setSuppressUsersPersist] = useState(false);
+
+  // Reusable backend users refresh
+  const refreshBackendUsersGlobal = useCallback(async () => {
+    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+    if (!token) return;
+    try {
+      const apiEmployees = await fetchEmployees(token);
+      const mapped = apiEmployees.map(e => ({
+        id: e.id.toString(),
+        name: e.name,
+        surname: e.surname,
+        role: (mapBackendRolesToFrontend(e.roles)[0]) || 'employee',
+        specialization: e.occupationName,
+        notes: e.info || undefined,
+      }));
+      const newBackendIds = mapped.map(m => m.id);
+      const prevBackendIds: string[] = (() => {
+        try { return JSON.parse(localStorage.getItem('schedule_backend_ids') || '[]'); } catch { return []; }
+      })();
+      setSuppressUsersPersist(true);
+      setUsersState(prev => {
+        const demoOnly = prev.filter(u => !prevBackendIds.includes(u.id));
+        saveUsers(demoOnly);
+        return [...demoOnly, ...mapped];
+      });
+      localStorage.setItem('schedule_backend_ids', JSON.stringify(newBackendIds));
+    } finally {
+      setSuppressUsersPersist(false);
+    }
+  }, [currentUser?.token]);
 
   // Fetch employees from backend when token available and merge into usersState
   useEffect(() => {
-    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
-    if (!token) return;
     let cancelled = false;
     (async () => {
-      try {
-        const apiEmployees = await fetchEmployees(token);
-        if (cancelled) return;
-        const mapped = apiEmployees.map(e => ({
-          id: e.id.toString(),
-          name: e.name,
-          surname: e.surname,
-          role: (mapBackendRolesToFrontend(e.roles)[0]) || 'employee',
-          specialization: e.occupationName,
-          notes: e.info || undefined,
-        }));
-        setUsersState(prev => {
-          const byId = new Map(prev.map(u => [u.id, u]));
-          for (const u of mapped) {
-            byId.set(u.id, { ...byId.get(u.id), ...u });
-          }
-          return Array.from(byId.values());
-        });
-      } catch {
-        // silent fail
-      }
+      if (cancelled) return;
+      await refreshBackendUsersGlobal();
     })();
     return () => { cancelled = true; };
-  }, [currentUser?.token]);
+  }, [refreshBackendUsersGlobal]);
 
   // Only restore current user (do NOT overwrite entity states)
   useEffect(() => {
@@ -84,7 +95,8 @@ function App() {
 
   // Persist rooms on change
   useEffect(()=>{ saveRooms(roomsState); },[roomsState]);
-  useEffect(()=>{ saveUsers(usersState); },[usersState]);
+  // Persist users on change (skip when syncing backend)
+  useEffect(()=>{ if (!suppressUsersPersist) saveUsers(usersState); },[usersState, suppressUsersPersist]);
   useEffect(()=>{ savePatients(patientsState); },[patientsState]);
   useEffect(()=>{ saveMeetings(meetings); },[meetings]);
 
@@ -106,7 +118,8 @@ function App() {
       };
       setCurrentUser(frontendUser);
       saveCurrentUser(frontendUser);
-      setUsersState(prev => prev.some(u=>u.id===frontendUser.id) ? prev : [...prev, frontendUser]);
+      // Nie dodawaj tutaj backendowego usera do usersState (zapobiegnie to zapisowi do localStorage).
+      // Lista zostanie zsynchronizowana przez efekt fetchEmployees powyżej.
       return;
     }
     // DemoUsers lub fallback
@@ -217,7 +230,7 @@ function App() {
       case 'rooms-manage':
         return <RoomsManage rooms={roomsState} onRoomsChange={setRoomsState} userRole={currentUser!.role} />;
       case 'employees-manage':
-        return <EmployeesManage users={usersState} onAdd={handleAddEmployee} onUpdate={handleUpdateEmployee} onDelete={handleDeleteEmployee} />;
+        return <EmployeesManage users={usersState} onAdd={handleAddEmployee} onUpdate={handleUpdateEmployee} onDelete={handleDeleteEmployee} onBackendRefresh={refreshBackendUsersGlobal} />;
       case 'patients':
         return <Patients />;
       case 'settings':
