@@ -86,6 +86,11 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
   const demoUsersToShow = employeeUsers.filter(d => !backendIds.has(d.id));
   const backendUsersToShow = backendUsersState.filter(u => !demoUsersToShow.some(d => d.id === u.id));
 
+  // Default sorting by surname (Polish locale, case-insensitive)
+  const sortBySurname = (arr: User[]) => [...arr].sort((a, b) => (a.surname || '').localeCompare(b.surname || '', 'pl', { sensitivity: 'base' }));
+  const demoUsersSorted = sortBySurname(demoUsersToShow);
+  const backendUsersSorted = sortBySurname(backendUsersToShow);
+
   const [showForm, setShowForm] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -153,8 +158,8 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
     }
   };
 
-  // Full name helper
-  const fullName = (u: Pick<User, 'name' | 'surname'>) => [u.name, u.surname].filter(Boolean).join(' ');
+  // Surname first helper
+  const fullNameSurnameFirst = (u: Pick<User, 'name' | 'surname'>) => [u.surname, u.name].filter(Boolean).join(' ');
 
   const resetEditApiState = () => {
     setEditApiData(null);
@@ -311,7 +316,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
     onDelete && onDelete(id);
   };
 
-  const isInactive = (u: User) => !!u.employmentEnd && (!u.employmentStart || u.employmentEnd < new Date().toISOString().split('T')[0]);
+  const isInactive = (_u: User) => false; // employment column removed, keep hover style simple
 
   // Delete confirmation state (backend users)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -363,23 +368,21 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Imię i nazwisko</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nazwisko i imię</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Specjalizacja</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rola</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Zatrudnienie</th>
+              {/* Zatrudnienie column removed */}
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notatki</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-100">
-            {demoUsersToShow.map(u => (
+            {demoUsersSorted.map(u => (
               <tr key={u.id} className={`hover:bg-gray-50 ${isInactive(u) ? 'opacity-60 italic' : ''}`}>
-                <td className="px-4 py-3 text-sm text-gray-900">{fullName(u)}</td>
+                <td className="px-4 py-3 text-sm text-gray-900">{fullNameSurnameFirst(u)}</td>
                 <td className="px-4 py-3 text-sm text-gray-600">{u.specialization}</td>
                 <td className="px-4 py-3 text-sm text-gray-600">{roleToLabel(u.role)}</td>
-                <td className="px-4 py-3 text-xs text-gray-600">
-                  <div>{u.employmentStart || '—'} → {u.employmentEnd || 'obecnie'}</div>
-                </td>
+                {/* Employment column removed */}
                 <td className="px-4 py-3 text-xs text-gray-600">
                   <div className="max-w-xs truncate" title={u.notes}>{u.notes || '—'}</div>
                 </td>
@@ -394,9 +397,9 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
               </tr>
             ))}
 
-            {backendUsersToShow.length > 0 && (
+            {backendUsersSorted.length > 0 && (
               <tr>
-                <td colSpan={6} className="px-4">
+                <td colSpan={5} className="px-4">
                   <div className="relative mt-1 mb-2">
                     <div className="border-t-2 border-red-500"></div>
                     <div className="absolute inset-x-0 -top-3 text-center">
@@ -407,14 +410,12 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
               </tr>
             )}
 
-            {backendUsersToShow.map(u => (
+            {backendUsersSorted.map(u => (
               <tr key={u.id} className={`hover:bg-gray-50 ${isInactive(u) ? 'opacity-60 italic' : ''}`}>
-                <td className="px-4 py-3 text-sm text-gray-900">{fullName(u)}</td>
+                <td className="px-4 py-3 text-sm text-gray-900">{fullNameSurnameFirst(u)}</td>
                 <td className="px-4 py-3 text-sm text-gray-600">{u.specialization}</td>
                 <td className="px-4 py-3 text-sm text-gray-600">{roleToLabel(u.role)}</td>
-                <td className="px-4 py-3 text-xs text-gray-600">
-                  <div>{u.employmentStart || '—'} → {u.employmentEnd || 'obecnie'}</div>
-                </td>
+                {/* Employment column removed */}
                 <td className="px-4 py-3 text-xs text-gray-600">
                   <div className="max-w-xs truncate" title={u.notes}>{u.notes || '—'}</div>
                 </td>
@@ -429,9 +430,9 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
               </tr>
             ))}
 
-            {demoUsersToShow.length + backendUsersToShow.length === 0 && (
+            {demoUsersSorted.length + backendUsersSorted.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-sm text-gray-500">Brak pracowników</td>
+                <td colSpan={5} className="px-4 py-6 text-center text-sm text-gray-500">Brak pracowników</td>
               </tr>
             )}
           </tbody>
