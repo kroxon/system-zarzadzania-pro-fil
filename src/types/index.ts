@@ -1,4 +1,3 @@
-
 // Employee zgodny z API
 export interface Employee {
   id: number;
@@ -114,7 +113,7 @@ export interface PendingUser {
   role: Role; //tutaj będzie kluczowa zmiana w przyszłości, role zamienia sie na occupation
 }
 
-export interface ApproveUser{
+export interface ApproveUser {
   role: Role;
 }
 
@@ -126,15 +125,15 @@ export interface LoginRequest {
 }
 
 //logowanie odpowiedź
-export interface LoginResponse{
+export interface LoginResponse {
   token: string;
   employeeId: string | number;
 }
 
 //register
-export interface RegisterRequest{
+export interface RegisterRequest {
   name: string;
-  surname : string;
+  surname: string;
   email: string;
   password: string;
   occupationId: number
@@ -157,7 +156,7 @@ export interface ResetPasswordRequest {
 
 
 //occupations
-export interface Occupation{
+export interface Occupation {
   id: number;
   name: string;
 }
@@ -174,7 +173,7 @@ export interface UpdateOccupation {
 
 
 //events
-export interface Event{
+export interface Event {
   id: number;
   name: string;
   start: string; //ISO date-time format
@@ -202,13 +201,13 @@ export interface PatchEventPersons {
 
 
 //event statuses
-export interface EventStatus{
+export interface EventStatus {
   id: number;
   name: string;
 }
 
 //patients
-export interface Patient{
+export interface Patient {
   id: number;
   name: string;
   surname: string;
@@ -217,14 +216,14 @@ export interface Patient{
 }
 
 
-export interface CreatePatient{
+export interface CreatePatient {
   name: string;
   surname: string;
-  info? : string | null;
+  info?: string | null;
   birthDate: string;
 }
 
-export interface UpdatePatient{
+export interface UpdatePatient {
   name: string;
   surname: string;
   info?: string | null;
@@ -240,33 +239,37 @@ export type PatientStatus = 'aktywny' | 'nieaktywny';
 export interface RoomAPI {
   id: number;
   name: string;
+  hexColor: string; 
 }
 
 export interface CreateRoom {
   name: string;
+  hexColor: string;
+
 }
 
 export interface UpdateRoom {
   name: string;
+  hexColor: string;
 }
 
 
 //workhours
 
-export interface WorkHours{
+export interface WorkHours {
   id: number;
   start: string;
   end: string;
   employeeId: number;
 }
 
-export interface CreateWorkHours{
+export interface CreateWorkHours {
   start: string;
   end: string;
   employeeId: number;
 }
 
-export interface UpdateWorkHours{
+export interface UpdateWorkHours {
   start: string;
   end: string;
   employeeId: number;
