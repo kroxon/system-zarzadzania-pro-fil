@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from '../../types';
 import { Plus, X, Pencil, Trash2 } from 'lucide-react';
+import { fetchEmployees } from '../../utils/api/employees';
+import { mapBackendRolesToFrontend } from '../../utils/roleMapper';
 
 interface EmployeesManageProps {
   users: User[];
@@ -10,13 +12,65 @@ interface EmployeesManageProps {
 }
 
 const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdate, onDelete }) => {
-  const employeeUsers = users.filter(u => u.role !== 'admin');
+  // Start with demo/local users; backend kept separately and shown below
+  const [displayUsers, setDisplayUsers] = useState<User[]>(users);
+  const [backendUsersState, setBackendUsersState] = useState<User[]>([]);
+
+  // Sync with incoming users (demo/local)
+  useEffect(() => {
+    setDisplayUsers(users);
+  }, [users]);
+
+  // Fetch backend employees once and keep separately (rendered below demo)
+  useEffect(() => {
+    const stored = localStorage.getItem('schedule_current_user');
+    const token = (stored ? (() => { try { return JSON.parse(stored)?.token; } catch { return undefined; } })() : undefined) || localStorage.getItem('token') || undefined;
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const apiEmployees = await fetchEmployees(token);
+        if (cancelled) return;
+        const mapped: User[] = apiEmployees.map(e => ({
+          id: e.id.toString(),
+          name: e.name,
+          surname: e.surname,
+          role: (mapBackendRolesToFrontend(e.roles)[0]) || 'employee',
+          specialization: e.occupationName,
+          notes: e.info || undefined,
+        }));
+        setBackendUsersState(mapped);
+      } catch (e) {
+        console.warn('Nie udało się pobrać pracowników z backendu');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Show all roles (admin, pierwszy kontakt, pracownik)
+  const employeeUsers = displayUsers;
+  const demoUsers = employeeUsers;
+  const backendUsersToShow = backendUsersState.filter(u => !demoUsers.some(d => d.id === u.id));
+
   const [showForm, setShowForm] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const blankForm = { name: '', specialization: '', employmentStart: '', employmentEnd: '', notes: '' };
   const [formData, setFormData] = useState(blankForm);
   const [errors, setErrors] = useState<string[]>([]);
+
+  // Role label mapping
+  const roleToLabel = (role: User['role']) => {
+    switch (role) {
+      case 'admin': return 'admin';
+      case 'contact': return 'pierwszy kontakt';
+      case 'employee':
+      default: return 'pracownik';
+    }
+  };
+
+  // Full name helper
+  const fullName = (u: Pick<User, 'name' | 'surname'>) => [u.name, u.surname].filter(Boolean).join(' ');
 
   const openAddModal = () => {
     setModalMode('add');
@@ -30,7 +84,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
     setModalMode('edit');
     setEditingUserId(u.id);
     setFormData({
-      name: u.name || '',
+      name: fullName(u),
       specialization: u.specialization || '',
       employmentStart: u.employmentStart || '',
       employmentEnd: u.employmentEnd || '',
@@ -85,7 +139,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <div className="text-sm text-gray-500">Liczba pracowników: {employeeUsers.length}</div>
+        <div className="text-sm text-gray-500">Liczba pracowników: {employeeUsers.length + backendUsersToShow.length}</div>
         <button
           onClick={openAddModal}
           className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg shadow-sm hover:bg-blue-700 transition-colors"
@@ -100,16 +154,18 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Imię i nazwisko</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Specjalizacja</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rola</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Zatrudnienie</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notatki</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-100">
-            {employeeUsers.map(u => (
+            {demoUsers.map(u => (
               <tr key={u.id} className={`hover:bg-gray-50 ${isInactive(u) ? 'opacity-60 italic' : ''}`}>
-                <td className="px-4 py-3 text-sm text-gray-900">{u.name}</td>
+                <td className="px-4 py-3 text-sm text-gray-900">{fullName(u)}</td>
                 <td className="px-4 py-3 text-sm text-gray-600">{u.specialization}</td>
+                <td className="px-4 py-3 text-sm text-gray-600">{roleToLabel(u.role)}</td>
                 <td className="px-4 py-3 text-xs text-gray-600">
                   <div>{u.employmentStart || '—'} → {u.employmentEnd || 'obecnie'}</div>
                 </td>
@@ -126,9 +182,45 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                 </td>
               </tr>
             ))}
-            {employeeUsers.length === 0 && (
+
+            {backendUsersToShow.length > 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-sm text-gray-500">Brak pracowników</td>
+                <td colSpan={6} className="px-4">
+                  <div className="relative mt-1 mb-2">
+                    <div className="border-t-2 border-red-500"></div>
+                    <div className="absolute inset-x-0 -top-3 text-center">
+                      <span className="inline-block bg-white px-2 text-xs font-medium text-red-600">backend data</span>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            )}
+
+            {backendUsersToShow.map(u => (
+              <tr key={u.id} className={`hover:bg-gray-50 ${isInactive(u) ? 'opacity-60 italic' : ''}`}>
+                <td className="px-4 py-3 text-sm text-gray-900">{fullName(u)}</td>
+                <td className="px-4 py-3 text-sm text-gray-600">{u.specialization}</td>
+                <td className="px-4 py-3 text-sm text-gray-600">{roleToLabel(u.role)}</td>
+                <td className="px-4 py-3 text-xs text-gray-600">
+                  <div>{u.employmentStart || '—'} → {u.employmentEnd || 'obecnie'}</div>
+                </td>
+                <td className="px-4 py-3 text-xs text-gray-600">
+                  <div className="max-w-xs truncate" title={u.notes}>{u.notes || '—'}</div>
+                </td>
+                <td className="px-4 py-3 text-sm text-right space-x-2">
+                  <button onClick={() => openEditModal(u)} className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-xs border border-blue-200">
+                    <Pencil className="w-3 h-3 mr-1"/>Edytuj
+                  </button>
+                  <button onClick={() => handleDelete(u.id)} className="inline-flex items-center px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 text-xs border border-red-200">
+                    <Trash2 className="w-3 h-3 mr-1"/>Usuń
+                  </button>
+                </td>
+              </tr>
+            ))}
+
+            {demoUsers.length + backendUsersToShow.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-4 py-6 text-center text-sm text-gray-500">Brak pracowników</td>
               </tr>
             )}
           </tbody>
@@ -197,7 +289,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                 <textarea
                   value={formData.notes}
                   onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none h-24"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus-border-transparent resize-none h-24"
                   placeholder="Uwagi kadrowe..."
                 />
               </div>

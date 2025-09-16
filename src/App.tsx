@@ -31,6 +31,7 @@ import {
 import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
 import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon, ListChecks, ClipboardList } from 'lucide-react';
 import { mapBackendRolesToFrontend } from './utils/roleMapper';
+import { fetchEmployees } from './utils/api/employees';
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -43,6 +44,37 @@ function App() {
   const [showWeekends, setShowWeekends] = useState(false);
   const [startHour, setStartHour] = useState(8);
   const [endHour, setEndHour] = useState(17);
+
+  // Fetch employees from backend when token available and merge into usersState
+  useEffect(() => {
+    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const apiEmployees = await fetchEmployees(token);
+        if (cancelled) return;
+        const mapped = apiEmployees.map(e => ({
+          id: e.id.toString(),
+          name: e.name,
+          surname: e.surname,
+          role: (mapBackendRolesToFrontend(e.roles)[0]) || 'employee',
+          specialization: e.occupationName,
+          notes: e.info || undefined,
+        }));
+        setUsersState(prev => {
+          const byId = new Map(prev.map(u => [u.id, u]));
+          for (const u of mapped) {
+            byId.set(u.id, { ...byId.get(u.id), ...u });
+          }
+          return Array.from(byId.values());
+        });
+      } catch {
+        // silent fail
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentUser?.token]);
 
   // Only restore current user (do NOT overwrite entity states)
   useEffect(() => {
