@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import NotFound404 from './components/Views/NotFound404';
 import Sidebar from './components/Layout/Sidebar';
 import TopBar from './components/Layout/TopBar';
 import Dashboard from './components/Views/Dashboard';
@@ -32,6 +34,30 @@ import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
 import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon, ListChecks, ClipboardList } from 'lucide-react';
 import { mapBackendRolesToFrontend } from './utils/roleMapper';
 import { fetchEmployees } from './utils/api/employees';
+
+function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any, onLogout: () => void, children?: React.ReactNode }) {
+  if (!currentUser) return <Navigate to="/login" replace />;
+  return (
+    <div className="flex h-screen bg-gray-50">
+      <Sidebar
+        currentView={''}
+        userRole={currentUser.role}
+      />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <TopBar
+          currentUser={currentUser}
+          onLogout={onLogout}
+          pageTitle={''}
+        />
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <div className="p-6 flex-1 flex flex-col overflow-y-auto">
+            {children ? children : <Outlet />}
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -193,100 +219,32 @@ function App() {
     'tasks': { title: 'Zadania', icon: <ClipboardList className="h-6 w-6" /> },
   };
 
-  if (!currentUser) {
-    return <LoginForm onLogin={handleLogin} onLoginSuccess={() => setCurrentView('dashboard')} />;
-  }
-
-  const renderCurrentView = () => {
-    const commonProps = {
-      users: usersState,
-      rooms: roomsState,
-      meetings,
-      patients: patientsState,
-      currentUser,
-      onMeetingCreate: handleMeetingCreate,
-      onMeetingUpdate: handleMeetingUpdate,
-      onMeetingDelete: handleMeetingDelete,
-      showWeekends,
-      startHour,
-      endHour
-    };
-
-    switch (currentView) {
-      case 'dashboard':
-        return (
-          <Dashboard
-            users={usersState}
-            rooms={roomsState}
-            meetings={meetings}
-          />
-        );
-      case 'shared-calendar':
-        return <SharedCalendar {...commonProps} />;
-      case 'employee-calendar':
-        return <EmployeeCalendar {...commonProps} />;
-      case 'room-calendar':
-        return <RoomCalendar {...commonProps} patients={patientsState as any as Patient[]} />;
-      case 'rooms-manage':
-        return <RoomsManage rooms={roomsState} onRoomsChange={setRoomsState} userRole={currentUser!.role} />;
-      case 'employees-manage':
-        return <EmployeesManage users={usersState} onAdd={handleAddEmployee} onUpdate={handleUpdateEmployee} onDelete={handleDeleteEmployee} onBackendRefresh={refreshBackendUsersGlobal} />;
-      case 'patients':
-        return <Patients />;
-      case 'settings':
-        return (
-          <Settings
-            showWeekends={showWeekends}
-            setShowWeekends={setShowWeekends}
-            startHour={startHour}
-            setStartHour={setStartHour}
-            endHour={endHour}
-            setEndHour={setEndHour}
-            setUsersState={setUsersState}
-            setRoomsState={setRoomsState}
-            setPatientsState={setPatientsState}
-            setMeetings={setMeetings}
-            loadUsers={loadUsers}
-            loadRooms={loadRooms}
-            loadMeetings={loadMeetings}
-            loadAndApplyDemo={loadAndApplyDemo}
-            purgeDemo={purgeDemo}
-            currentUser={currentUser}
-            token={currentUser?.token || localStorage.getItem('token') || undefined}
-          />
-        );
-      case 'quizes':
-        return <QuizzesPage />;
-      case 'tasks':
-        return <TasksPage userRole={currentUser!.role} />;
-      default:
-        return <Dashboard users={usersState} rooms={roomsState} meetings={meetings} />;
-    }
-  };
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar
-        currentView={currentView}
-        onViewChange={setCurrentView}
-        userRole={currentUser!.role}
-      />
-      
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar
-          currentUser={currentUser!}
-          onLogout={handleLogout}
-          pageTitle={(viewMeta[currentView]?.title) || ''}
-          pageIcon={viewMeta[currentView]?.icon}
-        />
-        
-        <main className="flex-1 flex flex-col overflow-hidden">
-          <div className={`p-6 flex-1 flex flex-col ${currentView==='room-calendar' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-            {renderCurrentView()}
-          </div>
-        </main>
-      </div>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        {/* Login route, no bars */}
+        <Route path="/login" element={<LoginForm onLogin={handleLogin} />} />
+
+        {/* Protected routes */}
+        <Route element={<ProtectedLayout currentUser={currentUser} onLogout={handleLogout} />}>
+          <Route path="/dashboard" element={<Dashboard users={usersState} rooms={roomsState} meetings={meetings} />} />
+          <Route path="/employees/schedule" element={<EmployeeCalendar users={usersState} rooms={roomsState} meetings={meetings} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} />} />
+          <Route path="/employees/menage" element={<EmployeesManage users={usersState} onAdd={handleAddEmployee} onUpdate={handleUpdateEmployee} onDelete={handleDeleteEmployee} onBackendRefresh={refreshBackendUsersGlobal} />} />
+          <Route path="/reservation/schedule" element={<RoomCalendar users={usersState} rooms={roomsState} meetings={meetings} patients={patientsState} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} />} />
+          <Route path="/reservation/menage" element={<RoomsManage rooms={roomsState} onRoomsChange={setRoomsState} userRole={currentUser?.role || 'employee'} />} />
+          <Route path="/patients" element={<Patients />} />
+          <Route path="/tasks" element={<TasksPage userRole={currentUser?.role || 'employee'} />} />
+          <Route path="/options" element={<Settings showWeekends={showWeekends} setShowWeekends={setShowWeekends} startHour={startHour} setStartHour={setStartHour} endHour={endHour} setEndHour={setEndHour} setUsersState={setUsersState} setRoomsState={setRoomsState} setPatientsState={setPatientsState} setMeetings={setMeetings} loadUsers={loadUsers} loadRooms={loadRooms} loadMeetings={loadMeetings} loadAndApplyDemo={loadAndApplyDemo} purgeDemo={purgeDemo} currentUser={currentUser!} token={currentUser?.token || localStorage.getItem('token') || undefined} />} />
+        </Route>
+
+        {/* Redirect root to dashboard if authenticated, else to login */}
+        <Route path="/" element={currentUser ? <Navigate to="/dashboard" /> : <Navigate to="/login" />} />
+
+        {/* 404 route */}
+        <Route path="*" element={<NotFound404 isAuthenticated={!!currentUser} />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 
