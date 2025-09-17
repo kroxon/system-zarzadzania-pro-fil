@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { /* Calendar, */ Users, MapPin, Settings, BarChart3, User, /* ListChecks, */ ClipboardList } from 'lucide-react';
 
 interface SidebarProps {
   currentView: string;
-  onViewChange: (view: string) => void;
   userRole: 'admin' | 'employee' | 'contact';
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
+  const navigate = useNavigate();
   const [employeesOpen, setEmployeesOpen] = useState(false);
   const [employeesGroupSelected, setEmployeesGroupSelected] = useState(false);
   const [roomsOpen, setRoomsOpen] = useState(false);
@@ -64,7 +65,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
           {/* Panel główny */}
           <li>
             <button
-              onClick={() => { onViewChange('dashboard'); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); }}
+              onClick={() => { navigate('/dashboard'); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); }}
               className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
                 currentView === 'dashboard' && !employeesGroupSelected && !roomsGroupSelected
                   ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
@@ -87,8 +88,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                 setEmployeesGroupSelected(true);
                 setRoomsGroupSelected(false);
                 setRoomsOpen(false);
-                const target = 'employee-calendar';
-                if (currentView !== target) onViewChange(target);
+                navigate('/employees/schedule');
               }}
               aria-expanded={employeesOpen}
               className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
@@ -116,7 +116,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                         <button
                           onClick={() => {
                             if (disabled) return;
-                            onViewChange(child.id);
+                            navigate(child.id === 'employee-calendar' ? '/employees/schedule' : '/employees/menage');
                             setEmployeesGroupSelected(true);
                           }}
                           disabled={disabled}
@@ -146,8 +146,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                 setRoomsGroupSelected(true);
                 setEmployeesGroupSelected(false);
                 setEmployeesOpen(false);
-                const target = 'room-calendar';
-                if (currentView !== target) onViewChange(target);
+                navigate('/reservation/schedule');
               }}
               aria-expanded={roomsOpen}
               className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
@@ -175,7 +174,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
                         <button
                           onClick={() => {
                             if (disabled) return;
-                            onViewChange(child.id);
+                            navigate(child.id === 'room-calendar' ? '/reservation/schedule' : '/reservation/menage');
                             setRoomsGroupSelected(true);
                           }}
                           disabled={disabled}
@@ -200,7 +199,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
           {/* Podopieczni */}
           <li>
             <button
-              onClick={() => { onViewChange('patients'); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); }}
+              onClick={() => { navigate('/patients'); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); }}
               className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
                 currentView === 'patients' && !roomsGroupSelected && !employeesGroupSelected
                   ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
@@ -221,7 +220,14 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, userRole }
             return (
               <li key={item.id}>
                 <button
-                  onClick={() => { onViewChange(item.id); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); }}
+                  onClick={() => { 
+                    navigate(
+                      item.id === 'tasks' ? '/tasks' : 
+                      item.id === 'settings' ? '/options' : 
+                      '/'+item.id
+                    );
+                    setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); 
+                  }}
                   className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
                     isActive
                       ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
