@@ -1,62 +1,59 @@
 import { MoreHorizontal, Plus, CheckCircle2, Circle } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { EmployeeTask } from '../../types/index'
+import { Employee } from '../../types/index';
+import { fetchEmployees } from '../../utils/api/employees';
+import { createEmployeeTask } from '../../utils/api/tasks';
 
-interface Task {
-  id: string;
-  title: string;
-  assignedTo: string;
-  dueDate: string;
-  status: 'Ukończone' | 'Do zrobienia';
-}
 
-function loadTasks(): Task[] {
-  const stored = localStorage.getItem('schedule_tasks');
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed)) {
-        return parsed;
-      }
-    } catch (err) {
-      console.error('Błąd ładowania zadań z localStorage:', err);
-    }
-  }
-  return [];
-}
-const StatusBadge = ({ status }: { status: string }) => {
-  if (status === 'Ukończone') {
+// Usunięto demo dane, lista zawsze pusta na start
+const StatusBadge = ({ isCompleted }: { isCompleted: boolean }) => {
+  if (isCompleted === true) {
     return (
-      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-semibold text-green-600 border border-green-300 bg-green-50">
-        <CheckCircle2 className="mr-2 h-4 w-4" />
-        {status}
-      </span>
+  <div className="flex items-center justify-center w-36 h-8 rounded-lg bg-green-50 border border-green-300 shadow-sm px-2 overflow-hidden">
+        <CheckCircle2 className="text-green-600 mr-1 h-5 w-5 shrink-0" />
+        <span className="text-green-700 font-semibold text-sm truncate whitespace-nowrap">Ukończone</span>
+      </div>
     );
   }
   // 'Do zrobienia'
   return (
-    <span className="inline-flex items-center px-2 py-1 rounded text-xs font-semibold text-gray-600 border border-gray-300 bg-gray-50">
-      <Circle className="mr-2 h-4 w-4" />
-      {status}
-    </span>
+  <div className="flex items-center justify-center w-36 h-8 rounded-lg bg-gray-50 border border-gray-300 shadow-sm px-2 overflow-hidden">
+      <Circle className="text-gray-400 mr-1 h-5 w-5 shrink-0" />
+      <span className="text-gray-600 font-semibold text-sm truncate whitespace-nowrap">Do zrobienia</span>
+    </div>
   );
 };
 
 
 export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee' | 'contact' }) {
-  const [taskList, setTaskList] = useState<Task[]>(() => loadTasks());
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
-  const [formData, setFormData] = useState<Task | null>(null);
+  const [employeesLoading, setEmployeesLoading] = useState(true);
+  // Fetch tasks from backend on mount/login
+  // Fetch tasks only when entering this page (mount)
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    import('../../utils/api/tasks').then(api => {
+      api.fetchEmployeeTasks(token)
+        .then(setTaskList)
+        .catch(() => setTaskList([]));
+    });
+  }, []);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [taskList, setTaskList] = useState<EmployeeTask[]>([]);
+  const [editingTask, setEditingTask] = useState<EmployeeTask | null>(null);
+  const [formData, setFormData] = useState<EmployeeTask | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newTask, setNewTask] = useState<Task>({
-    id: '',
-    title: '',
-    assignedTo: '',
+  const [newTask, setNewTask] = useState<EmployeeTask>({
+    id: 0,
+    name: '',
+    assignedEmployeesIds: [],
     dueDate: '',
-    status: 'Do zrobienia',
+    isCompleted: false,
   });
 
   const handleOpenCreateModal = () => {
-    setNewTask({ id: '', title: '', assignedTo: '', dueDate: '', status: 'Do zrobienia' });
+    setNewTask({ id: 0, name: '', assignedEmployeesIds: [], dueDate: '', isCompleted: false });
     setShowCreateModal(true);
   };
 
@@ -68,25 +65,49 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
     setShowCreateModal(false);
   };
 
-  const handleChangeNewTask = (field: keyof Task, value: string) => {
-    setNewTask((prev) => ({ ...prev, [field]: value }));
+  const handleChangeNewTask = (field: keyof EmployeeTask, value: string | number | number[]) => {
+    if (field === 'assignedEmployeesIds') {
+      // value is array of selected employee IDs
+      setNewTask((prev) => ({ ...prev, assignedEmployeesIds: Array.isArray(value) ? value : [Number(value)] }));
+    } else {
+      setNewTask((prev) => ({ ...prev, [field]: value }));
+    }
   };
 
   const handleSaveCreateTask = () => {
-    if (!newTask.title.trim() || !newTask.assignedTo.trim() || !newTask.dueDate.trim()) return;
-    const taskToAdd = {
-      ...newTask,
-      id: 't' + (Date.now() + Math.floor(Math.random() * 10000)),
-    };
-    const updatedTasks = [...taskList, taskToAdd];
-    setTaskList(updatedTasks);
-    localStorage.setItem('schedule_tasks', JSON.stringify(updatedTasks));
-    setShowCreateModal(false);
+    if (!newTask.name.trim() || newTask.assignedEmployeesIds.length === 0 || !newTask.dueDate.trim()) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    createEmployeeTask({
+      name: newTask.name,
+      assignedEmployeesIds: newTask.assignedEmployeesIds,
+      dueDate: newTask.dueDate,
+      isCompleted: false
+    }, token)
+      .then((created) => {
+        setTaskList(prev => [...prev, created]);
+        setShowCreateModal(false);
+      })
+      .catch(() => {/* obsługa błędu */});
   };
 
-  const handleEditTask = (task: Task) => {
+  const handleEditTask = (task: EmployeeTask) => {
     setEditingTask(task);
   };
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetchEmployees(token)
+      .then(data => {
+        setEmployees(data);
+        setEmployeesLoading(false);
+      })
+      .catch(() => {
+        setEmployees([]);
+        setEmployeesLoading(false);
+      });
+  }, []);
 
   useEffect(() => {
     if (editingTask) {
@@ -96,13 +117,29 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
     }
   }, [editingTask]);
 
-  const handleCompleteTask = (taskId: string) => {
-    setTaskList(taskList.map(task => {
-      if (task.id === taskId) {
-        return { ...task, status: 'Ukończone' };
-      }
-      return task;
-    }));
+  const handleUndoCompleteTask = (taskId: number) => {
+    const token = localStorage.getItem('token');
+    const task = taskList.find(t => t.id === taskId);
+    if (!token || !task) return;
+    import('../../utils/api/tasks').then(api => {
+      api.updateEmployeeTask(taskId, { ...task, isCompleted: false }, token)
+        .then(() => {
+          setTaskList(taskList.map(t => t.id === taskId ? { ...t, isCompleted: false } : t));
+        })
+        .catch(() => {/* obsługa błędu */});
+    });
+  };
+  const handleCompleteTask = (taskId: number) => {
+    const token = localStorage.getItem('token');
+    const task = taskList.find(t => t.id === taskId);
+    if (!token || !task) return;
+    import('../../utils/api/tasks').then(api => {
+      api.updateEmployeeTask(taskId, { ...task, isCompleted: true }, token)
+        .then(() => {
+          setTaskList(taskList.map(t => t.id === taskId ? { ...t, isCompleted: true } : t));
+        })
+        .catch(() => {/* obsługa błędu */});
+    });
   };
 
   const handleSaveEdit = () => {
@@ -116,8 +153,17 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
     setEditingTask(null);
   };
 
-  const handleDeleteTask = (taskId: string) => {
-    setTaskList(taskList.filter(task => task.id !== taskId));
+  const handleDeleteTask = (taskId: number) => {
+    if (!window.confirm('Czy na pewno chcesz usunąć to zadanie?')) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    import('../../utils/api/tasks').then(api => {
+      api.deleteEmployeeTask(taskId, token)
+        .then(() => {
+          setTaskList(taskList.filter(task => task.id !== taskId));
+        })
+        .catch(() => {/* obsługa błędu */});
+    });
   };
 
 
@@ -149,17 +195,28 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {taskList.length === 0 ? (
+              {employeesLoading ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Ładowanie pracowników...</td>
+                </tr>
+              ) : taskList.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Brak zadań do wyświetlenia.</td>
                 </tr>
               ) : (
                 taskList.map((task) => (
                   <tr key={task.id}>
-                    <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{task.title}</td>
-                    <td className="px-6 py-4 whitespace-nowrap">{task.assignedTo}</td>
+                    <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{task.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {task.assignedEmployeesIds
+                        .map(id => {
+                          const emp = employees.find(e => Number(e.id) === Number(id));
+                          return emp ? `${emp.name} ${emp.surname}` : id;
+                        })
+                        .join(', ')}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">{task.dueDate}</td>
-                    <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={task.status} /></td>
+                    <td className="px-6 py-4 whitespace-nowrap"><StatusBadge isCompleted={task.isCompleted} /></td>
                     <td className="px-6 py-4 whitespace-nowrap text-right">
                       <button className="p-2 rounded hover:bg-gray-100" aria-label="Edytuj zadanie" onClick={() => handleEditTask(task)}>
                         <MoreHorizontal className="h-4 w-4" />
@@ -167,9 +224,15 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
                       <button className="ml-2 p-2 rounded hover:bg-gray-100" aria-label="Usuń zadanie" onClick={() => handleDeleteTask(task.id)}>
                         <span className="sr-only">Usuń</span>🗑️
                       </button>
-                      <button className="ml-2 p-2 rounded hover:bg-gray-100" aria-label="Oznacz jako ukończone" onClick={() => handleCompleteTask(task.id)}>
-                        <span className="sr-only">Ukończ</span>✔️
-                      </button>
+                      {task.isCompleted ? (
+                        <button className="ml-2 p-2 rounded hover:bg-gray-100" aria-label="Cofnij ukończenie" onClick={() => handleUndoCompleteTask(task.id)}>
+                          <span className="sr-only">Cofnij</span>↩️
+                        </button>
+                      ) : (
+                        <button className="ml-2 p-2 rounded hover:bg-gray-100" aria-label="Oznacz jako ukończone" onClick={() => handleCompleteTask(task.id)}>
+                          <span className="sr-only">Ukończ</span>✔️
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -187,11 +250,23 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
               <h3 className="text-lg font-semibold mb-2">Dodaj nowe zadanie</h3>
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-1">Tytuł zadania</label>
-                <input type="text" className="w-full border px-3 py-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" value={newTask.title} onChange={e => handleChangeNewTask('title', e.target.value)} />
+                <input type="text" className="w-full border px-3 py-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" value={newTask.name} onChange={e => handleChangeNewTask('name', e.target.value)} />
               </div>
               <div className="mb-4">
-                <label className="block text-sm font-medium mb-1">Przypisane do</label>
-                <input type="text" className="w-full border px-3 py-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" value={newTask.assignedTo} onChange={e => handleChangeNewTask('assignedTo', e.target.value)} />
+                <label className="block text-sm font-medium mb-1">Przypisane do pracownika</label>
+                <select
+                  multiple
+                  className="w-full border px-3 py-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  value={newTask.assignedEmployeesIds.map(String)}
+                  onChange={e => {
+                    const selected = Array.from(e.target.selectedOptions, opt => Number(opt.value));
+                    handleChangeNewTask('assignedEmployeesIds', selected);
+                  }}
+                >
+                  {employees.map(emp => (
+                    <option key={emp.id} value={emp.id}>{emp.name}</option>
+                  ))}
+                </select>
               </div>
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-1">Termin</label>
@@ -217,11 +292,26 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
                 <label htmlFor="title" className="text-right text-sm font-medium text-gray-700">Zadanie</label>
-                <input id="title" value={formData?.title || ''} onChange={(e) => formData && setFormData({ ...formData, title: e.target.value })} className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+                <input id="title" value={formData?.name || ''} onChange={(e) => formData && setFormData({ ...formData, name: e.target.value })} className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <label htmlFor="assignedTo" className="text-right text-sm font-medium text-gray-700">Przypisane do</label>
-                <input id="assignedTo" value={formData?.assignedTo || ''} onChange={(e) => formData && setFormData({ ...formData, assignedTo: e.target.value })} className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+                <select
+                  id="assignedTo"
+                  multiple
+                  className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  value={formData?.assignedEmployeesIds ? formData.assignedEmployeesIds.map(String) : []}
+                  onChange={e => {
+                    if (formData) {
+                      const selected = Array.from(e.target.selectedOptions, opt => Number(opt.value));
+                      setFormData({ ...formData, assignedEmployeesIds: selected });
+                    }
+                  }}
+                >
+                  {employees.map(emp => (
+                    <option key={emp.id} value={emp.id}>{emp.name}</option>
+                  ))}
+                </select>
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <label htmlFor="dueDate" className="text-right text-sm font-medium text-gray-700">Termin</label>
