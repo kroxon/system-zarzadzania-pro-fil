@@ -1,8 +1,13 @@
+// Zamiana boolean isActive na etykietę statusu
+function getPatientStatusLabel(isActive: boolean): 'aktywny' | 'nieaktywny' {
+  return isActive ? 'aktywny' : 'nieaktywny';
+}
 import { useState, useEffect, useMemo, useRef } from 'react';
 // Using demo UI shape for patients for now. When backend is ready, map API <-> UI.
-import type { PatientDemo } from '../../types';
+import { fetchPatients } from '../../utils/api/patients';
+import {Patient} from '../../types/index'
 import { Search } from 'lucide-react';
-import { loadMeetings, loadUsers, loadRooms, loadPatients, savePatients, saveTherapistAssignments } from '../../utils/storage';
+import { loadMeetings, loadUsers, loadRooms, savePatients, saveTherapistAssignments } from '../../utils/storage';
 
 /*
 Backend integration (commented plan):
@@ -20,12 +25,36 @@ Backend integration (commented plan):
   - Keep UI types unchanged to avoid refactors in the view.
 */
 
-interface Visit { id: string; patientId: string; date: string; therapists: string[]; room: string; status: 'zrealizowana' | 'odwołana' | 'zaplanowana' | 'nieobecny'; }
+interface Visit {
+  id: string;
+  patientId: string;
+  date: string;
+  therapists: string[];
+  room: string;
+  status: 'zrealizowana' | 'odwołana' | 'zaplanowana' | 'nieobecny'; }
 
 const ASSIGN_KEY = 'schedule_therapist_assignments';
 
 export default function Patients(){
-  const [patients, setPatients] = useState<PatientDemo[]>(() => loadPatients());
+  // Pacjenci z backendu
+  const [patients, setPatients] = useState<Patient[]>([]);
+useEffect(() => {
+  const token = localStorage.getItem('token');
+  if (!token) return;
+  fetchPatients(token)
+    .then(data => {
+      console.log('fetchPatients result:', data);
+      setPatients(data);
+    })
+    .catch((err) => {
+      console.error('fetchPatients error:', err);
+      setPatients([]);
+    });
+}, []);
+
+useEffect(() => {
+  console.log('Patients state:', patients);
+}, [patients]);
   const [meetings, setMeetings] = useState(() => loadMeetings());
   const [users, setUsers] = useState(() => loadUsers());
   const [rooms, setRooms] = useState(() => loadRooms());
@@ -35,7 +64,6 @@ export default function Patients(){
       setMeetings(loadMeetings());
       setUsers(loadUsers());
       setRooms(loadRooms());
-      setPatients(loadPatients());
     };
     window.addEventListener('focus', handler);
     return ()=> window.removeEventListener('focus', handler);
@@ -43,12 +71,12 @@ export default function Patients(){
 
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({
-    firstName: '',
-    lastName: '',
+    name: '',
+    surname: '',
     birthDate: '',
-    status: 'aktywny',
-    therapists: [] as string[],
-    notes: ''
+    isActive: true,
+    assignedEmployeesIds: [] as number[],
+    info: ''
   });
 
   const [therapistAssignments, setTherapistAssignments] = useState<Record<string,string[]>>(()=>{
@@ -60,7 +88,8 @@ export default function Patients(){
   const [activeTab, setActiveTab] = useState<'info'|'sessions'>('info');
 
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState<PatientDemo | null>(null);
+  // Nie można wybrać żadnego pacjenta
+  const [selected, setSelected] = useState<Patient | null>(null);
   const [statusFilter, setStatusFilter] = useState<'aktywny'|'nieaktywny'|'wszyscy'>('aktywny');
   // Replace generic assignment filter with a specialist single-select filter
   const [specialistFilter, setSpecialistFilter] = useState<'wszyscy' | string>('wszyscy');
@@ -190,18 +219,20 @@ export default function Patients(){
   const normalize = (s: string) => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
   // Filtered patients list for the left panel
-  const filtered = useMemo(()=>{
+  // Lista pacjentów zawsze pusta
+  // Przywrócona logika filtrowania pacjentów
+  const filtered = useMemo(() => {
     const q = normalize(query);
     const list = patients.slice();
     const byText = list.filter(p => {
-      const fn = normalize(p.firstName);
-      const ln = normalize(p.lastName);
+      const fn = normalize(p.name);
+      const ln = normalize(p.surname);
       const full1 = `${fn} ${ln}`;
       const full2 = `${ln} ${fn}`;
       return !q || fn.includes(q) || ln.includes(q) || full1.includes(q) || full2.includes(q);
     });
     const byStatus = byText.filter(p => {
-      const st = (p.status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
+      const st = p.isActive ? 'aktywny' : 'nieaktywny';
       return statusFilter==='wszyscy' ? true : st===statusFilter;
     });
     const bySpecialist = byStatus.filter(p => {
@@ -211,9 +242,9 @@ export default function Patients(){
     });
     // sort by last name, then first name
     return bySpecialist.sort((a,b)=> {
-      const lnA = normalize(a.lastName); const lnB = normalize(b.lastName);
+      const lnA = normalize(a.surname); const lnB = normalize(b.surname);
       if(lnA!==lnB) return lnA.localeCompare(lnB);
-      return normalize(a.firstName).localeCompare(normalize(b.firstName));
+      return normalize(a.name).localeCompare(normalize(b.name));
     });
   }, [patients, query, statusFilter, specialistFilter, therapistAssignments]);
 
@@ -228,8 +259,8 @@ export default function Patients(){
     );
   };
 
-  const statusBadge = (status?: string): JSX.Element => {
-    const st = (status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
+  const statusBadge = (isActive?: string): JSX.Element => {
+    const st = (isActive as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
     const color = st==='aktywny' ? 'bg-green-500' : 'bg-gray-400';
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-gray-700">
@@ -263,13 +294,13 @@ export default function Patients(){
   // Selected patient's visits (newest first)
   const selectedVisits = useMemo(()=>{
     if(!selected) return [] as Visit[];
-    return visits.filter(v => v.patientId === selected.id).sort((a,b)=> b.date.localeCompare(a.date));
+    return visits.filter(v => Number(v.patientId) === selected.id).sort((a,b)=> b.date.localeCompare(a.date));
   }, [visits, selected]);
 
   // Session tiles counts
   const visitCounts = useMemo(()=>{
     if(!selected) return { total: 0, zrealizowana: 0, odwolana: 0, nieobecny: 0, zaplanowana: 0 };
-    const vs = visits.filter(v => v.patientId === selected.id);
+    const vs = visits.filter(v => Number(v.patientId) === selected.id);
     const acc = { total: vs.length, zrealizowana: 0, odwolana: 0, nieobecny: 0, zaplanowana: 0 };
     vs.forEach(v => {
       if(v.status==='zrealizowana') acc.zrealizowana++;
@@ -280,49 +311,50 @@ export default function Patients(){
     return acc;
   }, [visits, selected]);
 
-  const addTherapist = (id: string) => {
+  const addTherapist = (id: number) => {
     if(!id) return;
-    setEditForm(f => f.therapists.includes(id) ? f : { ...f, therapists: [...f.therapists, id] });
+    setEditForm(f => f.assignedEmployeesIds.includes(id) ? f : { ...f, assignedEmployeesIds: [...f.assignedEmployeesIds, id] });
   };
-  const removeTherapist = (id: string) => {
-    setEditForm(f => ({ ...f, therapists: f.therapists.filter(t => t !== id) }));
+  const removeTherapist = (id: number) => {
+    setEditForm(f => ({ ...f, assignedEmployeesIds: f.assignedEmployeesIds.filter(t => t !== id) }));
   };
 
   const startEdit = () => {
     if(!selected) return;
     setEditForm({
-      firstName: selected.firstName || '',
-      lastName: selected.lastName || '',
+      name: selected.name || '',
+      surname: selected.surname || '',
       birthDate: selected.birthDate || '',
-      status: (selected.status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny',
-      therapists: [...(therapistAssignments[selected.id] || selected.therapists || [])],
-      notes: (patientNotes[selected.id] ?? selected.notes ?? '')
+      isActive: !!selected.isActive,
+      assignedEmployeesIds: Array.isArray(selected.assignedEmployeesIds) ? selected.assignedEmployeesIds.map(Number) : [],
+      info: (patientNotes[selected.id] ?? selected.info ?? '')
     });
     setEditMode(true);
   };
 
   const saveEdit = () => {
     if(!selected) return;
-    const updated: PatientDemo = {
+    const updated: Patient = {
       ...selected,
-      firstName: editForm.firstName.trim(),
-      lastName: editForm.lastName.trim(),
-      birthDate: editForm.birthDate || undefined,
-      status: editForm.status,
-      notes: editForm.notes?.trim() || undefined
+      name: editForm.name.trim(),
+      surname: editForm.surname.trim(),
+      birthDate: editForm.birthDate || '',
+      isActive: !!editForm.isActive,
+      assignedEmployeesIds: Array.isArray(editForm.assignedEmployeesIds) ? editForm.assignedEmployeesIds.map(Number) : [],
+      info: editForm.info?.trim() || ''
     };
     setPatients(prev => prev.map(p => p.id === selected.id ? updated : p));
     // Persist therapist assignments
     setTherapistAssignments(prev => {
       const next = { ...prev };
-      const unique = Array.from(new Set(editForm.therapists));
-      if(unique.length) next[selected.id] = unique; else delete next[selected.id];
+      const unique = Array.from(new Set(editForm.assignedEmployeesIds));
+      if(unique.length) next[selected.id] = unique.map(String); else delete next[selected.id];
       return next;
     });
     // Persist patient notes map
     setPatientNotes(prev => {
       const next = { ...prev };
-      const txt = (editForm.notes || '').trim();
+      const txt = (editForm.info || '').trim();
       if(txt) next[selected.id] = txt; else delete next[selected.id];
       return next;
     });
@@ -349,7 +381,7 @@ export default function Patients(){
     // Remove patient notes
     setPatientNotes(prev => { const n = { ...prev }; delete n[id]; return n; });
     // Remove session notes for this patient's visits
-    const vIds = visits.filter(v => v.patientId === id).map(v => v.id);
+    const vIds = visits.filter(v => Number(v.patientId) === selected.id).map(v => v.id);
     setSessionNotes(prev => { const n = { ...prev }; vIds.forEach(vid => { delete n[vid]; }); return n; });
     // Reset selection and open notes
     setSelected(null);
@@ -375,14 +407,14 @@ export default function Patients(){
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [creating, setCreating] = useState(false);
-  const emptyNew = { firstName:'', lastName:'', birthDate:'', status:'aktywny', therapists:[] as string[], notes:'' };
+  const emptyNew = { name:'', surname:'', birthDate:'', isActive:true, assignedEmployeesIds:[] as number[], info:'' };
   const [newPatientForm, setNewPatientForm] = useState<typeof emptyNew>(emptyNew);
   const [newErrors, setNewErrors] = useState<string[]>([]);
 
   const validateNew = () => {
     const errs: string[] = [];
-    if(!newPatientForm.firstName.trim()) errs.push('Imię jest wymagane');
-    if(!newPatientForm.lastName.trim()) errs.push('Nazwisko jest wymagane');
+    if(!newPatientForm.name.trim()) errs.push('Imię jest wymagane');
+    if(!newPatientForm.surname.trim()) errs.push('Nazwisko jest wymagane');
     if(newPatientForm.birthDate && isNaN(new Date(newPatientForm.birthDate).getTime())) errs.push('Nieprawidłowa data urodzenia');
     setNewErrors(errs); return errs.length===0;
   };
@@ -390,11 +422,28 @@ export default function Patients(){
   const openAdd = () => { setNewPatientForm(emptyNew); setNewErrors([]); setShowAddModal(true); };
   const cancelAdd = () => { if(creating) return; setShowAddModal(false); };
 
-  const submitAdd = (e:React.FormEvent) => { e.preventDefault(); if(!validateNew()) return; setCreating(true); const id = 'p'+Date.now().toString(36); const patient: PatientDemo = { id, firstName:newPatientForm.firstName.trim(), lastName:newPatientForm.lastName.trim(), birthDate:newPatientForm.birthDate || undefined, status: newPatientForm.status as any, therapists: newPatientForm.therapists, notes: newPatientForm.notes?.trim()||undefined }; setPatients(prev => [...prev, patient]); // persist via effect
-    if(newPatientForm.therapists.length){ setTherapistAssignments(prev => ({ ...prev, [id]: [...newPatientForm.therapists] })); }
-    if(newPatientForm.notes.trim()){ setPatientNotes(prev => ({ ...prev, [id]: newPatientForm.notes.trim() })); }
-    setCreating(false); setShowAddModal(false); setSelected(patient); };
-  const toggleNewTherapist = (id:string) => { setNewPatientForm(f => f.therapists.includes(id) ? { ...f, therapists: f.therapists.filter(t=>t!==id) } : { ...f, therapists:[...f.therapists, id] }); };
+  const submitAdd = (e:React.FormEvent) => {
+    e.preventDefault();
+    if(!validateNew()) return;
+    setCreating(true);
+    const id = Date.now(); // tymczasowy id jako number
+    const patient: Patient = {
+      id,
+      name: newPatientForm.name.trim(),
+      surname: newPatientForm.surname.trim(),
+      birthDate: newPatientForm.birthDate || '',
+      isActive: !!newPatientForm.isActive,
+      assignedEmployeesIds: Array.isArray(newPatientForm.assignedEmployeesIds) ? newPatientForm.assignedEmployeesIds.map(Number) : [],
+      info: newPatientForm.info?.trim() || ''
+    };
+    setPatients(prev => [...prev, patient]);
+    if(newPatientForm.assignedEmployeesIds.length){ setTherapistAssignments(prev => ({ ...prev, [id]: [...newPatientForm.assignedEmployeesIds] })); }
+    if(newPatientForm.info.trim()){ setPatientNotes(prev => ({ ...prev, [id]: newPatientForm.info.trim() })); }
+    setCreating(false); setShowAddModal(false); setSelected(patient);
+  };
+  const toggleNewTherapist = (id:number) => {
+    setNewPatientForm(f => f.assignedEmployeesIds.includes(id) ? { ...f, assignedEmployeesIds: f.assignedEmployeesIds.filter(t=>t!==id) } : { ...f, assignedEmployeesIds:[...f.assignedEmployeesIds, id] });
+  };
 
   useEffect(()=> {
     if(showAddModal){
@@ -542,21 +591,16 @@ export default function Patients(){
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
-              {filtered.map(p => (
-                <tr
-                  key={p.id}
-                  onClick={()=> setSelected(p)}
-                  className={`cursor-pointer hover:bg-blue-50 transition-colors ${selected?.id===p.id? 'bg-blue-50/80':''}`}
-                >
-                  <td className="px-3 py-2.5">
-                    <div className="min-w-0">
-                      <span className={`block truncate text-[16px] leading-tight ${selected?.id===p.id ? 'font-semibold text-blue-900' : 'text-gray-900'}`}>{p.firstName} {p.lastName}</span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 text-[13px] whitespace-nowrap">{statusBadge(p.status)}</td>
-                </tr>
-              ))}
-              {filtered.length===0 && <tr><td colSpan={2} className="px-3 py-4 text-center text-sm text-gray-500">Brak podopiecznych</td></tr>}
+              {filtered.length === 0 ? (
+                <tr><td colSpan={2} className="px-3 py-4 text-center text-sm text-gray-500">Brak podopiecznych</td></tr>
+              ) : (
+                filtered.map(p => (
+                  <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelected(p)}>
+                    <td className="px-3 py-2 whitespace-nowrap">{p.name} {p.surname}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{statusLabel(getPatientStatusLabel(p.isActive))}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -571,10 +615,10 @@ export default function Patients(){
                     <h2 className="text-xl font-semibold text-gray-900">
                       {editMode ? (
                         <div className="flex gap-2">
-                          <input value={editForm.firstName} onChange={e=> setEditForm(f=> ({...f, firstName:e.target.value}))} className="px-2 py-1 text-sm border rounded" />
-                          <input value={editForm.lastName} onChange={e=> setEditForm(f=> ({...f, lastName:e.target.value}))} className="px-2 py-1 text-sm border rounded" />
+                          <input value={editForm.name} onChange={e=> setEditForm(f=> ({...f, name:e.target.value}))} className="px-2 py-1 text-sm border rounded" />
+                          <input value={editForm.surname} onChange={e=> setEditForm(f=> ({...f, surname:e.target.value}))} className="px-2 py-1 text-sm border rounded" />
                         </div>
-                      ) : `${selected.firstName} ${selected.lastName}`}
+                      ) : `${selected.name} ${selected.surname}`}
                     </h2>
                     <div className="flex items-center gap-2 ml-4">
                       {!editMode && (
@@ -690,7 +734,7 @@ export default function Patients(){
                               aria-haspopup="listbox"
                               aria-expanded={showEditStatusMenu}
                             >
-                              <span className="capitalize text-gray-700">{editForm.status}</span>
+                              <span className="capitalize text-gray-700">{getPatientStatusLabel(editForm.isActive)}</span>
                               <svg className={`h-4 w-4 text-gray-400 transition-transform ${showEditStatusMenu?'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.024l3.71-3.793a.75.75 0 111.08 1.04l-4.24 4.336a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
                             </button>
                             {showEditStatusMenu && (
@@ -705,13 +749,13 @@ export default function Patients(){
                                   <button
                                     type="button"
                                     key={opt}
-                                    onClick={()=> { setEditForm(f=> ({...f, status: opt})); setShowEditStatusMenu(false); }}
-                                    className={`w-full flex items-center justify-between px-3 py-2.5 text-sm hover:bg-gray-50 ${editForm.status===opt? 'bg-indigo-50 text-indigo-700':'text-gray-700'}`}
+                                    onClick={()=> { setEditForm(f=> ({...f, isActive: opt==='aktywny'})); setShowEditStatusMenu(false); }}
+                                    className={`w-full flex items-center justify-between px-3 py-2.5 text-sm hover:bg-gray-50 ${getPatientStatusLabel(editForm.isActive)===opt? 'bg-indigo-50 text-indigo-700':'text-gray-700'}`}
                                     role="option"
-                                    aria-selected={editForm.status===opt}
+                                    aria-selected={getPatientStatusLabel(editForm.isActive)===opt}
                                   >
                                     <span className="capitalize">{opt}</span>
-                                    {editForm.status===opt && (
+                                    {getPatientStatusLabel(editForm.isActive)===opt && (
                                       <svg className="h-4 w-4 text-indigo-600" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M16.704 5.29a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8.75 11.836l6.543-6.543a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
                                     )}
                                   </button>
@@ -719,7 +763,7 @@ export default function Patients(){
                               </div>
                             )}
                           </div>
-                        ) : statusLabel(selected.status)}
+                        ) : statusLabel(getPatientStatusLabel(selected.isActive))}
                       </p>
                       <div>
                         <p className="mb-1"><strong className="text-[0.95rem] font-semibold text-gray-800">Terapeuci:</strong></p>
@@ -745,17 +789,17 @@ export default function Patients(){
                         {editMode && (
                           <div className="space-y-2">
                             <div className="flex flex-wrap gap-2">
-                              {editForm.therapists.map(tId => {
+                              {editForm.assignedEmployeesIds.map(tId => {
                                 const name = userIdToName[tId] || tId;
                                 return (
                                   <span key={tId} className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm text-blue-900">
-                                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-semibold">{(name? name.trim().split(/\s+/).slice(0,2).map(p=>p[0]?.toUpperCase()||'').join(''):'?')}</span>
+                                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-semibold">{(typeof name === 'string' ? name.trim().split(/\s+/).slice(0,2).map(p=>p[0]?.toUpperCase()||'').join('') : '?')}</span>
                                     <span className="font-medium">{name}</span>
                                     <button onClick={()=> removeTherapist(tId)} className="ml-1 rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 h-5 w-5 inline-flex items-center justify-center" aria-label={`Usuń terapeutę ${name}`}>×</button>
                                   </span>
                                 );
                               })}
-                              {editForm.therapists.length===0 && <span className="text-xs text-gray-400">Brak terapeutów</span>}
+                              {editForm.assignedEmployeesIds.length===0 && <span className="text-xs text-gray-400">Brak terapeutów</span>}
                             </div>
                             <div className="flex items-center gap-2">
                               <div className="relative inline-block">
@@ -779,11 +823,11 @@ export default function Patients(){
                                     className="absolute z-50 mt-2 w-72 overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 border border-gray-100"
                                   >
                                     <div className="max-h-64 overflow-y-auto py-1">
-                                      {employeesSorted.filter(emp => !editForm.therapists.includes(emp.id)).map(emp => (
+                                      {employeesSorted.filter(emp => !editForm.assignedEmployeesIds.includes(Number(emp.id))).map(emp => (
                                         <button
                                           type="button"
                                           key={emp.id}
-                                          onClick={()=> { addTherapist(emp.id); setShowEditTherMenu(false); }}
+                                          onClick={()=> { addTherapist(Number(emp.id)); setShowEditTherMenu(false); }}
                                           className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 text-gray-700"
                                           role="option"
                                         >
@@ -791,7 +835,7 @@ export default function Patients(){
                                           <svg className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd"/></svg>
                                         </button>
                                       ))}
-                                      {employeesSorted.filter(emp => !editForm.therapists.includes(emp.id)).length===0 && (
+                                      {employeesSorted.filter(emp => !editForm.assignedEmployeesIds.includes(Number(emp.id))).length===0 && (
                                         <div className="px-3 py-2 text-sm text-gray-500">Wszyscy terapeuci są już dodani</div>
                                       )}
                                     </div>
@@ -837,10 +881,14 @@ export default function Patients(){
                         <div className="flex-1 flex flex-col">
                           <label className="text-[0.95rem] font-semibold text-gray-800 mb-1">Informacje dodatkowe</label>
                           {editMode ? (
-                            <textarea value={editForm.notes} onChange={e=> setEditForm(f=> ({...f, notes:e.target.value}))} className="flex-1 min-h-[160px] max-h-[300px] overflow-y-auto w-full text-sm p-3 border rounded resize-y leading-relaxed" placeholder="Wpisz dodatkowe informacje..." />
+                            <textarea value={editForm.info} onChange={e=> setEditForm(f=> ({...f, info:e.target.value}))} className="flex-1 min-h-[160px] max-h-[300px] overflow-y-auto w-full text-sm p-3 border rounded resize-y leading-relaxed" placeholder="Wpisz dodatkowe informacje..." />
                           ) : (
                             <div className="text-sm leading-relaxed text-gray-700 whitespace-pre-wrap min-h-[160px] max-h-[300px] overflow-y-auto p-3 border rounded bg-gray-50">
-                              {(patientNotes[selected.id]||'').trim() || <span className="italic text-gray-400">Brak informacji</span>}
+                              {(
+                                (patientNotes[selected.id] && patientNotes[selected.id].trim()) ||
+                                (selected.info && selected.info.trim()) ||
+                                <span className="italic text-gray-400">Brak informacji</span>
+                              )}
                             </div>
                           )}
                         </div>
@@ -965,11 +1013,11 @@ export default function Patients(){
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Imię</label>
-                  <input ref={firstFieldRef} value={newPatientForm.firstName} onChange={e=> setNewPatientForm(f=> ({...f, firstName:e.target.value}))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent" placeholder="Imię" />
+                  <input ref={firstFieldRef} value={newPatientForm.name} onChange={e=> setNewPatientForm(f=> ({...f, name:e.target.value}))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent" placeholder="Imię" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Nazwisko</label>
-                  <input value={newPatientForm.lastName} onChange={e=> setNewPatientForm(f=> ({...f, lastName:e.target.value}))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent" placeholder="Nazwisko" />
+                  <input value={newPatientForm.surname} onChange={e=> setNewPatientForm(f=> ({...f, surname:e.target.value}))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent" placeholder="Nazwisko" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Data urodzenia</label>
@@ -977,7 +1025,7 @@ export default function Patients(){
                 </div>
                 <div>
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Status</label>
-                  <select value={newPatientForm.status} onChange={e=> setNewPatientForm(f=> ({...f, status:e.target.value}))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                  <select value={getPatientStatusLabel(newPatientForm.isActive)} onChange={e=> setNewPatientForm(f=> ({...f, isActive: e.target.value==='aktywny'}))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
                     <option value="aktywny">aktywny</option>
                     <option value="nieaktywny">nieaktywny</option>
                   </select>
@@ -985,22 +1033,22 @@ export default function Patients(){
                 <div className="col-span-2">
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Terapeuci</label>
                   <div className="flex flex-wrap gap-2 mb-2 min-h-[34px] p-2 rounded-lg border border-gray-200 bg-gray-50">
-                    {newPatientForm.therapists.map(tId=>{ const u=users.find(x=>x.id===tId); return (
+                    {newPatientForm.assignedEmployeesIds.map(tId=>{ const u=users.find(x=>Number(x.id) === Number(tId)); return (
                       <span key={tId} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium bg-indigo-100 text-indigo-700 border border-indigo-300">
                         {u? u.name.split(' ').slice(0,2).join(' '): tId}
                         <button type="button" onClick={()=> toggleNewTherapist(tId)} className="hover:text-indigo-900">×</button>
                       </span>
                     );})}
-                    {newPatientForm.therapists.length===0 && <span className="text-[11px] text-gray-400">Brak</span>}
+                    {newPatientForm.assignedEmployeesIds.length===0 && <span className="text-[11px] text-gray-400">Brak</span>}
                   </div>
-                  <select onChange={e=> { const v=e.target.value; if(v){ toggleNewTherapist(v); e.target.selectedIndex=0; } }} value="" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                  <select onChange={e=> { const v=e.target.value; if(v){ toggleNewTherapist(Number(v)); e.target.selectedIndex=0; } }} value="" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
                     <option value="">Dodaj terapeutę...</option>
-                    {users.filter(u=>u.role==='employee' && !newPatientForm.therapists.includes(u.id)).map(u=> <option key={u.id} value={u.id}>{u.name} {u.specialization? '– '+u.specialization:''}</option>)}
+                    {users.filter(u=>u.role==='employee' && !newPatientForm.assignedEmployeesIds.includes(Number(u.id))).map(u=> <option key={u.id} value={u.id}>{u.name} {u.specialization? '– '+u.specialization:''}</option>)}
                   </select>
                 </div>
                 <div className="col-span-2">
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Notatki</label>
-                  <textarea value={newPatientForm.notes} onChange={e=> setNewPatientForm(f=> ({...f, notes:e.target.value}))} rows={4} placeholder="Historia, zalecenia, obserwacje..." className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y text-sm" />
+                  <textarea value={newPatientForm.info} onChange={e=> setNewPatientForm(f=> ({...f, info:e.target.value}))} rows={4} placeholder="Historia, zalecenia, obserwacje..." className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y text-sm" />
                 </div>
               </div>
               <div className="flex justify-end gap-3 pt-2">
@@ -1048,7 +1096,7 @@ export default function Patients(){
             <div className="px-6 py-4 space-y-3">
               <p className="text-sm text-gray-700">
                 Usuniesz podopiecznego:
-                <span className="font-semibold text-gray-900"> {selected?.firstName} {selected?.lastName}</span>.
+                <span className="font-semibold text-gray-900"> {selected?.name} {selected?.surname}</span>.
               </p>
               <div className="text-sm text-gray-700">
                 <p className="font-medium text-gray-800 mb-1">Dodatkowo zostaną trwale usunięte:</p>
