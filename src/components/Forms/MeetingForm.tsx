@@ -655,7 +655,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                   <button type="button" onClick={()=> setRoomsOpen(o=>!o)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white flex items-center justify-between focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast}>
                     {formData.roomId ? (
                       <span className="flex items-center gap-2">
-                        {(() => { const rc = rooms.find(r=>r.id===formData.roomId); const col = rc?.color || '#9ca3af'; return <span style={{ backgroundColor: col }} className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-white shadow" />; })()}
+                        {(() => { const rc = rooms.find(r=>r.id===formData.roomId); const col = rc?.hexColor || '#9ca3af'; return <span style={{ backgroundColor: col }} className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-white shadow" />; })()}
                         <span>{rooms.find(r=>r.id===formData.roomId)?.name}</span>
                       </span>
                     ) : <span className="text-gray-400">Wybierz salę</span>}
@@ -667,7 +667,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                         {rooms.map(r => {
                           const disabledOpt = !!(formData.startTime && formData.endTime && roomHasConflict(r.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id) && r.id!==formData.roomId);
                           const selectedRoom = formData.roomId === r.id;
-                          const col = r.color || '#9ca3af';
+                          const col = r.hexColor || '#9ca3af';
                           return (
                             <li key={r.id}>
                               <button

@@ -250,8 +250,8 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings }) => {
                           <div className="min-w-0 flex items-center gap-2">
                             <span
                               className="inline-block w-3.5 h-3.5 rounded-full ring-1 ring-black/10 shadow-sm flex-shrink-0"
-                              style={{ backgroundColor: room?.color || '#CBD5E1' }}
-                              aria-label={room?.color ? `Kolor sali ${room.name}` : 'Brak koloru sali'}
+                              style={{ backgroundColor: room?.hexColor || '#CBD5E1' }}
+                              aria-label={room?.hexColor ? `Kolor sali ${room.name}` : 'Brak koloru sali'}
                             />
                             <p className="text-sm text-gray-700 font-medium truncate">{room?.name}</p>
                           </div>
@@ -273,8 +273,8 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings }) => {
                                 <span className="text-sm font-medium text-gray-900 flex items-center gap-1">
                                   <span
                                     className="inline-block w-2.5 h-2.5 rounded-full"
-                                    style={{ backgroundColor: room?.color || '#CBD5E1' }}
-                                    aria-label={room?.color ? `Kolor sali ${room.name}` : 'Brak koloru sali'}
+                                    style={{ backgroundColor: room?.hexColor || '#CBD5E1' }}
+                                    aria-label={room?.hexColor ? `Kolor sali ${room.name}` : 'Brak koloru sali'}
                                   />
                                   {room?.name}
                                 </span>
@@ -328,8 +328,8 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings }) => {
                               <div className="min-w-0 flex items-center gap-2">
                                 <span
                                   className="inline-block w-3 h-3 rounded-full ring-[0.5px] ring-black/10 shadow-sm flex-shrink-0"
-                                  style={{ backgroundColor: room?.color || '#CBD5E1' }}
-                                  aria-label={room?.color ? `Kolor sali ${room.name}` : 'Brak koloru sali'}
+                                  style={{ backgroundColor: room?.hexColor || '#CBD5E1' }}
+                                  aria-label={room?.hexColor ? `Kolor sali ${room.name}` : 'Brak koloru sali'}
                                 />
                                 <p className="text-[12px] font-medium text-gray-700 truncate">{room?.name}</p>
                               </div>
@@ -351,8 +351,8 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings }) => {
                                     <span className="text-sm font-medium text-gray-900 flex items-center gap-1">
                                       <span
                                         className="inline-block w-2.5 h-2.5 rounded-full"
-                                        style={{ backgroundColor: room?.color || '#CBD5E1' }}
-                                        aria-label={room?.color ? `Kolor sali ${room.name}` : 'Brak koloru sali'}
+                                        style={{ backgroundColor: room?.hexColor || '#CBD5E1' }}
+                                        aria-label={room?.hexColor ? `Kolor sali ${room.name}` : 'Brak koloru sali'}
                                       />
                                       {room?.name}
                                     </span>

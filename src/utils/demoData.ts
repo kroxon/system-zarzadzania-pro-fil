@@ -1,4 +1,4 @@
-import { User, Room, Meeting, PatientDemo } from '../types';
+import { User, Room, Meeting } from '../types';
 import { saveMeetings, saveRooms, saveUsers, savePatients, markDemoLoaded, clearAllData } from './storage';
 import { saveTherapistAssignments } from './storage';
 
@@ -10,6 +10,7 @@ function seedRandom(seed:number){
 
 const roomPalette = ['#facc15', /* żółta */ '#93c5fd', /* jasnoniebieska */ '#ef4444', /* czerwona */ '#f97316', /* pomarańczowa */ '#10b981' /* zielona */];
 
+export interface PatientDemo { id: string; firstName: string; lastName: string; status?: 'aktywny'|'nieaktywny'; birthDate?: string; therapists?: string[]; }
 export interface DemoDataBundle { users: User[]; rooms: Room[]; patients: PatientDemo[]; meetings: Meeting[]; assignments: Record<string,string[]>; }
 export interface DemoTask {
   id: string;
@@ -51,10 +52,7 @@ export function generateDemoData(seed:number = Date.now()): DemoDataBundle & { q
   const rooms: Room[] = Array.from({length:2}).map((_,i)=>({
     id: 'r'+(i+1),
     name: ['Gabinet A','Gabinet B','Sala terapii','Sala konsultacyjna','Sala grupowa'][i] || 'Sala '+(i+1),
-    capacity: i===4? 10: 2+(i%3)*2,
-    equipment: ['Stół','Krzesła','Tablica'].slice(0, 1+(i%3)),
-    purpose: ['Rehabilitacja','Masaż','Terapia','Konsultacje','Zajęcia grupowe'][i] || 'Terapia',
-    color: roomPalette[i%roomPalette.length]
+    hexColor: roomPalette[i%roomPalette.length]
   }));
   // 7 therapists (first is admin)
   const specList = ['Psycholog','Fizjoterapeuta','Terapeuta SI','Logopeda','Pedagog','Neurologopeda','Masażysta'];

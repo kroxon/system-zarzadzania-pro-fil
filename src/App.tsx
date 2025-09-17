@@ -4,22 +4,20 @@ import NotFound404 from './components/Views/NotFound404';
 import Sidebar from './components/Layout/Sidebar';
 import TopBar from './components/Layout/TopBar';
 import Dashboard from './components/Views/Dashboard';
-import SharedCalendar from './components/Views/SharedCalendar';
 import EmployeeCalendar from './components/Views/EmployeeCalendar';
 import RoomCalendar from './components/Views/RoomCalendar';
 import LoginForm from './components/Auth/LoginForm';
 import EmployeesManage from './components/Views/EmployeesManage';
 import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
-import QuizzesPage from './components/Quizes/QuizList';
 import TasksPage from './components/Tasks/TasksPage';
 import { User, Meeting, Room, Patient } from './types';
 import Settings from './components/Views/Settings';
-import { 
-  saveMeetings, 
-  loadMeetings, 
-  saveCurrentUser, 
+import {
+  saveMeetings,
+  loadMeetings,
   loadCurrentUser,
+  saveCurrentUser,
   addMeeting,
   updateMeeting,
   deleteMeeting,
@@ -28,7 +26,7 @@ import {
   loadUsers,
   saveUsers,
   loadPatients,
-  savePatients
+  savePatients,
 } from './utils/storage';
 import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
 import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon, ListChecks, ClipboardList } from 'lucide-react';
@@ -115,10 +113,7 @@ function App() {
       const mapped: Room[] = apiRooms.map(r => ({
         id: r.id.toString(),
         name: r.name,
-        capacity: 0,
-        equipment: [],
-        purpose: '',
-        color: r.hexColor,
+        hexColor: r.hexColor,
       }));
       const newBackendRoomIds = mapped.map(m => m.id);
       const prevBackendRoomIds: string[] = (() => {

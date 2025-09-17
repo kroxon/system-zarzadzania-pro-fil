@@ -58,7 +58,7 @@ interface RoomsManageProps {
   onBackendRoomsRefresh?: () => void | Promise<void>;
 }
 
-const emptyRoom = (): Room => ({ id: '', name: '', capacity: 0, equipment: [], purpose: '', color: ROOM_COLOR_PALETTE[0] });
+const emptyRoom = (): Room => ({ id: '', name: '', hexColor: ROOM_COLOR_PALETTE[0] });
 
 const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRole, onBackendRoomsRefresh }) => {
   const [editing, setEditing] = useState<Room | null>(null);
@@ -113,7 +113,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
     if (!token) { alert('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
     setCreateSaving(true);
     try {
-      await apiCreateRoom({ name: editing.name.trim(), hexColor: editing.color || ROOM_COLOR_PALETTE[0] }, token);
+  await apiCreateRoom({ name: editing.name.trim(), hexColor: editing.hexColor || ROOM_COLOR_PALETTE[0] }, token);
       const data = await getRooms(token);
       setBackendRooms(data);
       // inform App to refresh global rooms so MeetingForm sees updates
@@ -274,23 +274,15 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
                 <div
                   key={r.id}
                   className="group relative overflow-hidden rounded-2xl border border-gray-200/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition"
-                  style={{ backgroundColor: hexToRGBA(r.color || '#e5e7eb', 0.12) }}
+                  style={{ backgroundColor: hexToRGBA(r.hexColor || '#e5e7eb', 0.12) }}
                 >
-                  <div className="absolute inset-y-0 left-0 w-1.5" style={{background: r.color||'#e5e7eb'}} />
+                  <div className="absolute inset-y-0 left-0 w-1.5" style={{background: r.hexColor||'#e5e7eb'}} />
                   <div className="p-4">
                     <div className="flex items-start justify-between">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 min-w-0">
                           <h3 className="font-semibold text-gray-900 truncate" title={r.name}>{r.name}</h3>
-                          <span className="ml-2 inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">
-                            <Users className="w-3 h-3" /> {r.capacity} os.
-                          </span>
                         </div>
-                        {r.purpose && (
-                          <div className="mt-2 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700">
-                            <Tag className="w-3 h-3" /> {r.purpose}
-                          </div>
-                        )}
                       </div>
                       {userRole==='admin' && (
                         <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 translate-y-1 transition group-hover:opacity-100 group-hover:translate-y-0">
@@ -303,17 +295,6 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
                         </div>
                       )}
                     </div>
-
-                    {r.equipment && r.equipment.length>0 && (
-                      <div className="mt-3 flex flex-wrap gap-1">
-                        {r.equipment.slice(0,3).map((eq: string)=> (
-                          <span key={eq} className="text-[11px] px-2 py-0.5 bg-gray-50 text-gray-600 rounded" title={eq}>{eq}</span>
-                        ))}
-                        {r.equipment.length>3 && (
-                          <span className="text-[11px] px-2 py-0.5 bg-gray-50 text-gray-600 rounded" title={r.equipment.slice(3).join(', ')}>+{r.equipment.length-3}</span>
-                        )}
-                      </div>
-                    )}
                   </div>
                 </div>
               ))}
@@ -391,13 +372,13 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Kolor (wybierz)</label>
                 <div className="grid grid-cols-5 gap-2">
-                  {ROOM_COLOR_PALETTE.map(c => {
-                    const selected = (editing.color || ROOM_COLOR_PALETTE[0]) === c;
+                    {ROOM_COLOR_PALETTE.map(c => {
+                    const selected = (editing.hexColor || ROOM_COLOR_PALETTE[0]) === c;
                     return (
                       <button
                         type="button"
                         key={c}
-                        onClick={()=>updateEditing({ color: c })}
+                        onClick={()=>updateEditing({ hexColor: c })}
                         aria-label={`Kolor ${c}`}
                         className={`h-8 rounded-md border flex items-center justify-center relative transition focus:outline-none focus:ring-2 focus:ring-offset-1 ${selected? 'ring-2 ring-blue-500 border-blue-600':'border-gray-300 hover:border-gray-500'}`}
                         style={{background:c, color:'#fff'}}
@@ -411,8 +392,8 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
               </div>
             </div>
             <div className="flex items-center gap-3 text-xs text-gray-500">
-              <div className="w-5 h-5 rounded border" style={{ background: editing.color || ROOM_COLOR_PALETTE[0] }} />
-              <span>{editing.color || ROOM_COLOR_PALETTE[0]}</span>
+              <div className="w-5 h-5 rounded border" style={{ background: editing.hexColor || ROOM_COLOR_PALETTE[0] }} />
+              <span>{editing.hexColor || ROOM_COLOR_PALETTE[0]}</span>
             </div>
             <div className="flex justify-end gap-3">
               <button onClick={cancel} className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700">Anuluj</button>

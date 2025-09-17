@@ -64,7 +64,7 @@ function deriveRoomColors(hex?: string){
 
 function getRoomStyle(room: Room | undefined){
   if(!room) return { backgroundColor:'#e5e7eb', borderColor:'#9ca3af', color:'#1f2937' };
-  const { bg, border, text } = deriveRoomColors(room.color);
+  const { bg, border, text } = deriveRoomColors(room.hexColor);
   return { backgroundColor: bg, borderColor: border, color: text };
 }
 

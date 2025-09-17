@@ -43,11 +43,7 @@ export interface User {
 export interface Room {
   id: string;
   name: string;
-  capacity: number;
-  equipment: string[];
-  // NEW optional extended attributes
-  purpose?: string;
-  color?: string; // hex color used for UI accents
+  hexColor: string; // hex color used for UI accents
 }
 
 export interface Meeting {
