@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Pencil, Trash2, X, Loader2 } from 'lucide-react';
 import { Room, RoomAPI, Meeting, Event } from '../../types';
 import { getRooms, updateRoom as apiUpdateRoom, deleteRoom as apiDeleteRoom, createRoom as apiCreateRoom } from '../../utils/api/rooms';
-import { loadCurrentUser, loadMeetings } from '../../utils/storage';
 import { fetchEvents } from '../../utils/api/events';
 // import { fetchEmployees } from '../../utils/api/employees';
 
@@ -107,9 +106,8 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
       cancel();
       return;
     }
-    // Creating new room -> send to backend
-    const user = loadCurrentUser();
-    const token = user?.token;
+  // Creating new room -> send to backend
+  const token = localStorage.getItem('token') || undefined;
     if (!token) { alert('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
     setCreateSaving(true);
     try {
@@ -138,8 +136,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
 
   // Fetch backend rooms once (for the main list below demo rooms)
   useEffect(() => {
-    const user = loadCurrentUser();
-    const token = user?.token;
+    const token = localStorage.getItem('token') || undefined;
     if (!token) return; // not logged in, skip
     (async () => {
       try {
@@ -175,8 +172,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
   // remove hex validation; using palette-only selection
   const saveBackendEdit = async () => {
     if (!backendEditing) return;
-    const user = loadCurrentUser();
-    const token = user?.token;
+    const token = localStorage.getItem('token') || undefined;
     if (!token) { setBackendActionError('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
     if (!backendEditName.trim()) { setBackendActionError('Nazwa nie może być pusta.'); return; }
     setBackendSaveLoading(true);
@@ -202,8 +198,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
     setRelationsLoading(true);
     setRelationsError(null);
     try {
-      const user = loadCurrentUser();
-      const token = user?.token;
+      const token = localStorage.getItem('token') || undefined;
       let backendEvents: Event[] = [];
       if (token) {
         try {
@@ -215,10 +210,9 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
       } else {
         setRelationsError('Brak tokenu uwierzytelnienia dla pobrania wydarzeń.');
       }
-      const local = loadMeetings();
-      const localRelated = Array.isArray(local) ? local.filter(m => m.roomId === String(roomId)) : [];
-      setRelationsBackend(backendEvents);
-      setRelationsLocal(localRelated as Meeting[]);
+  // In backend-only mode we don't show local relations anymore
+  setRelationsBackend(backendEvents);
+  setRelationsLocal([]);
     } finally {
       setRelationsLoading(false);
     }
@@ -230,8 +224,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
     console.log('[rooms] Attempting to delete backend room', { id });
     // Note: allow deletion even if there are related meetings; those meetings will no longer be visible w grafiku,
     // but pozostaną dostępne w raportach i historii spotkań (zgodnie z wymaganiami UI).
-    const user = loadCurrentUser();
-    const token = user?.token;
+  const token = localStorage.getItem('token') || undefined;
     if (!token) { setRelationsError('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
     console.log('[rooms] Sending DELETE request', { url: `${import.meta.env.VITE_API_URL}/api/rooms/${id}` });
     try {

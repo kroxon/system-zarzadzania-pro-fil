@@ -11,31 +11,31 @@ import EmployeesManage from './components/Views/EmployeesManage';
 import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
 import TasksPage from './components/Tasks/TasksPage';
-import { User, Meeting, Room } from './types';
+import { User, Meeting, Room, CreateEvent } from './types';
 import Settings from './components/Views/Settings';
-import {
-  saveMeetings,
-  loadMeetings,
-  loadCurrentUser,
-  saveCurrentUser,
-  addMeeting,
-  updateMeeting,
-  deleteMeeting,
-  loadRooms,
-  saveRooms,
-  loadUsers,
-  saveUsers,
-  loadPatients,
-  savePatients,
-} from './utils/storage';
-import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
 // Icons were used in removed view meta; keeping import minimal
 import { mapBackendRolesToFrontend } from './utils/roleMapper';
 import { fetchEmployees } from './utils/api/employees';
 import { getRooms as fetchRooms } from './utils/api/rooms';
-import { fetchEvents } from './utils/api/events';
+import { fetchEvents, createEvent, updateEvent, deleteEvent } from './utils/api/events';
 import { getAllEventStasuses } from './utils/api/eventStatuses';
 import { fetchPatients } from './utils/api/patients';
+
+// Minimal local helpers for persisting current user only (storage module removed)
+const LOCAL_USER_KEY = 'schedule_current_user';
+function loadCurrentUser(): User | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_USER_KEY);
+    return raw ? (JSON.parse(raw) as User) : null;
+  } catch {
+    return null;
+  }
+}
+function saveCurrentUser(user: User) {
+  try {
+    localStorage.setItem(LOCAL_USER_KEY, JSON.stringify(user));
+  } catch {}
+}
 
 function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any, onLogout: () => void, children?: React.ReactNode }) {
   if (!currentUser) return <Navigate to="/login" replace />;
@@ -62,24 +62,19 @@ function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any
 }
 
 function App() {
-  // Toggle to disable local storage and use backend-only data
-  const BACKEND_ONLY = true;
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   // const [currentView, setCurrentView] = useState('dashboard');
   // Initialize ONLY from persisted storage (no implicit sample fallback)
-  const [meetings, setMeetings] = useState<Meeting[]>(() => BACKEND_ONLY ? [] : loadMeetings());
-  const [usersState, setUsersState] = useState<User[]>(() => BACKEND_ONLY ? [] : loadUsers());
-  const [patientsState, setPatientsState] = useState(() => BACKEND_ONLY ? [] : loadPatients());
-  const [roomsState, setRoomsState] = useState<Room[]>(() => BACKEND_ONLY ? [] : loadRooms());
-  const [showWeekends, setShowWeekends] = useState(false);
-  const [startHour, setStartHour] = useState(8);
-  const [endHour, setEndHour] = useState(17);
-  // NEW: flag to avoid persisting when syncing backend employees
-  const [suppressUsersPersist, setSuppressUsersPersist] = useState(false);
-  // NEW: flag to avoid persisting when syncing backend rooms
-  const [suppressRoomsPersist, setSuppressRoomsPersist] = useState(false);
-  // NEW: flag to avoid persisting when syncing backend patients
-  const [suppressPatientsPersist, setSuppressPatientsPersist] = useState(false);
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [usersState, setUsersState] = useState<User[]>([]);
+  const [patientsState, setPatientsState] = useState([]);
+  const [roomsState, setRoomsState] = useState<Room[]>([]);
+  const [showWeekends] = useState(false);
+  const [startHour] = useState(8);
+  const [endHour] = useState(17);
+  // Backend-only mode: no local persistence flags needed
+  // No local persistence flags in backend-only mode
 
   // Backend events refresh (merge with local for now)
   const refreshBackendEventsGlobal = useCallback(async () => {
@@ -181,20 +176,8 @@ function App() {
         } as Meeting;
       });
 
-      if (BACKEND_ONLY) {
-        setMeetings(mapped);
-        if (!suppressUsersPersist && !suppressRoomsPersist && !suppressPatientsPersist) {
-          // do not save to local in backend-only
-        }
-      } else {
-        // Merge strategy: replace all previous backend-sourced meetings (bevt-*) with freshly fetched ones
-        setMeetings(prev => {
-          const withoutBackend = prev.filter(m => !String(m.id).startsWith('bevt-'));
-          const next = [...withoutBackend, ...mapped];
-          saveMeetings(next);
-          return next;
-        });
-      }
+      // Backend-only: just set mapped events
+      setMeetings(mapped);
     } catch (e) {
       // Silent for now; could add Notification later
       console.warn('Failed to fetch backend events', e);
@@ -215,24 +198,9 @@ function App() {
         specialization: e.occupationName,
         notes: e.info || undefined,
       }));
-      if (BACKEND_ONLY) {
-        setSuppressUsersPersist(true);
-        setUsersState(mapped);
-      } else {
-        const newBackendIds = mapped.map(m => m.id);
-        const prevBackendIds: string[] = (() => {
-          try { return JSON.parse(localStorage.getItem('schedule_backend_ids') || '[]'); } catch { return []; }
-        })();
-        setSuppressUsersPersist(true);
-        setUsersState(prev => {
-          const demoOnly = prev.filter(u => !prevBackendIds.includes(u.id));
-          saveUsers(demoOnly);
-          return [...demoOnly, ...mapped];
-        });
-        localStorage.setItem('schedule_backend_ids', JSON.stringify(newBackendIds));
-      }
+      setUsersState(mapped);
     } finally {
-      setSuppressUsersPersist(false);
+      // noop
     }
   }, [currentUser?.token]);
 
@@ -247,26 +215,11 @@ function App() {
         name: r.name,
         hexColor: r.hexColor,
       }));
-      if (BACKEND_ONLY) {
-        setSuppressRoomsPersist(true);
-        setRoomsState(mapped);
-      } else {
-        const newBackendRoomIds = mapped.map(m => m.id);
-        const prevBackendRoomIds: string[] = (() => {
-          try { return JSON.parse(localStorage.getItem('schedule_backend_room_ids') || '[]'); } catch { return []; }
-        })();
-        setSuppressRoomsPersist(true);
-        setRoomsState(prev => {
-          const demoOnly = prev.filter(r => !prevBackendRoomIds.includes(r.id));
-          saveRooms(demoOnly);
-          return [...demoOnly, ...mapped];
-        });
-        localStorage.setItem('schedule_backend_room_ids', JSON.stringify(newBackendRoomIds));
-      }
+      setRoomsState(mapped);
     } catch {
       // ignore silently for now
     } finally {
-      setSuppressRoomsPersist(false);
+      // noop
     }
   }, [currentUser?.token]);
 
@@ -276,13 +229,11 @@ function App() {
     if (!token) return;
     try {
       const apiPatients = await fetchPatients(token);
-      // Store as-is (backend Patient shape), do not persist to local demo storage
-      setSuppressPatientsPersist(true);
       setPatientsState(apiPatients as any);
     } catch {
       // ignore for now
     } finally {
-      setSuppressPatientsPersist(false);
+      // noop
     }
   }, [currentUser?.token]);
 
@@ -316,7 +267,7 @@ function App() {
     return () => { cancelled = true; };
   }, [refreshBackendPatientsGlobal]);
 
-  // NEW: Fetch events from backend and merge with local meetings
+  // NEW: Fetch events from backend
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -330,14 +281,10 @@ function App() {
   useEffect(() => {
     const storedUser = loadCurrentUser();
     if (storedUser) setCurrentUser(storedUser);
+    setAuthReady(true);
   }, []);
 
-  // Persist rooms on change
-  useEffect(()=>{ if (!BACKEND_ONLY && !suppressRoomsPersist) saveRooms(roomsState); },[roomsState, suppressRoomsPersist]);
-  // Persist users on change (skip when syncing backend)
-  useEffect(()=>{ if (!BACKEND_ONLY && !suppressUsersPersist) saveUsers(usersState); },[usersState, suppressUsersPersist]);
-  useEffect(()=>{ if (!BACKEND_ONLY && !suppressPatientsPersist) savePatients(patientsState as any); },[patientsState, suppressPatientsPersist]);
-  useEffect(()=>{ if (!BACKEND_ONLY) saveMeetings(meetings); },[meetings]);
+  // Removed local persistence side-effects (backend-only mode)
 
   const handleLogin = async (user: any, token?: string) => {
     // Jeśli user ma pole 'roles' (Employee z backendu), wykonaj mapowanie
@@ -372,55 +319,114 @@ function App() {
     localStorage.removeItem('schedule_current_user');
   };
 
-  const handleMeetingCreate = (meetingData: Omit<Meeting, 'id'>) => {
-    const newMeeting: Meeting = {
-      ...meetingData,
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
+  const handleMeetingCreate = async (meetingData: Omit<Meeting, 'id'>) => {
+    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+    if (!token) return;
+    // Map Meeting -> CreateEvent
+    const toIso = (date: string, time: string) => {
+      const [y, m, d] = date.split('-').map(Number);
+      const [hh, mm] = time.split(':').map(Number);
+      return new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0).toISOString();
     };
-    const updatedMeetings = addMeeting(newMeeting);
-    setMeetings(updatedMeetings);
-    saveMeetings(updatedMeetings); // ensure persist
+    const participantIds: number[] = [
+      ...(meetingData.specialistIds || (meetingData.specialistId ? [meetingData.specialistId] : [])).map(id => Number(id)).filter(n => Number.isFinite(n)),
+      ...(meetingData.patientIds || (meetingData.patientId ? [meetingData.patientId] : [])).map(id => Number(id)).filter(n => Number.isFinite(n)),
+    ];
+    const payload: CreateEvent = {
+      name: meetingData.name || 'Spotkanie',
+      start: toIso(meetingData.date, meetingData.startTime),
+      end: toIso(meetingData.date, meetingData.endTime),
+      participantIds,
+      roomId: meetingData.roomId ? Number(meetingData.roomId) : null,
+      info: meetingData.notes || null,
+    };
+    try {
+      await createEvent(payload, token);
+      await refreshBackendEventsGlobal();
+    } catch (e) {
+      console.warn('Nie udało się utworzyć spotkania', e);
+    }
   };
 
-  const handleMeetingUpdate = (meetingId: string, updates: Partial<Meeting>) => {
-    const updatedMeetings = updateMeeting(meetingId, updates);
-    setMeetings(updatedMeetings);
-    saveMeetings(updatedMeetings); // ensure persist
+  const handleMeetingUpdate = async (meetingId: string, updates: Partial<Meeting>) => {
+    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+    if (!token) return;
+    const idNum = String(meetingId).startsWith('bevt-') ? Number(String(meetingId).replace('bevt-','')) : Number(meetingId);
+    if (!Number.isFinite(idNum)) return;
+    const toIso = (date?: string, time?: string) => {
+      if (!date || !time) return undefined;
+      const [y, m, d] = date.split('-').map(Number);
+      const [hh, mm] = time.split(':').map(Number);
+      return new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0).toISOString();
+    };
+    // Find existing meeting to fill required fields
+    const existing = meetings.find(m => m.id === meetingId);
+    if (!existing) return;
+    const date = updates.date || existing.date;
+    const startTime = updates.startTime || existing.startTime;
+    const endTime = updates.endTime || existing.endTime;
+    const name = (updates as any).name ?? (existing as any).name ?? 'Spotkanie';
+    const specialistIds = updates.specialistIds || existing.specialistIds || (existing.specialistId ? [existing.specialistId] : []);
+    const patientIds = updates.patientIds || existing.patientIds || (existing.patientId ? [existing.patientId] : []);
+    const participantIds: number[] = [
+      ...specialistIds.map(id => Number(id)).filter(n => Number.isFinite(n)),
+      ...patientIds.map(id => Number(id)).filter(n => Number.isFinite(n)),
+    ];
+    const payload: CreateEvent = {
+      name,
+      start: toIso(date, startTime)!,
+      end: toIso(date, endTime)!,
+      participantIds,
+      roomId: (updates.roomId ?? existing.roomId) ? Number(updates.roomId ?? existing.roomId) : null,
+      info: (updates.notes ?? existing.notes) || null,
+    };
+    try {
+      await updateEvent(idNum, payload, token);
+      await refreshBackendEventsGlobal();
+    } catch (e) {
+      console.warn('Nie udało się zaktualizować spotkania', e);
+    }
   };
 
-  const handleMeetingDelete = (meetingId: string) => {
-    const updatedMeetings = deleteMeeting(meetingId);
-    setMeetings(updatedMeetings);
-    saveMeetings(updatedMeetings); // ensure persist
+  const handleMeetingDelete = async (meetingId: string) => {
+    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+    if (!token) return;
+    const idNum = String(meetingId).startsWith('bevt-') ? Number(String(meetingId).replace('bevt-','')) : Number(meetingId);
+    if (!Number.isFinite(idNum)) return;
+    try {
+      await deleteEvent(idNum, token);
+      await refreshBackendEventsGlobal();
+    } catch (e) {
+      console.warn('Nie udało się usunąć spotkania', e);
+    }
   };
 
-  const handleAddEmployee = (data: Omit<User, 'id'>) => {
-    const newUser: User = { id: Date.now().toString(), ...data };
-    setUsersState(prev => {
-      const next = [...prev, newUser];
-      saveUsers(next); // immediate persist
-      return next;
-    });
+  const handleAddEmployee = (_data: Omit<User, 'id'>) => {
+    // Local demo add disabled in backend-only mode
+    console.warn('Dodawanie lokalnych pracowników jest wyłączone. Użyj backendu.');
   };
 
-  const handleUpdateEmployee = (id: string, update: Partial<User>) => {
-    setUsersState(prev => {
-      const next = prev.map(u => u.id === id ? { ...u, ...update } : u);
-      saveUsers(next); // immediate persist
-      return next;
-    });
+  const handleUpdateEmployee = (_id: string, _update: Partial<User>) => {
+    console.warn('Aktualizacja lokalnych pracowników jest wyłączona. Użyj backendu.');
   };
 
-  const handleDeleteEmployee = (id: string) => {
-    setUsersState(prev => {
-      const next = prev.filter(u => u.id !== id);
-      saveUsers(next); // immediate persist
-      return next;
-    });
+  const handleDeleteEmployee = (_id: string) => {
+    console.warn('Usuwanie lokalnych pracowników jest wyłączone. Użyj backendu.');
   };
 
   // const viewMeta: Record<string, { title: string; icon: JSX.Element }> = { ... };
 
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-600">
+        <div className="flex items-center gap-3">
+          <div className="h-5 w-5 rounded-full border-2 border-blue-300 border-t-blue-600 animate-spin" />
+          <span>Ładowanie…</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <BrowserRouter>
@@ -430,14 +436,14 @@ function App() {
 
         {/* Protected routes */}
         <Route element={<ProtectedLayout currentUser={currentUser} onLogout={handleLogout} />}>
-          <Route path="/dashboard" element={<Dashboard users={usersState} rooms={roomsState} meetings={meetings} />} />
+          <Route path="/dashboard" element={<Dashboard users={usersState} rooms={roomsState} meetings={meetings} patients={patientsState as any} />} />
           <Route path="/employees/schedule" element={<EmployeeCalendar users={usersState} rooms={roomsState} meetings={meetings} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} patients={patientsState as any} />} />
           <Route path="/employees/menage" element={<EmployeesManage users={usersState} onAdd={handleAddEmployee} onUpdate={handleUpdateEmployee} onDelete={handleDeleteEmployee} onBackendRefresh={refreshBackendUsersGlobal} />} />
           <Route path="/reservation/schedule" element={<RoomCalendar users={usersState} rooms={roomsState} meetings={meetings} patients={patientsState} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} />} />
           <Route path="/reservation/menage" element={<RoomsManage rooms={roomsState} onRoomsChange={setRoomsState} userRole={currentUser?.role || 'employee'} onBackendRoomsRefresh={refreshBackendRoomsGlobal} />} />
           <Route path="/patients" element={<Patients />} />
           <Route path="/tasks" element={<TasksPage userRole={currentUser?.role || 'employee'} />} />
-          <Route path="/options" element={<Settings showWeekends={showWeekends} setShowWeekends={setShowWeekends} startHour={startHour} setStartHour={setStartHour} endHour={endHour} setEndHour={setEndHour} setUsersState={setUsersState} setRoomsState={setRoomsState} setPatientsState={setPatientsState} setMeetings={setMeetings} loadUsers={loadUsers} loadRooms={loadRooms} loadMeetings={loadMeetings} loadAndApplyDemo={loadAndApplyDemo} purgeDemo={purgeDemo} currentUser={currentUser!} token={currentUser?.token || localStorage.getItem('token') || undefined} />} />
+          <Route path="/options" element={<Settings currentUser={currentUser!} token={currentUser?.token || localStorage.getItem('token') || undefined} />} />
         </Route>
 
         {/* Redirect root to dashboard if authenticated, else to login */}

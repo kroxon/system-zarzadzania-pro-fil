@@ -9,20 +9,7 @@ interface Task {
   status: 'Ukończone' | 'Do zrobienia';
 }
 
-function loadTasks(): Task[] {
-  const stored = localStorage.getItem('schedule_tasks');
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed)) {
-        return parsed;
-      }
-    } catch (err) {
-      console.error('Błąd ładowania zadań z localStorage:', err);
-    }
-  }
-  return [];
-}
+// localStorage wyłączony – startujemy z pustą listą zadań w pamięci
 const StatusBadge = ({ status }: { status: string }) => {
   if (status === 'Ukończone') {
     return (
@@ -43,7 +30,7 @@ const StatusBadge = ({ status }: { status: string }) => {
 
 
 export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee' | 'contact' }) {
-  const [taskList, setTaskList] = useState<Task[]>(() => loadTasks());
+  const [taskList, setTaskList] = useState<Task[]>([]);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [formData, setFormData] = useState<Task | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -78,9 +65,8 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
       ...newTask,
       id: 't' + (Date.now() + Math.floor(Math.random() * 10000)),
     };
-    const updatedTasks = [...taskList, taskToAdd];
-    setTaskList(updatedTasks);
-    localStorage.setItem('schedule_tasks', JSON.stringify(updatedTasks));
+  const updatedTasks = [...taskList, taskToAdd];
+  setTaskList(updatedTasks);
     setShowCreateModal(false);
   };
 

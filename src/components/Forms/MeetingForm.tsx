@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Clock, Trash2, AlertCircle } from 'lucide-react';
 import { Meeting, User, Room, Patient } from '../../types';
 import { generateTimeSlots } from '../../utils/timeSlots';
-import { isSpecialistAvailable } from '../../utils/specialistAvailability';
+// Availability will be validated against backend workhours; simple stub here (always true) until EmployeeCalendar migration
+const isSpecialistAvailable = (_id: string, _date: string, _start: string, _end: string) => true;
 
-const ASSIGN_KEY = 'schedule_therapist_assignments';
 
 interface MeetingFormProps {
   isOpen: boolean;
@@ -111,21 +111,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     onClose();
   };
 
-  // load therapistAssignments (single source of truth)
-  const therapistAssignments: Record<string,string[]> = React.useMemo(()=> {
-    try { const raw = localStorage.getItem(ASSIGN_KEY); return raw? JSON.parse(raw): {}; } catch { return {}; }
-  }, []);
-
-  // UNION pacjentów przypisanych do któregokolwiek z wybranych specjalistów (therapistAssignments: patientId -> [therapistIds])
-  const assignedPatientIds = React.useMemo(()=>{
-    if(!formData.specialistIds.length) return new Set<string>();
-    const set = new Set<string>();
-    const raw: Record<string,string[]> = therapistAssignments;
-    Object.entries(raw).forEach(([patientId, specIds])=> {
-      if(specIds.some(s => formData.specialistIds.includes(s))) set.add(patientId);
-    });
-    return set;
-  }, [formData.specialistIds, therapistAssignments]);
+  // In cutover: no persisted therapist assignments; show all patients regardless of specialist selection
+  const assignedPatientIds = React.useMemo(()=> new Set<string>(), []);
 
   const filteredPatients = React.useMemo(()=> {
     if(patientAssignmentFilter === 'przypisani') {

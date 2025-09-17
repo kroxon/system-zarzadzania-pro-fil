@@ -1,15 +1,15 @@
 import React from 'react';
 import { Calendar, BarChart3, Users, ChevronLeft, ChevronRight } from 'lucide-react';
-import { loadPatients } from '../../utils/storage';
-import { User, Room, Meeting } from '../../types';
+import { User, Room, Meeting, Patient } from '../../types';
 
 interface DashboardProps {
   users: User[];
   rooms: Room[];
   meetings: Meeting[];
+  patients?: Patient[];
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings }) => {
+const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients = [] }) => {
   // --- Funkcje pomocnicze dat bez użycia toISOString (unikamy przesunięć UTC) ---
   const toYMD = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const todayDate = new Date();
@@ -38,9 +38,9 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings }) => {
   const weekMeetings = validMeetings.filter(m => { const d = parseISO(m.date); return d >= startOfWeek && d <= endOfWeek; });
   const monthMeetings = validMeetings.filter(m => { const d = parseISO(m.date); return d >= startOfMonth && d <= endOfMonth; });
 
-  // Wczytaj pacjentów 1x i wykorzystaj do statystyk oraz mapowania nazw
-  const patientsList = React.useMemo(()=>{ try { return loadPatients(); } catch { return []; } }, []);
-  const activePatientsCount = React.useMemo(()=> patientsList.filter(p => !p.status || p.status === 'aktywny').length, [patientsList]);
+  // Użyj pacjentów z backendu przekazanych jako props
+  const patientsList = patients;
+  const activePatientsCount = React.useMemo(()=> patientsList.filter((p: any) => (p as any).isActive !== false).length, [patientsList]);
 
   // Przygotowanie danych dla dzisiejszych spotkań (podział na kolumny przy większej liczbie)
   const sortedTodayMeetings = [...todayMeetings].sort((a,b)=>a.startTime.localeCompare(b.startTime));
@@ -53,7 +53,7 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings }) => {
   // Załaduj pacjentów do mapy dla poprawnego wyświetlania (patientId -> full name)
   const patientsMap = React.useMemo(()=>{
     const map: Record<string,string> = {};
-    patientsList.forEach(p=>{ map[p.id] = `${p.firstName} ${p.lastName}`; });
+    patientsList.forEach((p:any)=>{ map[String(p.id)] = `${p.name ?? ''} ${p.surname ?? ''}`.trim(); });
     return map;
   }, [patientsList]);
 

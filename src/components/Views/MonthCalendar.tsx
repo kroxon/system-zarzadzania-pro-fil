@@ -1,40 +1,42 @@
 import React from 'react';
-import { loadMeetings, saveMeetings } from '../../utils/storage';
-import { Meeting } from '../../types';
-
-const DAY_OFF_KEY = 'schedule_day_offs';
-const DAYOFF_MEETING_PREFIX = 'dayoff-';
 
 interface DayOff { id: string; specialistId: string; date: string; note?: string; groupId?: string; }
 interface EmployeeLite { id: string; name: string; }
-interface MonthCalendarProps { currentDate: Date; dayOffs: DayOff[]; buildDateRange: (a: string,b: string)=> string[]; formatLocalDate: (d: Date)=> string; employees?: EmployeeLite[]; defaultEmployeeId?: string; onPendingStateChange?: (hasChanges: boolean, actions: { save: ()=>void; discard: ()=>void })=> void; }
+interface MonthCalendarProps {
+  currentDate: Date;
+  dayOffs: DayOff[]; // baseline provided by parent
+  buildDateRange: (a: string,b: string)=> string[];
+  formatLocalDate: (d: Date)=> string;
+  employees?: EmployeeLite[];
+  defaultEmployeeId?: string;
+  onPendingStateChange?: (hasChanges: boolean, actions: { save: ()=>void; discard: ()=>void })=> void;
+  onBaselineChange?: (next: DayOff[]) => void; // notify parent with new baseline after save
+}
 
 // Helpers
 const formatDisplayDate = (iso: string) => { if(!iso) return ''; const [y,m,d] = iso.split('-'); return `${d}/${m}/${y}`; };
 // Use local time instead of UTC to avoid off-by-one day issues in date picker
 const formatISO = (d: Date) => { const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const dd=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; };
 
-const MonthCalendar: React.FC<MonthCalendarProps> = ({ currentDate, dayOffs, buildDateRange, formatLocalDate, employees = [], defaultEmployeeId, onPendingStateChange }) => {
+const MonthCalendar: React.FC<MonthCalendarProps> = ({ currentDate, dayOffs, buildDateRange, formatLocalDate, employees = [], defaultEmployeeId, onPendingStateChange, onBaselineChange }) => {
   // Dynamic tile height
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const [tileHeight, setTileHeight] = React.useState<number>(90);
   React.useEffect(()=> { const recalc=()=>{ if(!containerRef.current) return; const rect=containerRef.current.getBoundingClientRect(); const viewportH=window.innerHeight; const bottomMargin=36; const available=viewportH-rect.top-bottomMargin; const headerRowHeight=28; const verticalPadding=16; const gapY=10; const rows=6; const totalGaps=(rows-1)*gapY; const inner=available-headerRowHeight-verticalPadding-totalGaps; const rawTile=inner/rows; const clamped=Math.max(64, Math.min(140, Math.floor(rawTile))); if(!Number.isNaN(clamped)) setTileHeight(clamped); }; recalc(); window.addEventListener('resize', recalc); return ()=> window.removeEventListener('resize', recalc); }, [currentDate]);
 
-  // Staging
+  // Staging (edits created locally until saved)
   const [localDayOffs, setLocalDayOffs] = React.useState<DayOff[]>([]); // new / edited
   const [replacedGroupIds, setReplacedGroupIds] = React.useState<string[]>([]); // edited groups hidden from baseline
   const [deletedGroupIds, setDeletedGroupIds] = React.useState<string[]>([]); // deleted groups hidden from baseline
   const hasPendingChanges = localDayOffs.length>0 || replacedGroupIds.length>0 || deletedGroupIds.length>0;
 
-  // Baseline from storage (SOURCE OF TRUTH for month display instead of props dayOffs)
-  const [baselineDayOffs, setBaselineDayOffs] = React.useState<DayOff[]>([]);
-  const loadBaseline = React.useCallback(()=> { try { const raw=localStorage.getItem(DAY_OFF_KEY); setBaselineDayOffs(raw? JSON.parse(raw): []);} catch { setBaselineDayOffs([]);} }, []);
-  React.useEffect(()=> { loadBaseline(); }, [loadBaseline, currentDate]);
-  // If parent somehow updates dayOffs prop (external refresh), reflect that by reloading baseline (avoid unused prop lint too)
-  React.useEffect(()=> { loadBaseline(); }, [dayOffs, loadBaseline]);
+  // Baseline comes from props; we derive a combined view with local staging
 
   // Combined (baseline minus replaced/deleted) + staging
-  const existingGlobalForCollision = React.useMemo(()=> { const base = baselineDayOffs.filter(d=> !(d.groupId && (replacedGroupIds.includes(d.groupId) || deletedGroupIds.includes(d.groupId)))); return [...base, ...localDayOffs]; }, [baselineDayOffs, localDayOffs, replacedGroupIds, deletedGroupIds]);
+  const existingGlobalForCollision = React.useMemo(()=> {
+    const base = dayOffs.filter(d=> !(d.groupId && (replacedGroupIds.includes(d.groupId) || deletedGroupIds.includes(d.groupId))));
+    return [...base, ...localDayOffs];
+  }, [dayOffs, localDayOffs, replacedGroupIds, deletedGroupIds]);
   const allDayOffs = existingGlobalForCollision; // for edit modal open
   const displayDayOffs = React.useMemo(()=> allDayOffs.filter(d=> !defaultEmployeeId || d.specialistId === defaultEmployeeId), [allDayOffs, defaultEmployeeId]);
 
@@ -192,54 +194,31 @@ const MonthCalendar: React.FC<MonthCalendarProps> = ({ currentDate, dayOffs, bui
   };
 
   const openEditGroup = (groupId: string) => {
-    try {
-      const raw=localStorage.getItem(DAY_OFF_KEY);
-      const all: DayOff[] = raw? JSON.parse(raw): [];
-      const groupEntries = all.filter(d=> d.groupId===groupId);
-      const entries = groupEntries.length? groupEntries : allDayOffs.filter(d=> d.groupId===groupId);
-      if(!entries.length) return;
-      const uniqueDates = Array.from(new Set(entries.map(e=> e.date))).sort();
-      const uniqueEmployees = Array.from(new Set(entries.map(e=> e.specialistId)));
-      const note = entries[0]?.note || '';
-      setEditingGroupId(groupId);
-      setEditingInitialDates(uniqueDates);
-      setEditingInitialEmployees(uniqueEmployees);
-      setEditingInitialNote(note);
-      setShowEditModal(true);
-    } catch {}
+    const entries = allDayOffs.filter(d=> d.groupId===groupId);
+    if(!entries.length) return;
+    const uniqueDates = Array.from(new Set(entries.map(e=> e.date))).sort();
+    const uniqueEmployees = Array.from(new Set(entries.map(e=> e.specialistId)));
+    const note = entries[0]?.note || '';
+    setEditingGroupId(groupId);
+    setEditingInitialDates(uniqueDates);
+    setEditingInitialEmployees(uniqueEmployees);
+    setEditingInitialNote(note);
+    setShowEditModal(true);
   };
 
   const saveDayOffChanges = React.useCallback(()=> {
-    try {
-      const raw = localStorage.getItem(DAY_OFF_KEY);
-      const existing: DayOff[] = raw? JSON.parse(raw): [];
-      const next = existing.filter(d=> !(d.groupId && (replacedGroupIds.includes(d.groupId) || deletedGroupIds.includes(d.groupId))));
-      const finalData = [...next, ...localDayOffs];
-      localStorage.setItem(DAY_OFF_KEY, JSON.stringify(finalData));
+    // Compute final data entirely in memory and notify parent
+    const nextBase = dayOffs.filter(d=> !(d.groupId && (replacedGroupIds.includes(d.groupId) || deletedGroupIds.includes(d.groupId))));
+    const finalData = [...nextBase, ...localDayOffs];
 
-      // Additionally, mirror day-offs as meetings without a room
-      const currentMeetings: Meeting[] = loadMeetings();
-      const meetingsWithoutDayOffs = currentMeetings.filter(m=> !m.id.startsWith(DAYOFF_MEETING_PREFIX));
-      const dayoffMeetings: Meeting[] = finalData.map(off => ({
-        id: `${DAYOFF_MEETING_PREFIX}${off.groupId || 'single'}-${off.specialistId}-${off.date}`,
-        specialistId: off.specialistId,
-        patientName: 'Niedostępność',
-        roomId: '', // no room assigned
-        date: off.date,
-        startTime: '00:00',
-        endTime: '23:59',
-        notes: off.note || '',
-        status: 'cancelled',
-        createdBy: 'system',
-        // optional multi-specialist cache fields kept empty/not used
-      } as Meeting));
-      saveMeetings([...meetingsWithoutDayOffs, ...dayoffMeetings]);
+    // Notify parent and clear staging
+    onBaselineChange?.(finalData);
+    setLocalDayOffs([]);
+    setReplacedGroupIds([]);
+    setDeletedGroupIds([]);
+  }, [dayOffs, localDayOffs, replacedGroupIds, deletedGroupIds, onBaselineChange]);
 
-      setLocalDayOffs([]); setReplacedGroupIds([]); setDeletedGroupIds([]); loadBaseline();
-    } catch(e){ console.warn('Save dayOff staged changes failed', e); }
-  }, [localDayOffs, replacedGroupIds, deletedGroupIds, loadBaseline]);
-
-  const discardDayOffChanges = React.useCallback(()=> { setLocalDayOffs([]); setReplacedGroupIds([]); setDeletedGroupIds([]); loadBaseline(); }, [loadBaseline]);
+  const discardDayOffChanges = React.useCallback(()=> { setLocalDayOffs([]); setReplacedGroupIds([]); setDeletedGroupIds([]); }, []);
 
   React.useEffect(()=> { if(onPendingStateChange) onPendingStateChange(hasPendingChanges, { save: saveDayOffChanges, discard: discardDayOffChanges }); }, [hasPendingChanges, onPendingStateChange, saveDayOffChanges, discardDayOffChanges]);
 
