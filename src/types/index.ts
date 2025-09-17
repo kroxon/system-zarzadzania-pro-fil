@@ -274,3 +274,26 @@ export interface UpdateWorkHours {
   end: string;
   employeeId: number;
 }
+
+//tasks
+export interface EmployeeTask{
+  id: number;
+  name: string;
+  isCompleted: boolean;
+  dueDate: string;
+  assignedEmployeesIds: number[]
+};
+
+export interface CreateEmployeeTask {
+  name: string;
+  isCompleted: boolean;
+  dueDate: string;
+  assignedEmployeesIds: number[];
+}
+
+export interface UpdateEmployeeTask {
+  name: string;
+  isCompleted: boolean;
+  dueDate: string;
+  assignedEmployeesIds: number[];
+}
