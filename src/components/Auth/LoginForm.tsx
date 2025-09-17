@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { User as UserIcon, Lock } from 'lucide-react';
 import RegisterForm from './RegisterForm';
 import { loginUser } from '../../utils/api/auth'
@@ -11,6 +12,7 @@ interface LoginFormProps {
 }
 
 const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onLoginSuccess }) => {
+  const navigate = useNavigate();
   const [isRegistering, setIsRegistering] = useState(false);
   const [selectedUser, setSelectedUser] = useState('');
   const [loginData, setLoginData] = useState({ username: '', password: '' });
@@ -48,6 +50,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onLoginSuccess }) => {
     const user = demoUsers.find(u => u.id === selectedUser);
     if (user) {
       onLogin(user);
+      if (onLoginSuccess) onLoginSuccess();
+      navigate('/dashboard', { replace: true });
     }
   };
 
@@ -75,6 +79,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onLoginSuccess }) => {
         onLoginSuccess();
         setLoginSuccess(true);
       }
+      navigate('/dashboard', { replace: true });
     } catch (error) {
       alert('Nieprawidłowy login lub hasło' + error);
     }
