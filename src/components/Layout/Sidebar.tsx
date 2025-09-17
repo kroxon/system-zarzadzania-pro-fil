@@ -246,28 +246,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
         </ul>
       </nav>
 
-      <div className={`border-t border-gray-200 transition-all duration-300 ${expanded ? 'p-4' : 'p-2'}`}>
-        <div className="text-xs text-gray-500">
-          <div className="flex items-center space-x-2 mb-2">
-            <div className="w-3 h-3 bg-green-500 rounded"></div>
-            <span
-              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100' : 'opacity-0'} w-24 whitespace-nowrap inline-block`}
-            >Obecny</span>
-          </div>
-          <div className="flex items-center space-x-2 mb-2">
-            <div className="w-3 h-3 bg-yellow-500 rounded"></div>
-            <span
-              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100' : 'opacity-0'} w-24 whitespace-nowrap inline-block`}
-            >W toku</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 bg-red-500 rounded"></div>
-            <span
-              className={`sidebar-label transition-all duration-300 ${expanded ? 'opacity-100' : 'opacity-0'} w-24 whitespace-nowrap inline-block`}
-            >Odwołany</span>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
