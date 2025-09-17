@@ -34,6 +34,7 @@ import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
 import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon, ListChecks, ClipboardList } from 'lucide-react';
 import { mapBackendRolesToFrontend } from './utils/roleMapper';
 import { fetchEmployees } from './utils/api/employees';
+import { getRooms as fetchRooms } from './utils/api/rooms';
 
 function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any, onLogout: () => void, children?: React.ReactNode }) {
   if (!currentUser) return <Navigate to="/login" replace />;
@@ -72,6 +73,8 @@ function App() {
   const [endHour, setEndHour] = useState(17);
   // NEW: flag to avoid persisting when syncing backend employees
   const [suppressUsersPersist, setSuppressUsersPersist] = useState(false);
+  // NEW: flag to avoid persisting when syncing backend rooms
+  const [suppressRoomsPersist, setSuppressRoomsPersist] = useState(false);
 
   // Reusable backend users refresh
   const refreshBackendUsersGlobal = useCallback(async () => {
@@ -103,6 +106,38 @@ function App() {
     }
   }, [currentUser?.token]);
 
+  // NEW: Reusable backend rooms refresh
+  const refreshBackendRoomsGlobal = useCallback(async () => {
+    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+    if (!token) return;
+    try {
+      const apiRooms = await fetchRooms(token);
+      const mapped: Room[] = apiRooms.map(r => ({
+        id: r.id.toString(),
+        name: r.name,
+        capacity: 0,
+        equipment: [],
+        purpose: '',
+        color: r.hexColor,
+      }));
+      const newBackendRoomIds = mapped.map(m => m.id);
+      const prevBackendRoomIds: string[] = (() => {
+        try { return JSON.parse(localStorage.getItem('schedule_backend_room_ids') || '[]'); } catch { return []; }
+      })();
+      setSuppressRoomsPersist(true);
+      setRoomsState(prev => {
+        const demoOnly = prev.filter(r => !prevBackendRoomIds.includes(r.id));
+        saveRooms(demoOnly);
+        return [...demoOnly, ...mapped];
+      });
+      localStorage.setItem('schedule_backend_room_ids', JSON.stringify(newBackendRoomIds));
+    } catch {
+      // ignore silently for now
+    } finally {
+      setSuppressRoomsPersist(false);
+    }
+  }, [currentUser?.token]);
+
   // Fetch employees from backend when token available and merge into usersState
   useEffect(() => {
     let cancelled = false;
@@ -113,6 +148,16 @@ function App() {
     return () => { cancelled = true; };
   }, [refreshBackendUsersGlobal]);
 
+  // NEW: Fetch rooms from backend when token available and merge into roomsState
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await refreshBackendRoomsGlobal();
+    })();
+    return () => { cancelled = true; };
+  }, [refreshBackendRoomsGlobal]);
+
   // Only restore current user (do NOT overwrite entity states)
   useEffect(() => {
     const storedUser = loadCurrentUser();
@@ -120,7 +165,7 @@ function App() {
   }, []);
 
   // Persist rooms on change
-  useEffect(()=>{ saveRooms(roomsState); },[roomsState]);
+  useEffect(()=>{ if (!suppressRoomsPersist) saveRooms(roomsState); },[roomsState, suppressRoomsPersist]);
   // Persist users on change (skip when syncing backend)
   useEffect(()=>{ if (!suppressUsersPersist) saveUsers(usersState); },[usersState, suppressUsersPersist]);
   useEffect(()=>{ savePatients(patientsState); },[patientsState]);

@@ -1,6 +1,10 @@
-import React, { useState } from 'react';
-import { Plus, Pencil, Trash2, X } from 'lucide-react';
-import { Room } from '../../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Plus, Pencil, Trash2, X, Loader2, Users, Tag } from 'lucide-react';
+import { Room, RoomAPI, Meeting, Event } from '../../types';
+import { getRooms, updateRoom as apiUpdateRoom, deleteRoom as apiDeleteRoom, createRoom as apiCreateRoom } from '../../utils/api/rooms';
+import { loadCurrentUser, loadMeetings, loadUsers } from '../../utils/storage';
+import { fetchEvents } from '../../utils/api/events';
+import { fetchEmployees } from '../../utils/api/employees';
 
 // Distinct, broader-spectrum high-contrast palette (20 colors)
 const ROOM_COLOR_PALETTE = [
@@ -26,39 +30,107 @@ const ROOM_COLOR_PALETTE = [
   '#52B788'  // soft green
 ];
 
+// Helper: convert hex color to rgba string with desired alpha (for faded backgrounds)
+const hexToRGBA = (hex: string, alpha = 0.12): string => {
+  if (!hex) return `rgba(229, 231, 235, ${alpha})`; // gray-200 fallback
+  let h = hex.trim();
+  if (h.startsWith('#')) h = h.slice(1);
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return `rgba(229, 231, 235, ${alpha})`;
+};
+
 interface RoomsManageProps {
   rooms: Room[];
   onRoomsChange: (rooms: Room[]) => void;
   userRole: 'admin' | 'employee' | 'contact';
+  // NEW: callback to refresh global rooms from backend (App-level)
+  onBackendRoomsRefresh?: () => void | Promise<void>;
 }
 
 const emptyRoom = (): Room => ({ id: '', name: '', capacity: 0, equipment: [], purpose: '', color: ROOM_COLOR_PALETTE[0] });
 
-const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRole }) => {
+const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRole, onBackendRoomsRefresh }) => {
   const [editing, setEditing] = useState<Room | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [filter, setFilter] = useState('');
+  // removed search/filter
+  // removed Test dialog state
+  const [backendRooms, setBackendRooms] = useState<RoomAPI[]>([]);
+  // Backend edit modal state
+  const [showBackendEdit, setShowBackendEdit] = useState(false);
+  const [backendEditing, setBackendEditing] = useState<RoomAPI | null>(null);
+  const [backendEditName, setBackendEditName] = useState('');
+  const [backendEditColor, setBackendEditColor] = useState('#000000');
+  const [backendSaveLoading, setBackendSaveLoading] = useState(false);
+  const [backendActionError, setBackendActionError] = useState<string | null>(null);
+  // Create new backend room saving state
+  const [createSaving, setCreateSaving] = useState(false);
+  // NEW: relations modal state when trying to delete a backend room
+  const [showRelations, setShowRelations] = useState(false);
+  const [relationsLoading, setRelationsLoading] = useState(false);
+  const [relationsError, setRelationsError] = useState<string | null>(null);
+  const [relationsBackend, setRelationsBackend] = useState<Event[]>([]);
+  const [relationsLocal, setRelationsLocal] = useState<Meeting[]>([]);
+  const [relationsRoomId, setRelationsRoomId] = useState<number | null>(null);
+
+  // Maps to resolve specialist names
+  const [employeesById, setEmployeesById] = useState<Record<number, string>>({});
+  const [localUsersById, setLocalUsersById] = useState<Record<string, string>>({});
+
+  // Resolve room name for relations header
+  const relationsRoom = useMemo(() => (
+    relationsRoomId != null ? backendRooms.find(r => r.id === relationsRoomId) ?? null : null
+  ), [backendRooms, relationsRoomId]);
+
+  // Safe fallback if rooms prop is undefined/null
+  const roomsList: Room[] = Array.isArray(rooms) ? rooms : [];
 
   const startAdd = () => { setEditing(emptyRoom()); setShowForm(true); };
   const startEdit = (r: Room) => { setEditing(r); setShowForm(true); };
   const cancel = () => { setEditing(null); setShowForm(false); };
 
-  const saveRoom = () => {
+  const saveRoom = async () => {
     if(!editing) return;
     if(!editing.name.trim()) return;
-    let next: Room[];
+    // Editing existing demo room -> keep local behavior
     if(editing.id){
-      next = rooms.map(r=> r.id===editing.id ? editing : r);
-    } else {
-      next = [...rooms, { ...editing, id: Date.now().toString() }];
+      const next = roomsList.map((r: Room)=> r.id===editing.id ? editing : r);
+      onRoomsChange(next);
+      cancel();
+      return;
     }
-    onRoomsChange(next);
-    cancel();
+    // Creating new room -> send to backend
+    const user = loadCurrentUser();
+    const token = user?.token;
+    if (!token) { alert('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
+    setCreateSaving(true);
+    try {
+      await apiCreateRoom({ name: editing.name.trim(), hexColor: editing.color || ROOM_COLOR_PALETTE[0] }, token);
+      const data = await getRooms(token);
+      setBackendRooms(data);
+      // inform App to refresh global rooms so MeetingForm sees updates
+      onBackendRoomsRefresh && onBackendRoomsRefresh();
+      cancel();
+    } catch (e) {
+      alert('Nie udało się utworzyć sali.');
+    } finally {
+      setCreateSaving(false);
+    }
   };
 
   const removeRoom = (id: string) => {
     if(!confirm('Usuń salę?')) return;
-    onRoomsChange(rooms.filter(r=>r.id!==id));
+    onRoomsChange(roomsList.filter((r: Room)=>r.id!==id));
   };
 
   const updateEditing = (patch: Partial<Room>) => {
@@ -66,67 +138,311 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
     setEditing({ ...editing, ...patch });
   };
 
-  const filtered = rooms.filter(r=> r.name.toLowerCase().includes(filter.toLowerCase()) || (r.purpose||'').toLowerCase().includes(filter.toLowerCase()));
+  // Fetch backend rooms once (for the main list below demo rooms)
+  useEffect(() => {
+    const user = loadCurrentUser();
+    const token = user?.token;
+    if (!token) return; // not logged in, skip
+    (async () => {
+      try {
+        const data = await getRooms(token);
+        setBackendRooms(data);
+      } catch {
+        // silently ignore for the main list
+      }
+    })();
+  }, []);
+
+  // Build a set of backend room ids to avoid duplicates in the top (demo) list
+  const backendIdSet = useMemo(() => new Set(backendRooms.map(r => String(r.id))), [backendRooms]);
+
+  // Non-filtered lists (search removed)
+  const demoRooms: Room[] = backendRooms.length > 0
+    ? roomsList.filter((r: Room) => !backendIdSet.has(r.id))
+    : roomsList;
+  const backendList = backendRooms;
+
+  // Backend actions
+  const startEditBackendRoom = (r: RoomAPI) => {
+    setBackendEditing(r);
+    setBackendEditName(r.name);
+    setBackendEditColor(ROOM_COLOR_PALETTE.includes(r.hexColor) ? r.hexColor : ROOM_COLOR_PALETTE[0]);
+    setBackendActionError(null);
+    setShowBackendEdit(true);
+  };
+  const cancelBackendEdit = () => {
+    setShowBackendEdit(false);
+    setBackendEditing(null);
+  };
+  // remove hex validation; using palette-only selection
+  const saveBackendEdit = async () => {
+    if (!backendEditing) return;
+    const user = loadCurrentUser();
+    const token = user?.token;
+    if (!token) { setBackendActionError('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
+    if (!backendEditName.trim()) { setBackendActionError('Nazwa nie może być pusta.'); return; }
+    setBackendSaveLoading(true);
+    try {
+      await apiUpdateRoom(backendEditing.id, { name: backendEditName.trim(), hexColor: backendEditColor.toUpperCase() }, token);
+      const data = await getRooms(token);
+      setBackendRooms(data);
+      setShowBackendEdit(false);
+      setBackendEditing(null);
+      // inform App to refresh global rooms so MeetingForm sees updates
+      onBackendRoomsRefresh && onBackendRoomsRefresh();
+    } catch (err) {
+      setBackendActionError(err instanceof Error ? err.message : 'Nie udało się zapisać zmian.');
+    } finally {
+      setBackendSaveLoading(false);
+    }
+  };
+
+  // NEW: open relations modal before attempting backend delete
+  const openRelationsDialog = async (roomId: number) => {
+    setRelationsRoomId(roomId);
+    setShowRelations(true);
+    setRelationsLoading(true);
+    setRelationsError(null);
+    try {
+      const user = loadCurrentUser();
+      const token = user?.token;
+      let backendEvents: Event[] = [];
+      if (token) {
+        try {
+          const all = await fetchEvents(token);
+          backendEvents = all.filter(ev => ev.roomId === roomId);
+          // Fetch employees to resolve participant names
+          try {
+            const emps = await fetchEmployees(token);
+            const map: Record<number, string> = {};
+            emps.forEach(e => { map[e.id] = `${e.name} ${e.surname}`.trim(); });
+            setEmployeesById(map);
+          } catch {
+            // ignore employees fetch failure; we'll fallback to IDs
+          }
+        } catch (e) {
+          setRelationsError('Nie udało się pobrać wydarzeń z backendu.');
+        }
+      } else {
+        setRelationsError('Brak tokenu uwierzytelnienia dla pobrania wydarzeń.');
+      }
+      const local = loadMeetings();
+      const localRelated = Array.isArray(local) ? local.filter(m => m.roomId === String(roomId)) : [];
+      // Load local demo users to resolve specialist names in local meetings
+      try {
+        const demoUsers = loadUsers();
+        const map: Record<string, string> = {};
+        demoUsers.forEach(u => { map[u.id] = `${u.name} ${u.surname}`.trim(); });
+        setLocalUsersById(map);
+      } catch {
+        setLocalUsersById({});
+      }
+      setRelationsBackend(backendEvents);
+      setRelationsLocal(localRelated as Meeting[]);
+    } finally {
+      setRelationsLoading(false);
+    }
+  };
+
+  // Helper to render specialists list
+  const renderBackendSpecialists = (ids: number[] = []) => {
+    if (!ids || ids.length === 0) return '—';
+    const names = ids.map(id => employeesById[id] || `ID ${id}`);
+    return names.join(', ');
+  };
+  const renderLocalSpecialists = (m: Meeting) => {
+    const ids = (m.specialistIds && m.specialistIds.length > 0) ? m.specialistIds : (m.specialistId ? [m.specialistId] : []);
+    if (!ids || ids.length === 0) return '—';
+    const names = ids.map(sid => {
+      const nId = Number(sid);
+      if (!Number.isNaN(nId) && employeesById[nId]) return employeesById[nId];
+      return localUsersById[String(sid)] || `ID ${sid}`;
+    });
+    return names.join(', ');
+  };
+
+  const removeBackendRoom = async (id: number) => {
+    console.log('[rooms] Attempting to delete backend room', { id });
+    // Pre-check: if there are meetings for this room in local data, block with a helpful message
+    try {
+      const localMeetings = loadMeetings();
+      const count = Array.isArray(localMeetings) ? localMeetings.filter(m => m.roomId === String(id)).length : 0;
+      console.log('[rooms] Local meetings linked to this room before delete', { id, count });
+      if (count > 0) {
+        setRelationsError('Nie można usunąć sali, która ma przypisane spotkania (lokalne). Najpierw usuń lub przenieś te spotkania.');
+        return;
+      }
+    } catch (preErr) {
+      console.warn('[rooms] Pre-check meetings failed (non-blocking)', preErr);
+    }
+    const user = loadCurrentUser();
+    const token = user?.token;
+    if (!token) { setRelationsError('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
+    console.log('[rooms] Sending DELETE request', { url: `${import.meta.env.VITE_API_URL}/api/rooms/${id}` });
+    try {
+      await apiDeleteRoom(id, token);
+      console.log('[rooms] Backend room deleted successfully', { id });
+      setBackendRooms(prev => prev.filter(r => r.id !== id));
+      // inform App to refresh global rooms so MeetingForm sees updates
+      onBackendRoomsRefresh && onBackendRoomsRefresh();
+      setShowRelations(false);
+      setRelationsBackend([]);
+      setRelationsLocal([]);
+      setRelationsRoomId(null);
+    } catch (err) {
+      console.error('[rooms] Delete backend room failed', { id, error: err });
+      const message = err instanceof Error ? err.message : 'Nie udało się usunąć sali.';
+      setRelationsError(message);
+    }
+  };
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-full flex flex-col">
       <div className="p-4 border-b border-gray-200 flex items-center gap-4">
-        <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Szukaj po nazwie lub przeznaczeniu..." className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-        {userRole==='admin' && <button onClick={startAdd} className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"><Plus className="w-4 h-4"/>Nowa sala</button>}
-      </div>
-      <div className="flex-1 overflow-auto p-4 space-y-3">
-        {filtered.length===0 && <p className="text-sm text-gray-500">Brak sal.</p>}
-        {filtered.map(r=> (
-          <div key={r.id} className="border rounded-lg p-4 flex flex-col gap-2 relative" style={{borderColor: r.color||'#e5e7eb'}}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-4 h-4 rounded" style={{background:r.color||'#3b82f6'}} />
-                <h3 className="font-semibold text-gray-800">{r.name}</h3>
-                <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">{r.capacity} os.</span>
-              </div>
-              {userRole==='admin' && (
-                <div className="flex items-center gap-2">
-                  <button onClick={()=>startEdit(r)} className="p-2 rounded hover:bg-gray-100" title="Edytuj"><Pencil className="w-4 h-4 text-gray-600"/></button>
-                  <button onClick={()=>removeRoom(r.id)} className="p-2 rounded hover:bg-gray-100" title="Usuń"><Trash2 className="w-4 h-4 text-red-600"/></button>
-                </div>
-              )}
-            </div>
-            {(r.purpose||r.equipment.length>0) && (
-              <div className="text-xs text-gray-600 flex flex-wrap gap-2">
-                {r.purpose && <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded">{r.purpose}</span>}
-                {r.equipment.map(eq=> <span key={eq} className="px-2 py-0.5 bg-gray-100 rounded" title="Wyposażenie">{eq}</span>)}
-              </div>
-            )}
+        {/* removed search input */}
+        {userRole==='admin' && (
+          <div className="flex items-center gap-2 ml-auto">
+            <button onClick={startAdd} className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"><Plus className="w-4 h-4"/>Nowa sala</button>
+            {/* removed Test button */}
           </div>
-        ))}
+        )}
+      </div>
+      <div className="flex-1 overflow-auto p-4 space-y-6">
+        {/* Demo rooms section with header and modern grid */}
+        {demoRooms.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">Sale lokalne</h3>
+            </div>
+            <div className="grid auto-rows-[1fr] gap-4 grid-cols-[repeat(auto-fit,minmax(260px,1fr))]">
+              {demoRooms.map((r: Room)=> (
+                <div
+                  key={r.id}
+                  className="group relative overflow-hidden rounded-2xl border border-gray-200/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition"
+                  style={{ backgroundColor: hexToRGBA(r.color || '#e5e7eb', 0.12) }}
+                >
+                  <div className="absolute inset-y-0 left-0 w-1.5" style={{background: r.color||'#e5e7eb'}} />
+                  <div className="p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h3 className="font-semibold text-gray-900 truncate" title={r.name}>{r.name}</h3>
+                          <span className="ml-2 inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">
+                            <Users className="w-3 h-3" /> {r.capacity} os.
+                          </span>
+                        </div>
+                        {r.purpose && (
+                          <div className="mt-2 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700">
+                            <Tag className="w-3 h-3" /> {r.purpose}
+                          </div>
+                        )}
+                      </div>
+                      {userRole==='admin' && (
+                        <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 translate-y-1 transition group-hover:opacity-100 group-hover:translate-y-0">
+                          <button onClick={()=>startEdit(r)} className="p-2 rounded-md bg-transparent hover:bg-transparent transition-transform duration-150 ease-out hover:scale-110" title="Edytuj">
+                            <Pencil className="w-4 h-4 text-gray-600"/>
+                          </button>
+                          <button onClick={()=>removeRoom(r.id)} className="p-2 rounded-md bg-transparent hover:bg-transparent transition-transform duration-150 ease-out hover:scale-110" title="Usuń">
+                            <Trash2 className="w-4 h-4 text-red-600"/>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {r.equipment && r.equipment.length>0 && (
+                      <div className="mt-3 flex flex-wrap gap-1">
+                        {r.equipment.slice(0,3).map((eq: string)=> (
+                          <span key={eq} className="text-[11px] px-2 py-0.5 bg-gray-50 text-gray-600 rounded" title={eq}>{eq}</span>
+                        ))}
+                        {r.equipment.length>3 && (
+                          <span className="text-[11px] px-2 py-0.5 bg-gray-50 text-gray-600 rounded" title={r.equipment.slice(3).join(', ')}>+{r.equipment.length-3}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Separator: backend data (only when both sections exist) */}
+        {backendList.length > 0 && demoRooms.length > 0 && (
+          <div className="my-2 relative">
+            <div className="border-t-2 border-red-500" />
+            <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white px-2 text-xs font-semibold text-red-600">backend data</span>
+          </div>
+        )}
+
+        {/* Backend rooms section with header and modern grid */}
+        {backendList.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">Sale w siedzibie fundacji</h3>
+            </div>
+            <div className="grid auto-rows-[1fr] gap-4 grid-cols-[repeat(auto-fit,minmax(260px,1fr))]">
+              {backendList.map(r => (
+                <div
+                  key={`api-${r.id}`}
+                  className="group relative overflow-hidden rounded-2xl border border-gray-200/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition"
+                  style={{ backgroundColor: hexToRGBA(r.hexColor || '#e5e7eb', 0.12) }}
+                >
+                  <div className="absolute inset-y-0 left-0 w-1.5" style={{ background: r.hexColor || '#e5e7eb' }} />
+                  <div className="p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-semibold text-gray-900 truncate" title={r.name}>{r.name}</span>
+                        </div>
+                      </div>
+                      {userRole==='admin' && (
+                        <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 translate-y-1 transition group-hover:opacity-100 group-hover:translate-y-0">
+                          <button onClick={()=>startEditBackendRoom(r)} className="p-2 rounded-md bg-transparent hover:bg-transparent transition-transform duration-150 ease-out hover:scale-110" title="Edytuj">
+                            <Pencil className="w-4 h-4 text-gray-600"/>
+                          </button>
+                          <button onClick={()=>openRelationsDialog(r.id)} className="p-2 rounded-md bg-transparent hover:bg-transparent transition-transform duration-150 ease-out hover:scale-110" title="Usuń">
+                            <Trash2 className="w-4 h-4 text-red-600"/>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {/* removed ID footer */}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Combined empty state: no demo and no backend rooms */}
+        {demoRooms.length === 0 && backendList.length === 0 && (
+          <p className="text-sm text-gray-500">Brak sal.</p>
+        )}
       </div>
 
+      {/* New Room modal (create backend room or edit demo room) */}
       {showForm && editing && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-semibold text-gray-800">{editing.id? 'Edytuj salę':'Nowa sala'}</h2>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-800">{editing.id ? 'Edytuj salę' : 'Nowa sala'}</h2>
               <button onClick={cancel} className="p-2 rounded hover:bg-gray-100"><X className="w-5 h-5 text-gray-500"/></button>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Nazwa</label>
-                <input value={editing.name} onChange={e=>updateEditing({name:e.target.value})} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Pojemność</label>
-                <input type="number" min={0} value={editing.capacity} onChange={e=>updateEditing({capacity: parseInt(e.target.value)||0})} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+                <input value={editing.name} onChange={e=>updateEditing({ name: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Kolor (wybierz)</label>
                 <div className="grid grid-cols-5 gap-2">
-                  {ROOM_COLOR_PALETTE.map(c=>{
-                    const selected = editing.color === c;
+                  {ROOM_COLOR_PALETTE.map(c => {
+                    const selected = (editing.color || ROOM_COLOR_PALETTE[0]) === c;
                     return (
                       <button
                         type="button"
                         key={c}
-                        onClick={()=>updateEditing({color:c})}
+                        onClick={()=>updateEditing({ color: c })}
                         aria-label={`Kolor ${c}`}
                         className={`h-8 rounded-md border flex items-center justify-center relative transition focus:outline-none focus:ring-2 focus:ring-offset-1 ${selected? 'ring-2 ring-blue-500 border-blue-600':'border-gray-300 hover:border-gray-500'}`}
                         style={{background:c, color:'#fff'}}
@@ -138,18 +454,133 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
                   })}
                 </div>
               </div>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-gray-500">
+              <div className="w-5 h-5 rounded border" style={{ background: editing.color || ROOM_COLOR_PALETTE[0] }} />
+              <span>{editing.color || ROOM_COLOR_PALETTE[0]}</span>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={cancel} className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700">Anuluj</button>
+              <button onClick={saveRoom} disabled={createSaving || !editing.name.trim()} className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg">
+                {createSaving ? (<><Loader2 className="w-4 h-4 animate-spin" /><span>Zapisuję...</span></>) : (editing.id ? 'Zapisz' : 'Utwórz')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Backend edit modal */}
+      {showBackendEdit && backendEditing && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-800">Edytuj salę (backend)</h2>
+              <button onClick={cancelBackendEdit} className="p-2 rounded hover:bg-gray-100"><X className="w-5 h-5 text-gray-500"/></button>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Przeznaczenie</label>
-                <input value={editing.purpose||''} onChange={e=>updateEditing({purpose:e.target.value})} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+                <label className="block text-xs font-medium text-gray-600 mb-1">Nazwa</label>
+                <input value={backendEditName} onChange={e=>setBackendEditName(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
               </div>
               <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Wyposażenie (oddziel przecinkami)</label>
-                <input value={editing.equipment.join(', ')} onChange={e=>updateEditing({equipment: e.target.value.split(',').map(s=>s.trim()).filter(Boolean)})} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+                <label className="block text-xs font-medium text-gray-600 mb-1">Kolor (wybierz)</label>
+                <div className="grid grid-cols-5 gap-2">
+                  {ROOM_COLOR_PALETTE.map(c=>{
+                    const selected = backendEditColor === c;
+                    return (
+                      <button
+                        type="button"
+                        key={c}
+                        onClick={()=>setBackendEditColor(c)}
+                        aria-label={`Kolor ${c}`}
+                        className={`h-8 rounded-md border flex items-center justify-center relative transition focus:outline-none focus:ring-2 focus:ring-offset-1 ${selected? 'ring-2 ring-blue-500 border-blue-600':'border-gray-300 hover:border-gray-500'}`}
+                        style={{background:c, color:'#fff'}}
+                        title={c}
+                      >
+                        {selected && <span className="w-2 h-2 rounded-full bg-white/90" />}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
+            {backendActionError && <p className="text-sm text-red-600">{backendActionError}</p>}
+            <div className="flex items-center gap-3 text-xs text-gray-500">
+              <div className="w-5 h-5 rounded border" style={{ background: backendEditColor }} />
+              <span>{backendEditColor}</span>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={cancelBackendEdit} className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700">Anuluj</button>
+              <button onClick={saveBackendEdit} disabled={backendSaveLoading || !backendEditName.trim()} className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg">
+                {backendSaveLoading ? (<><Loader2 className="w-4 h-4 animate-spin" /><span>Zapisywanie...</span></>) : 'Zapisz'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NEW: Relations modal */}
+      {showRelations && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-800">
+                Powiązania sali {relationsRoom ? `„${relationsRoom.name}”` : (relationsRoomId != null ? `Sala #${relationsRoomId}` : 'Sala')}
+              </h2>
+              <button onClick={()=>setShowRelations(false)} className="p-2 rounded hover:bg-gray-100"><X className="w-5 h-5 text-gray-500"/></button>
+            </div>
+            {relationsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-gray-600"><Loader2 className="w-4 h-4 animate-spin"/>Ładowanie powiązań...</div>
+            ) : (
+              <div className="space-y-4">
+                {relationsError && <p className="text-sm text-red-600">{relationsError}</p>}
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold text-gray-700">Powiązane wydarzenia ({relationsBackend.length + relationsLocal.length})</h3>
+                  {relationsBackend.length + relationsLocal.length === 0 ? (
+                    <p className="text-sm text-gray-500">Brak powiązanych wydarzeń.</p>
+                  ) : (
+                    <ul className="max-h-72 overflow-auto divide-y divide-gray-200 border rounded-md">
+                      {[
+                        ...relationsBackend.map(ev => ({
+                          key: `b-${ev.id}`,
+                          id: String(ev.id),
+                          title: ev.name,
+                          when: `${ev.start} → ${ev.end}`,
+                          specialists: renderBackendSpecialists(ev.participantIds)
+                        })),
+                        ...relationsLocal.map(m => ({
+                          key: `l-${m.id}`,
+                          id: String(m.id),
+                          title: (m as any).name || m.patientName || 'Spotkanie',
+                          when: `${m.date} ${m.startTime} → ${m.endTime}`,
+                          specialists: renderLocalSpecialists(m)
+                        }))
+                      ].map(item => (
+                        <li key={item.key} className="p-2 text-sm flex flex-col gap-1">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-gray-800">{item.title}</span>
+                            <span className="text-xs text-gray-500">ID: {item.id}</span>
+                          </div>
+                          <div className="text-xs text-gray-600">{item.when}</div>
+                          <div className="text-xs text-gray-600"><span className="text-gray-500">Specjaliści:</span> {item.specialists}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500">Aby usunąć salę, najpierw usuń lub zaktualizuj wydarzenia, które ją referencjonują.</p>
+              </div>
+            )}
             <div className="flex justify-end gap-3 pt-2">
-              <button onClick={cancel} className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700">Anuluj</button>
-              <button onClick={saveRoom} disabled={!editing.name.trim()} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg">Zapisz</button>
+              <button onClick={()=>setShowRelations(false)} className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700">Zamknij</button>
+              <button
+                onClick={()=> relationsRoomId!=null && removeBackendRoom(relationsRoomId)}
+                disabled={relationsLoading || (relationsBackend.length + relationsLocal.length > 0)}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg"
+                title={(relationsBackend.length + relationsLocal.length) > 0 ? 'Usuń/zmień powiązane wydarzenia (backend lub lokalne), aby móc usunąć salę' : 'Usuń salę'}
+              >
+                Usuń salę
+              </button>
             </div>
           </div>
         </div>

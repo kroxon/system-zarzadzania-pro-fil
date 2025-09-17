@@ -48,7 +48,7 @@ export function generateDemoData(seed:number = Date.now()): DemoDataBundle & { q
     'Rozbudowana aktywność ruchowa – dobra regulacja pobudzenia po ćwiczeniach.'
   ];
   // 5 rooms
-  const rooms: Room[] = Array.from({length:5}).map((_,i)=>({
+  const rooms: Room[] = Array.from({length:2}).map((_,i)=>({
     id: 'r'+(i+1),
     name: ['Gabinet A','Gabinet B','Sala terapii','Sala konsultacyjna','Sala grupowa'][i] || 'Sala '+(i+1),
     capacity: i===4? 10: 2+(i%3)*2,
