@@ -31,15 +31,15 @@ export interface User {
   token?: string;
 }
 
-export interface PatientDemo {
-  id: string;
-  firstName: string;
-  lastName: string;
-  birthDate?: string; // YYYY-MM-DD
-  status?: string; // placeholder status (e.g., 'aktywny')
-  notes?: string;
-  therapists?: string[]; // przypisani specjaliści (tylko ID pracowników)
-}
+// export interface PatientDemo {
+//   id: string;
+//   firstName: string;
+//   lastName: string;
+//   birthDate?: string; // YYYY-MM-DD
+//   status?: string; // placeholder status (e.g., 'aktywny')
+//   notes?: string;
+//   therapists?: string[]; // przypisani specjaliści (tylko ID pracowników)
+// }
 
 export interface Room {
   id: string;
@@ -214,6 +214,8 @@ export interface Patient{
   surname: string;
   info?: string | null;
   birthDate: string;
+  assignedEmployeesIds: number[];
+  isActive: boolean;
 }
 
 
