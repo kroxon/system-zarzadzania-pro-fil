@@ -2,9 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Pencil, Trash2, X, Loader2, Users, Tag } from 'lucide-react';
 import { Room, RoomAPI, Meeting, Event } from '../../types';
 import { getRooms, updateRoom as apiUpdateRoom, deleteRoom as apiDeleteRoom, createRoom as apiCreateRoom } from '../../utils/api/rooms';
-import { loadCurrentUser, loadMeetings, loadUsers } from '../../utils/storage';
+import { loadCurrentUser, loadMeetings } from '../../utils/storage';
 import { fetchEvents } from '../../utils/api/events';
-import { fetchEmployees } from '../../utils/api/employees';
+// import { fetchEmployees } from '../../utils/api/employees';
 
 // Distinct, broader-spectrum high-contrast palette (20 colors)
 const ROOM_COLOR_PALETTE = [
@@ -83,9 +83,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
   const [relationsLocal, setRelationsLocal] = useState<Meeting[]>([]);
   const [relationsRoomId, setRelationsRoomId] = useState<number | null>(null);
 
-  // Maps to resolve specialist names
-  const [employeesById, setEmployeesById] = useState<Record<number, string>>({});
-  const [localUsersById, setLocalUsersById] = useState<Record<string, string>>({});
+  // Removed maps for specialist name resolution (dialog simplified)
 
   // Resolve room name for relations header
   const relationsRoom = useMemo(() => (
@@ -211,15 +209,6 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
         try {
           const all = await fetchEvents(token);
           backendEvents = all.filter(ev => ev.roomId === roomId);
-          // Fetch employees to resolve participant names
-          try {
-            const emps = await fetchEmployees(token);
-            const map: Record<number, string> = {};
-            emps.forEach(e => { map[e.id] = `${e.name} ${e.surname}`.trim(); });
-            setEmployeesById(map);
-          } catch {
-            // ignore employees fetch failure; we'll fallback to IDs
-          }
         } catch (e) {
           setRelationsError('Nie udało się pobrać wydarzeń z backendu.');
         }
@@ -228,15 +217,6 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
       }
       const local = loadMeetings();
       const localRelated = Array.isArray(local) ? local.filter(m => m.roomId === String(roomId)) : [];
-      // Load local demo users to resolve specialist names in local meetings
-      try {
-        const demoUsers = loadUsers();
-        const map: Record<string, string> = {};
-        demoUsers.forEach(u => { map[u.id] = `${u.name} ${u.surname}`.trim(); });
-        setLocalUsersById(map);
-      } catch {
-        setLocalUsersById({});
-      }
       setRelationsBackend(backendEvents);
       setRelationsLocal(localRelated as Meeting[]);
     } finally {
@@ -244,37 +224,12 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
     }
   };
 
-  // Helper to render specialists list
-  const renderBackendSpecialists = (ids: number[] = []) => {
-    if (!ids || ids.length === 0) return '—';
-    const names = ids.map(id => employeesById[id] || `ID ${id}`);
-    return names.join(', ');
-  };
-  const renderLocalSpecialists = (m: Meeting) => {
-    const ids = (m.specialistIds && m.specialistIds.length > 0) ? m.specialistIds : (m.specialistId ? [m.specialistId] : []);
-    if (!ids || ids.length === 0) return '—';
-    const names = ids.map(sid => {
-      const nId = Number(sid);
-      if (!Number.isNaN(nId) && employeesById[nId]) return employeesById[nId];
-      return localUsersById[String(sid)] || `ID ${sid}`;
-    });
-    return names.join(', ');
-  };
+  // Specialists renderers removed; simplified dialog no longer lists detailed events
 
   const removeBackendRoom = async (id: number) => {
     console.log('[rooms] Attempting to delete backend room', { id });
-    // Pre-check: if there are meetings for this room in local data, block with a helpful message
-    try {
-      const localMeetings = loadMeetings();
-      const count = Array.isArray(localMeetings) ? localMeetings.filter(m => m.roomId === String(id)).length : 0;
-      console.log('[rooms] Local meetings linked to this room before delete', { id, count });
-      if (count > 0) {
-        setRelationsError('Nie można usunąć sali, która ma przypisane spotkania (lokalne). Najpierw usuń lub przenieś te spotkania.');
-        return;
-      }
-    } catch (preErr) {
-      console.warn('[rooms] Pre-check meetings failed (non-blocking)', preErr);
-    }
+    // Note: allow deletion even if there are related meetings; those meetings will no longer be visible w grafiku,
+    // but pozostaną dostępne w raportach i historii spotkań (zgodnie z wymaganiami UI).
     const user = loadCurrentUser();
     const token = user?.token;
     if (!token) { setRelationsError('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
@@ -535,49 +490,21 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
               <div className="space-y-4">
                 {relationsError && <p className="text-sm text-red-600">{relationsError}</p>}
                 <div className="space-y-2">
-                  <h3 className="text-sm font-semibold text-gray-700">Powiązane wydarzenia ({relationsBackend.length + relationsLocal.length})</h3>
-                  {relationsBackend.length + relationsLocal.length === 0 ? (
-                    <p className="text-sm text-gray-500">Brak powiązanych wydarzeń.</p>
-                  ) : (
-                    <ul className="max-h-72 overflow-auto divide-y divide-gray-200 border rounded-md">
-                      {[
-                        ...relationsBackend.map(ev => ({
-                          key: `b-${ev.id}`,
-                          id: String(ev.id),
-                          title: ev.name,
-                          when: `${ev.start} → ${ev.end}`,
-                          specialists: renderBackendSpecialists(ev.participantIds)
-                        })),
-                        ...relationsLocal.map(m => ({
-                          key: `l-${m.id}`,
-                          id: String(m.id),
-                          title: (m as any).name || m.patientName || 'Spotkanie',
-                          when: `${m.date} ${m.startTime} → ${m.endTime}`,
-                          specialists: renderLocalSpecialists(m)
-                        }))
-                      ].map(item => (
-                        <li key={item.key} className="p-2 text-sm flex flex-col gap-1">
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium text-gray-800">{item.title}</span>
-                            <span className="text-xs text-gray-500">ID: {item.id}</span>
-                          </div>
-                          <div className="text-xs text-gray-600">{item.when}</div>
-                          <div className="text-xs text-gray-600"><span className="text-gray-500">Specjaliści:</span> {item.specialists}</div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  <h3 className="text-sm font-semibold text-gray-700">Powiązane spotkania</h3>
+                  <p className="text-sm text-gray-700">Liczba powiązanych spotkań: <span className="font-semibold">{relationsBackend.length + relationsLocal.length}</span></p>
+                  <div className="text-xs text-gray-600 bg-amber-50 border border-amber-200 rounded-md p-3">
+                    Po usunięciu sali istniejące spotkania nie będą widoczne w grafiku, ale pozostaną dostępne w raportach i historii spotkań.
+                  </div>
                 </div>
-                <p className="text-xs text-gray-500">Aby usunąć salę, najpierw usuń lub zaktualizuj wydarzenia, które ją referencjonują.</p>
               </div>
             )}
             <div className="flex justify-end gap-3 pt-2">
               <button onClick={()=>setShowRelations(false)} className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700">Zamknij</button>
               <button
                 onClick={()=> relationsRoomId!=null && removeBackendRoom(relationsRoomId)}
-                disabled={relationsLoading || (relationsBackend.length + relationsLocal.length > 0)}
+                disabled={relationsLoading}
                 className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg"
-                title={(relationsBackend.length + relationsLocal.length) > 0 ? 'Usuń/zmień powiązane wydarzenia (backend lub lokalne), aby móc usunąć salę' : 'Usuń salę'}
+                title="Usuń salę"
               >
                 Usuń salę
               </button>
