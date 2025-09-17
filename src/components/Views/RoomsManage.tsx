@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Pencil, Trash2, X, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Loader2, Users, Tag } from 'lucide-react';
 import { Room, RoomAPI, Meeting, Event } from '../../types';
 import { getRooms, updateRoom as apiUpdateRoom, deleteRoom as apiDeleteRoom, createRoom as apiCreateRoom } from '../../utils/api/rooms';
 import { loadCurrentUser, loadMeetings, loadUsers } from '../../utils/storage';
@@ -30,6 +30,26 @@ const ROOM_COLOR_PALETTE = [
   '#52B788'  // soft green
 ];
 
+// Helper: convert hex color to rgba string with desired alpha (for faded backgrounds)
+const hexToRGBA = (hex: string, alpha = 0.12): string => {
+  if (!hex) return `rgba(229, 231, 235, ${alpha})`; // gray-200 fallback
+  let h = hex.trim();
+  if (h.startsWith('#')) h = h.slice(1);
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return `rgba(229, 231, 235, ${alpha})`;
+};
+
 interface RoomsManageProps {
   rooms: Room[];
   onRoomsChange: (rooms: Room[]) => void;
@@ -43,13 +63,8 @@ const emptyRoom = (): Room => ({ id: '', name: '', capacity: 0, equipment: [], p
 const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRole, onBackendRoomsRefresh }) => {
   const [editing, setEditing] = useState<Room | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [filter, setFilter] = useState('');
-  // Test dialog state for backend rooms
-  const [showTestDialog, setShowTestDialog] = useState(false);
-  const [apiRooms, setApiRooms] = useState<RoomAPI[]>([]);
-  const [apiLoading, setApiLoading] = useState(false);
-  const [apiError, setApiError] = useState<string | null>(null);
-  // Persistent backend rooms section (below demo rooms)
+  // removed search/filter
+  // removed Test dialog state
   const [backendRooms, setBackendRooms] = useState<RoomAPI[]>([]);
   // Backend edit modal state
   const [showBackendEdit, setShowBackendEdit] = useState(false);
@@ -123,25 +138,6 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
     setEditing({ ...editing, ...patch });
   };
 
-  // Open/close Test dialog and fetch rooms from backend
-  const openTestDialog = async () => {
-    setShowTestDialog(true);
-    setApiLoading(true);
-    setApiError(null);
-    try {
-      const user = loadCurrentUser();
-      const token = user?.token;
-      if (!token) throw new Error('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.');
-      const data = await getRooms(token);
-      setApiRooms(data);
-    } catch (err) {
-      setApiError(err instanceof Error ? err.message : 'Nieznany błąd podczas pobierania sal.');
-    } finally {
-      setApiLoading(false);
-    }
-  };
-  const closeTestDialog = () => setShowTestDialog(false);
-
   // Fetch backend rooms once (for the main list below demo rooms)
   useEffect(() => {
     const user = loadCurrentUser();
@@ -152,7 +148,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
         const data = await getRooms(token);
         setBackendRooms(data);
       } catch {
-        // silently ignore for the main list; user can still use Test dialog to see errors
+        // silently ignore for the main list
       }
     })();
   }, []);
@@ -160,17 +156,11 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
   // Build a set of backend room ids to avoid duplicates in the top (demo) list
   const backendIdSet = useMemo(() => new Set(backendRooms.map(r => String(r.id))), [backendRooms]);
 
-  // Base filter by name/purpose
-  const baseFiltered: Room[] = roomsList
-    .filter((r: Room) => r.name.toLowerCase().includes(filter.toLowerCase()) || (r.purpose || '').toLowerCase().includes(filter.toLowerCase()));
-
-  // Filtered demo (local + globally merged). If backendRooms are loaded, exclude backend ones to prevent duplicates.
-  // If backendRooms are not available (e.g., token issue), show all rooms so the list is not empty.
-  const filteredDemo: Room[] = backendRooms.length > 0
-    ? baseFiltered.filter((r: Room) => !backendIdSet.has(r.id))
-    : baseFiltered;
-
-  const backendFiltered = backendRooms.filter((r: RoomAPI) => r.name.toLowerCase().includes(filter.toLowerCase()));
+  // Non-filtered lists (search removed)
+  const demoRooms: Room[] = backendRooms.length > 0
+    ? roomsList.filter((r: Room) => !backendIdSet.has(r.id))
+    : roomsList;
+  const backendList = backendRooms;
 
   // Backend actions
   const startEditBackendRoom = (r: RoomAPI) => {
@@ -272,7 +262,6 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
   };
 
   const removeBackendRoom = async (id: number) => {
-    if (!confirm('Usuń salę (backend)?')) return;
     console.log('[rooms] Attempting to delete backend room', { id });
     // Pre-check: if there are meetings for this room in local data, block with a helpful message
     try {
@@ -280,7 +269,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
       const count = Array.isArray(localMeetings) ? localMeetings.filter(m => m.roomId === String(id)).length : 0;
       console.log('[rooms] Local meetings linked to this room before delete', { id, count });
       if (count > 0) {
-        alert('Nie można usunąć sali, która ma przypisane spotkania. Najpierw usuń lub przenieś te spotkania.');
+        setRelationsError('Nie można usunąć sali, która ma przypisane spotkania (lokalne). Najpierw usuń lub przenieś te spotkania.');
         return;
       }
     } catch (preErr) {
@@ -288,7 +277,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
     }
     const user = loadCurrentUser();
     const token = user?.token;
-    if (!token) { alert('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
+    if (!token) { setRelationsError('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
     console.log('[rooms] Sending DELETE request', { url: `${import.meta.env.VITE_API_URL}/api/rooms/${id}` });
     try {
       await apiDeleteRoom(id, token);
@@ -303,79 +292,131 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
     } catch (err) {
       console.error('[rooms] Delete backend room failed', { id, error: err });
       const message = err instanceof Error ? err.message : 'Nie udało się usunąć sali.';
-      alert(message);
+      setRelationsError(message);
     }
   };
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-full flex flex-col">
       <div className="p-4 border-b border-gray-200 flex items-center gap-4">
-        <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Szukaj po nazwie lub przeznaczeniu..." className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+        {/* removed search input */}
         {userRole==='admin' && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 ml-auto">
             <button onClick={startAdd} className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"><Plus className="w-4 h-4"/>Nowa sala</button>
-            <button onClick={openTestDialog} className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-800 rounded-lg text-sm hover:bg-gray-200">Test</button>
+            {/* removed Test button */}
           </div>
         )}
       </div>
       <div className="flex-1 overflow-auto p-4 space-y-6">
-        {/* Demo rooms grid (excluding backend duplicates) */}
-        {filteredDemo.length === 0 ? (
-          <p className="text-sm text-gray-500">Brak sal.</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {filteredDemo.map((r: Room)=> (
-              <div key={r.id} className="border rounded-lg p-4 flex flex-col gap-2 relative" style={{borderColor: r.color||'#e5e7eb'}}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-4 h-4 rounded" style={{background:r.color||'#3b82f6'}} />
-                    <h3 className="font-semibold text-gray-800">{r.name}</h3>
-                    <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">{r.capacity} os.</span>
-                  </div>
-                  {userRole==='admin' && (
-                    <div className="flex items-center gap-2">
-                      <button onClick={()=>startEdit(r)} className="p-2 rounded hover:bg-gray-100" title="Edytuj"><Pencil className="w-4 h-4 text-gray-600"/></button>
-                      <button onClick={()=>removeRoom(r.id)} className="p-2 rounded hover:bg-gray-100" title="Usuń"><Trash2 className="w-4 h-4 text-red-600"/></button>
+        {/* Demo rooms section with header and modern grid */}
+        {demoRooms.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">Sale lokalne</h3>
+            </div>
+            <div className="grid auto-rows-[1fr] gap-4 grid-cols-[repeat(auto-fit,minmax(260px,1fr))]">
+              {demoRooms.map((r: Room)=> (
+                <div
+                  key={r.id}
+                  className="group relative overflow-hidden rounded-2xl border border-gray-200/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition"
+                  style={{ backgroundColor: hexToRGBA(r.color || '#e5e7eb', 0.12) }}
+                >
+                  <div className="absolute inset-y-0 left-0 w-1.5" style={{background: r.color||'#e5e7eb'}} />
+                  <div className="p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h3 className="font-semibold text-gray-900 truncate" title={r.name}>{r.name}</h3>
+                          <span className="ml-2 inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">
+                            <Users className="w-3 h-3" /> {r.capacity} os.
+                          </span>
+                        </div>
+                        {r.purpose && (
+                          <div className="mt-2 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700">
+                            <Tag className="w-3 h-3" /> {r.purpose}
+                          </div>
+                        )}
+                      </div>
+                      {userRole==='admin' && (
+                        <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 translate-y-1 transition group-hover:opacity-100 group-hover:translate-y-0">
+                          <button onClick={()=>startEdit(r)} className="p-2 rounded-md bg-transparent hover:bg-transparent transition-transform duration-150 ease-out hover:scale-110" title="Edytuj">
+                            <Pencil className="w-4 h-4 text-gray-600"/>
+                          </button>
+                          <button onClick={()=>removeRoom(r.id)} className="p-2 rounded-md bg-transparent hover:bg-transparent transition-transform duration-150 ease-out hover:scale-110" title="Usuń">
+                            <Trash2 className="w-4 h-4 text-red-600"/>
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                {(r.purpose||r.equipment.length>0) && (
-                  <div className="text-xs text-gray-600 flex flex-wrap gap-2">
-                    {r.purpose && <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded">{r.purpose}</span>}
-                    {r.equipment.map((eq: string)=> <span key={eq} className="px-2 py-0.5 bg-gray-100 rounded" title="Wyposażenie">{eq}</span>)}
+
+                    {r.equipment && r.equipment.length>0 && (
+                      <div className="mt-3 flex flex-wrap gap-1">
+                        {r.equipment.slice(0,3).map((eq: string)=> (
+                          <span key={eq} className="text-[11px] px-2 py-0.5 bg-gray-50 text-gray-600 rounded" title={eq}>{eq}</span>
+                        ))}
+                        {r.equipment.length>3 && (
+                          <span className="text-[11px] px-2 py-0.5 bg-gray-50 text-gray-600 rounded" title={r.equipment.slice(3).join(', ')}>+{r.equipment.length-3}</span>
+                        )}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            ))}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
         {/* Separator: backend data (only when both sections exist) */}
-        {backendFiltered.length > 0 && filteredDemo.length > 0 && (
+        {backendList.length > 0 && demoRooms.length > 0 && (
           <div className="my-2 relative">
             <div className="border-t-2 border-red-500" />
             <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white px-2 text-xs font-semibold text-red-600">backend data</span>
           </div>
         )}
 
-        {/* Backend rooms grid */}
-        {backendFiltered.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {backendFiltered.map(r => (
-              <div key={`api-${r.id}`} className="border rounded-lg p-4 flex items-center justify-between" style={{ borderColor: r.hexColor || '#e5e7eb' }}>
-                <div className="flex items-center gap-3">
-                  <div className="w-4 h-4 rounded" style={{ background: r.hexColor || '#3b82f6' }} />
-                  <span className="font-semibold text-gray-800">{r.name}</span>
-                </div>
-                {userRole==='admin' && (
-                  <div className="flex items-center gap-2">
-                    <button onClick={()=>startEditBackendRoom(r)} className="p-2 rounded hover:bg-gray-100" title="Edytuj"><Pencil className="w-4 h-4 text-gray-600"/></button>
-                    <button onClick={()=>openRelationsDialog(r.id)} className="p-2 rounded hover:bg-gray-100" title="Usuń"><Trash2 className="w-4 h-4 text-red-600"/></button>
+        {/* Backend rooms section with header and modern grid */}
+        {backendList.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">Sale w siedzibie fundacji</h3>
+            </div>
+            <div className="grid auto-rows-[1fr] gap-4 grid-cols-[repeat(auto-fit,minmax(260px,1fr))]">
+              {backendList.map(r => (
+                <div
+                  key={`api-${r.id}`}
+                  className="group relative overflow-hidden rounded-2xl border border-gray-200/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition"
+                  style={{ backgroundColor: hexToRGBA(r.hexColor || '#e5e7eb', 0.12) }}
+                >
+                  <div className="absolute inset-y-0 left-0 w-1.5" style={{ background: r.hexColor || '#e5e7eb' }} />
+                  <div className="p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-semibold text-gray-900 truncate" title={r.name}>{r.name}</span>
+                        </div>
+                      </div>
+                      {userRole==='admin' && (
+                        <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 translate-y-1 transition group-hover:opacity-100 group-hover:translate-y-0">
+                          <button onClick={()=>startEditBackendRoom(r)} className="p-2 rounded-md bg-transparent hover:bg-transparent transition-transform duration-150 ease-out hover:scale-110" title="Edytuj">
+                            <Pencil className="w-4 h-4 text-gray-600"/>
+                          </button>
+                          <button onClick={()=>openRelationsDialog(r.id)} className="p-2 rounded-md bg-transparent hover:bg-transparent transition-transform duration-150 ease-out hover:scale-110" title="Usuń">
+                            <Trash2 className="w-4 h-4 text-red-600"/>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
-            ))}
+                  {/* removed ID footer */}
+                </div>
+              ))}
+            </div>
           </div>
+        )}
+
+        {/* Combined empty state: no demo and no backend rooms */}
+        {demoRooms.length === 0 && backendList.length === 0 && (
+          <p className="text-sm text-gray-500">Brak sal.</p>
         )}
       </div>
 
@@ -384,7 +425,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-800">{editing.id ? 'Edytuj salę' : 'Nowa sala (backend)'}</h2>
+              <h2 className="text-lg font-semibold text-gray-800">{editing.id ? 'Edytuj salę' : 'Nowa sala'}</h2>
               <button onClick={cancel} className="p-2 rounded hover:bg-gray-100"><X className="w-5 h-5 text-gray-500"/></button>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -534,53 +575,12 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
               <button onClick={()=>setShowRelations(false)} className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700">Zamknij</button>
               <button
                 onClick={()=> relationsRoomId!=null && removeBackendRoom(relationsRoomId)}
-                disabled={relationsLoading || (relationsBackend.length > 0)}
+                disabled={relationsLoading || (relationsBackend.length + relationsLocal.length > 0)}
                 className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg"
-                title={relationsBackend.length>0 ? 'Usuń/zmień powiązane wydarzenia, aby móc usunąć salę' : 'Usuń salę'}
+                title={(relationsBackend.length + relationsLocal.length) > 0 ? 'Usuń/zmień powiązane wydarzenia (backend lub lokalne), aby móc usunąć salę' : 'Usuń salę'}
               >
                 Usuń salę
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showTestDialog && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-semibold text-gray-800">Test: Sale z backendu</h2>
-              <button onClick={closeTestDialog} className="p-2 rounded hover:bg-gray-100"><X className="w-5 h-5 text-gray-500"/></button>
-            </div>
-            {apiLoading && <p className="text-sm text-gray-600">Ładowanie...</p>}
-            {apiError && !apiLoading && <p className="text-sm text-red-600">{apiError}</p>}
-            {!apiLoading && !apiError && (
-              <ul className="divide-y divide-gray-200">
-                {apiRooms.length === 0 ? (
-                  <li className="py-2 text-sm text-gray-500">Brak sal.</li>
-                ) : (
-                  apiRooms.map((r)=> (
-                    <li key={r.id} className="py-2 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span
-                          className="w-4 h-4 rounded-sm border border-gray-300"
-                          style={{ background: r.hexColor || '#e5e7eb' }}
-                          title={r.hexColor || 'brak koloru'}
-                          aria-label={`Kolor sali ${r.name}`}
-                        />
-                        <span className="font-medium text-gray-800">{r.name}</span>
-                        {r.hexColor && (
-                          <span className="text-xs text-gray-500">{r.hexColor}</span>
-                        )}
-                      </div>
-                      <span className="text-xs text-gray-500">ID: {r.id}</span>
-                    </li>
-                  ))
-                )}
-              </ul>
-            )}
-            <div className="flex justify-end pt-2">
-              <button onClick={closeTestDialog} className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700">Zamknij</button>
             </div>
           </div>
         </div>
