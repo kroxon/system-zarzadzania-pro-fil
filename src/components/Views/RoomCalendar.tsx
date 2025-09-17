@@ -454,7 +454,19 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                     patientName = `${patient.name} ${patient.surname}`;
                   }
                 }
-                const tooltipText = `${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}${patientName ? `\nPacjent: ${patientName}` : ''}`;
+                let patientsLabel = '';
+                if (m.patientIds && m.patientIds.length) {
+                  const names = m.patientIds.map((pid: string) => {
+                    const p = patients.find(pp => String(pp.id) === String(pid));
+                    return p ? `${p.name} ${p.surname}` : String(pid);
+                  }).filter(Boolean);
+                  patientsLabel = names.join(', ');
+                } else if (m.patientNamesList && m.patientNamesList.length) {
+                  patientsLabel = m.patientNamesList.join(', ');
+                } else if (patientName) {
+                  patientsLabel = patientName;
+                }
+                const tooltipText = `${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}${patientsLabel ? `\nPacjent: ${patientsLabel}` : ''}`;
                 // Color logic: highlight if selected, else gray
                 const highlight = isHighlightMeeting(m);
                 const colorStyle = highlight
@@ -1019,7 +1031,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
         )}
       </div>
       <div className="flex-1 min-h-0">{viewType==='day' && renderDayViewMultiRoom()}{viewType==='week' && renderWeekView()}{viewType==='month' && renderMonthView()}</div>
-      <MeetingForm isOpen={showMeetingForm} onClose={()=>{ setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); }} onSubmit={handleMeetingFormSubmit} onDelete={onMeetingDelete} users={users} rooms={rooms} meetings={meetings} selectedDate={formatDateForComparison(currentDate)} selectedTime={selectedTime} currentUser={currentUser} editingMeeting={editingMeeting} initialRoomId={formRoomId} selectedEndTime={selectedEndTime} />
+  <MeetingForm isOpen={showMeetingForm} onClose={()=>{ setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); }} onSubmit={handleMeetingFormSubmit} onDelete={onMeetingDelete} users={users} rooms={rooms} meetings={meetings} selectedDate={formatDateForComparison(currentDate)} selectedTime={selectedTime} currentUser={currentUser} editingMeeting={editingMeeting} initialRoomId={formRoomId} selectedEndTime={selectedEndTime} patients={patients} />
       {conflictMessage && <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl text-sm z-[100] max-w-sm text-center animate-in fade-in">{conflictMessage}</div>}
       {hoverTooltip && (
         <div className="fixed z-[200] pointer-events-none -translate-x-1/2" style={{ left: hoverTooltip!.x, top: hoverTooltip!.y }}>

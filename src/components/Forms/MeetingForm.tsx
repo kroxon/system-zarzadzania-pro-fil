@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Clock, Trash2, AlertCircle } from 'lucide-react';
 import { Meeting, User, Room, Patient } from '../../types';
-import { loadPatients } from '../../utils/storage';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { isSpecialistAvailable } from '../../utils/specialistAvailability';
 
@@ -93,7 +92,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
 
   const [errors, setErrors] = useState<string[]>([]);
   const [patientAssignmentFilter, setPatientAssignmentFilter] = useState<'wszyscy'|'przypisani'>('wszyscy'); // filter patients
-  const effectivePatients = patients.length ? patients : loadPatients();
+  const effectivePatients = patients.length ? patients : [];
   const [showPastSubmitInfo, setShowPastSubmitInfo] = useState(false);
 
   // Reset validation errors on open and when switching context (create/edit another meeting)
@@ -207,12 +206,9 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     const primaryPatientId = formData.patientIds[0];
     // Use effectivePatients (prop patients or loaded from storage) to resolve names
     const patientNamesList = formData.patientIds.map(id => {
-  const p = effectivePatients.find(pp=> pp.id===id);
-  if (!p) return id;
-  // Support both PatientDemo and Patient
-  const firstName = 'firstName' in p ? p.firstName : p.name;
-  const lastName = 'lastName' in p ? p.lastName : p.surname;
-  return `${firstName} ${lastName}`;
+      const p = effectivePatients.find(pp => String(pp.id) === String(id));
+      if (!p) return String(id);
+      return `${p.name} ${p.surname}`;
     });
     onSubmit({
       specialistId: primarySpec,
@@ -607,10 +603,16 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                   <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-44 overflow-auto">
                     {formData.patientIds.length===0 && (<li className="p-3 text-sm text-gray-400">Brak</li>)}
                     {formData.patientIds.map(pid=>{
-                      const p = effectivePatients.find(pp=>pp.id===pid); if(!p) return null;
-                      const firstName = 'firstName' in p ? p.firstName : p.name;
-                      const lastName = 'lastName' in p ? p.lastName : p.surname;
-                      const fullName = `${firstName} ${lastName}`;
+                      const p = effectivePatients.find(pp=> String(pp.id) === String(pid));
+                      let fullName: string;
+                      if (p) {
+                        fullName = `${p.name} ${p.surname}`;
+                      } else if (editingMeeting?.patientNamesList && editingMeeting.patientIds && editingMeeting.patientIds.length) {
+                        const idx = editingMeeting.patientIds.findIndex(x => String(x) === String(pid));
+                        fullName = idx >= 0 ? (editingMeeting.patientNamesList[idx] || String(pid)) : String(pid);
+                      } else {
+                        fullName = String(pid);
+                      }
                       return (
                         <li key={pid} className="flex items-center justify-between p-2.5 transition-colors bg-emerald-50 hover:bg-emerald-100">
                           <div className="min-w-0 pr-3"><div className="text-sm font-semibold leading-5 text-gray-900 truncate">{fullName}</div></div>
@@ -629,19 +631,21 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                   {patientsOpen && !(isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) && (
                     <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto text-sm">
                       <ul className="py-1">
-                        {filteredPatients.map(p=> {
+                        {effectivePatients.length>0 ? filteredPatients.map(p=> {
                           const already = formData.patientIds.includes(String(p.id));
-                          const firstName = 'firstName' in p ? p.firstName : p.name;
-                          const lastName = 'lastName' in p ? p.lastName : p.surname;
+                          const firstName = (p as Patient).name;
+                          const lastName = (p as Patient).surname;
                           return (
                             <li key={p.id}>
                               <button type="button" disabled={already} onClick={()=> { if (already) return; setFormData(fd=> fd.patientIds.includes(String(p.id)) ? fd : {...fd, patientIds:[...fd.patientIds, String(p.id)]}); setPatientsOpen(false); }} className={`w-full text-left px-3 py-2 hover:bg-indigo-50 ${already? 'opacity-40 cursor-not-allowed':''}`}>
-                                {firstName} {lastName}{already ? ' (dodany)' : ''}
+                                {`${firstName} ${lastName}`}{already ? ' (dodany)' : ''}
                               </button>
                             </li>
                           );
-                        })}
-                        {filteredPatients.length===0 && (
+                        }) : (
+                          <li className="px-3 py-2 text-xs text-gray-400">Brak listy pacjentów z backendu</li>
+                        )}
+                        {effectivePatients.length>0 && filteredPatients.length===0 && (
                           <li className="px-3 py-2 text-xs text-gray-400">{patientAssignmentFilter==='przypisani'? (formData.specialistIds.length? 'Brak przypisanych':'Najpierw wybierz specjalistę') : 'Brak wyników'}</li>
                         )}
                       </ul>

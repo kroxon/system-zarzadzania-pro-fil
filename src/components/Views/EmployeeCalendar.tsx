@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import CalendarHeader from '../Calendar/CalendarHeader';
 import { generateTimeSlots } from '../../utils/timeSlots';
-import { User, Room, Meeting } from '../../types';
+import { User, Room, Meeting, Patient } from '../../types';
 import { ChevronDown, Check, Trash2 } from 'lucide-react';
 import MonthCalendar from './MonthCalendar';
 import MeetingForm from '../Forms/MeetingForm';
-import { loadPatients } from '../../utils/storage';
 
 const DAYOFF_MEETING_PREFIX = 'dayoff-';
 
@@ -37,9 +36,10 @@ interface EmployeeCalendarProps {
   onMeetingCreate: (m: Omit<Meeting,'id'>) => void;
   onMeetingUpdate: (id:string, u: Partial<Meeting>) => void;
   onMeetingDelete?: (id:string) => void;
+  patients?: Patient[];
 }
 
-const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meetings, currentUser, showWeekends, startHour, endHour, onMeetingCreate, onMeetingUpdate, onMeetingDelete }) => {
+const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meetings, currentUser, showWeekends, startHour, endHour, onMeetingCreate, onMeetingUpdate, onMeetingDelete, patients = [] }) => {
   // Core state
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewType, setViewType] = useState<'week' | 'month'>('week');
@@ -192,17 +192,16 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   const [showSavingDialog, setShowSavingDialog] = useState(false);
   const runWithSaving = (action: ()=>void) => { if(showSavingDialog) return; setShowSavingDialog(true); requestAnimationFrame(()=> { action(); setTimeout(()=> setShowSavingDialog(false), 1200); }); };
 
-  // Patients resolver to display full names instead of IDs (e.g., p12)
+  // Patients resolver to display full names instead of IDs (prefer backend patients prop)
   const patientNameById = React.useMemo(() => {
+    const map: Record<string, string> = {};
     try {
-      const list = loadPatients();
-      const map: Record<string, string> = {};
-      list.forEach(p => { map[p.id] = `${p.firstName} ${p.lastName}`; });
-      return map;
-    } catch {
-      return {} as Record<string, string>;
-    }
-  }, []);
+      if (patients && patients.length) {
+        patients.forEach(p => { map[String(p.id)] = `${p.name} ${p.surname}`; });
+      }
+    } catch {}
+    return map;
+  }, [patients]);
 
   const getSpecialistNames = (m: Meeting) => {
     const ids = (m.specialistIds?.length ? m.specialistIds : [m.specialistId]).filter(Boolean) as string[];
@@ -392,6 +391,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
         selectedTime={selectedTime}
         currentUser={currentUser}
         editingMeeting={editingMeeting}
+        patients={patients}
       />
 
       {pendingDeleteRange && (<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">

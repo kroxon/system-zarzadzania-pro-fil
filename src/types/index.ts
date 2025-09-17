@@ -50,6 +50,8 @@ export interface Meeting {
   id: string;
   // Legacy single specialist & patient (kept for backward compatibility)
   specialistId: string; // primary specialist (first of specialistIds)
+  // Optional meeting title/name (maps from backend Event.name)
+  name?: string;
   patientName: string; // primary patient full name (first of patientNames)
   patientId?: string; // primary patient id
   guestName?: string;

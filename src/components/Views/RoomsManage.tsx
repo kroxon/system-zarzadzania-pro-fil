@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Pencil, Trash2, X, Loader2, Users, Tag } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Loader2 } from 'lucide-react';
 import { Room, RoomAPI, Meeting, Event } from '../../types';
 import { getRooms, updateRoom as apiUpdateRoom, deleteRoom as apiDeleteRoom, createRoom as apiCreateRoom } from '../../utils/api/rooms';
 import { loadCurrentUser, loadMeetings } from '../../utils/storage';

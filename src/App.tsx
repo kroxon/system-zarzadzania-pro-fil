@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import NotFound404 from './components/Views/NotFound404';
 import Sidebar from './components/Layout/Sidebar';
 import TopBar from './components/Layout/TopBar';
@@ -11,7 +11,7 @@ import EmployeesManage from './components/Views/EmployeesManage';
 import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
 import TasksPage from './components/Tasks/TasksPage';
-import { User, Meeting, Room, Patient } from './types';
+import { User, Meeting, Room } from './types';
 import Settings from './components/Views/Settings';
 import {
   saveMeetings,
@@ -29,10 +29,13 @@ import {
   savePatients,
 } from './utils/storage';
 import { loadAndApplyDemo, purgeDemo } from './utils/demoData';
-import { BarChart3, Users, Calendar as CalendarIcon, MapPin, User as UserIcon, Settings as SettingsIcon, ListChecks, ClipboardList } from 'lucide-react';
+// Icons were used in removed view meta; keeping import minimal
 import { mapBackendRolesToFrontend } from './utils/roleMapper';
 import { fetchEmployees } from './utils/api/employees';
 import { getRooms as fetchRooms } from './utils/api/rooms';
+import { fetchEvents } from './utils/api/events';
+import { getAllEventStasuses } from './utils/api/eventStatuses';
+import { fetchPatients } from './utils/api/patients';
 
 function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any, onLogout: () => void, children?: React.ReactNode }) {
   if (!currentUser) return <Navigate to="/login" replace />;
@@ -59,13 +62,15 @@ function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any
 }
 
 function App() {
+  // Toggle to disable local storage and use backend-only data
+  const BACKEND_ONLY = true;
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [currentView, setCurrentView] = useState('dashboard');
+  // const [currentView, setCurrentView] = useState('dashboard');
   // Initialize ONLY from persisted storage (no implicit sample fallback)
-  const [meetings, setMeetings] = useState<Meeting[]>(() => loadMeetings());
-  const [usersState, setUsersState] = useState<User[]>(() => loadUsers());
-  const [patientsState, setPatientsState] = useState(() => loadPatients());
-  const [roomsState, setRoomsState] = useState<Room[]>(() => loadRooms());
+  const [meetings, setMeetings] = useState<Meeting[]>(() => BACKEND_ONLY ? [] : loadMeetings());
+  const [usersState, setUsersState] = useState<User[]>(() => BACKEND_ONLY ? [] : loadUsers());
+  const [patientsState, setPatientsState] = useState(() => BACKEND_ONLY ? [] : loadPatients());
+  const [roomsState, setRoomsState] = useState<Room[]>(() => BACKEND_ONLY ? [] : loadRooms());
   const [showWeekends, setShowWeekends] = useState(false);
   const [startHour, setStartHour] = useState(8);
   const [endHour, setEndHour] = useState(17);
@@ -73,6 +78,128 @@ function App() {
   const [suppressUsersPersist, setSuppressUsersPersist] = useState(false);
   // NEW: flag to avoid persisting when syncing backend rooms
   const [suppressRoomsPersist, setSuppressRoomsPersist] = useState(false);
+  // NEW: flag to avoid persisting when syncing backend patients
+  const [suppressPatientsPersist, setSuppressPatientsPersist] = useState(false);
+
+  // Backend events refresh (merge with local for now)
+  const refreshBackendEventsGlobal = useCallback(async () => {
+    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+    if (!token) return;
+    try {
+      // Fetch events, statuses (optional), and patients (for participants split)
+      const [apiEvents, statuses, apiPatients] = await Promise.all([
+        fetchEvents(token),
+        // Statuses are optional; if it fails, continue with defaults
+        getAllEventStasuses(token).catch(() => []),
+        // Patients are optional for mapping; if it fails, we still fall back to employees-only participants
+        fetchPatients(token).catch(() => [])
+      ]);
+      const statusMap: Record<number, string> = {};
+      (statuses as any[]).forEach((s: any) => { statusMap[s.id] = s.name; });
+
+      // Helper to normalize backend status name/id to Meeting.status
+      const normalizeStatus = (statusId?: number): 'present' | 'absent' | 'cancelled' | 'in-progress' => {
+        const name = statusId ? (statusMap[statusId] || '') : '';
+        const s = name.toLowerCase();
+        if (/(cancel|odwo)/.test(s)) return 'cancelled';
+        if (/(absent|nieobec)/.test(s)) return 'absent';
+        if (/(progress|w toku)/.test(s)) return 'in-progress';
+        return 'present';
+      };
+
+      const toLocalParts = (iso: string) => {
+        const d = new Date(iso);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return { date: `${y}-${m}-${dd}`, time: `${hh}:${mm}` };
+      };
+
+      // Build lookup set for employees (specialists)
+      const employeeIdSet = new Set<number>();
+      try {
+        usersState
+          .filter(u => u.role === 'employee')
+          .forEach(u => { const n = Number(u.id); if (!Number.isNaN(n)) employeeIdSet.add(n); });
+      } catch {}
+      const patientNameMap = new Map<number, string>();
+      const patientIdSet = new Set<number>();
+      try {
+        (apiPatients as any[]).forEach((p: any) => {
+          if (typeof p?.id === 'number') {
+            const full = `${p.name ?? ''} ${p.surname ?? ''}`.trim();
+            patientIdSet.add(p.id);
+            if (full) patientNameMap.set(p.id, full);
+          }
+        });
+      } catch {}
+
+      const mapped = apiEvents.map(ev => {
+        const start = toLocalParts(ev.start);
+        const end = toLocalParts(ev.end);
+        // Uczestnicy backendu: participantIds to ogólnie osoby (pracownicy + podopieczni).
+        // Rozdzielamy po ID pewnie: jeśli ID jest w employeeIdSet -> specjalista; jeśli w patientIdSet -> pacjent.
+        // Jeżeli ID nie jest znane w żadnym zbiorze, nie zakładamy że to pacjent (unikamy fałszywego pN).
+        const specNumIds: number[] = [];
+        const patientNumIds: number[] = [];
+        (ev.participantIds || []).forEach((pid: number) => {
+          // Reguła: jeżeli ID należy do pracowników -> specjalista; jeżeli należy do pacjentów -> pacjent; inaczej ignorujemy do czasu pełnej synchronizacji
+          if (employeeIdSet.has(pid)) {
+            specNumIds.push(pid);
+          } else if (patientIdSet.has(pid)) {
+            patientNumIds.push(pid);
+          } else {
+            // unknown id -> do not classify as patient to avoid fake entries
+          }
+        });
+        const specIds = specNumIds.map(n => String(n));
+        const patientIds = patientNumIds.map(n => String(n));
+        const primarySpec = specIds[0] || '';
+        const primaryPatientId = patientIds[0];
+        // Only use real names we know from backend, do not fabricate placeholders
+        const patientNamesResolved = patientNumIds.map(n => patientNameMap.get(n) || '');
+        const roomId = ev.roomId != null ? String(ev.roomId) : '';
+        return {
+          id: `bevt-${ev.id}`,
+          name: ev.name,
+          specialistId: primarySpec,
+          patientName: (primaryPatientId ? (patientNameMap.get(Number(primaryPatientId)) || '') : ''),
+          patientId: primaryPatientId,
+          guestName: ev.guest || undefined,
+          specialistIds: specIds.length ? specIds : undefined,
+          patientIds: patientIds.length ? patientIds : undefined,
+          patientNamesList: patientNamesResolved.some(Boolean) ? patientNamesResolved : undefined,
+          roomId,
+          date: start.date,
+          startTime: start.time,
+          endTime: end.time,
+          notes: ev.info || undefined,
+          status: normalizeStatus(ev.statusId),
+          createdBy: 'backend',
+        } as Meeting;
+      });
+
+      if (BACKEND_ONLY) {
+        setMeetings(mapped);
+        if (!suppressUsersPersist && !suppressRoomsPersist && !suppressPatientsPersist) {
+          // do not save to local in backend-only
+        }
+      } else {
+        // Merge strategy: replace all previous backend-sourced meetings (bevt-*) with freshly fetched ones
+        setMeetings(prev => {
+          const withoutBackend = prev.filter(m => !String(m.id).startsWith('bevt-'));
+          const next = [...withoutBackend, ...mapped];
+          saveMeetings(next);
+          return next;
+        });
+      }
+    } catch (e) {
+      // Silent for now; could add Notification later
+      console.warn('Failed to fetch backend events', e);
+    }
+  }, [currentUser?.token, usersState]);
 
   // Reusable backend users refresh
   const refreshBackendUsersGlobal = useCallback(async () => {
@@ -88,17 +215,22 @@ function App() {
         specialization: e.occupationName,
         notes: e.info || undefined,
       }));
-      const newBackendIds = mapped.map(m => m.id);
-      const prevBackendIds: string[] = (() => {
-        try { return JSON.parse(localStorage.getItem('schedule_backend_ids') || '[]'); } catch { return []; }
-      })();
-      setSuppressUsersPersist(true);
-      setUsersState(prev => {
-        const demoOnly = prev.filter(u => !prevBackendIds.includes(u.id));
-        saveUsers(demoOnly);
-        return [...demoOnly, ...mapped];
-      });
-      localStorage.setItem('schedule_backend_ids', JSON.stringify(newBackendIds));
+      if (BACKEND_ONLY) {
+        setSuppressUsersPersist(true);
+        setUsersState(mapped);
+      } else {
+        const newBackendIds = mapped.map(m => m.id);
+        const prevBackendIds: string[] = (() => {
+          try { return JSON.parse(localStorage.getItem('schedule_backend_ids') || '[]'); } catch { return []; }
+        })();
+        setSuppressUsersPersist(true);
+        setUsersState(prev => {
+          const demoOnly = prev.filter(u => !prevBackendIds.includes(u.id));
+          saveUsers(demoOnly);
+          return [...demoOnly, ...mapped];
+        });
+        localStorage.setItem('schedule_backend_ids', JSON.stringify(newBackendIds));
+      }
     } finally {
       setSuppressUsersPersist(false);
     }
@@ -115,21 +247,42 @@ function App() {
         name: r.name,
         hexColor: r.hexColor,
       }));
-      const newBackendRoomIds = mapped.map(m => m.id);
-      const prevBackendRoomIds: string[] = (() => {
-        try { return JSON.parse(localStorage.getItem('schedule_backend_room_ids') || '[]'); } catch { return []; }
-      })();
-      setSuppressRoomsPersist(true);
-      setRoomsState(prev => {
-        const demoOnly = prev.filter(r => !prevBackendRoomIds.includes(r.id));
-        saveRooms(demoOnly);
-        return [...demoOnly, ...mapped];
-      });
-      localStorage.setItem('schedule_backend_room_ids', JSON.stringify(newBackendRoomIds));
+      if (BACKEND_ONLY) {
+        setSuppressRoomsPersist(true);
+        setRoomsState(mapped);
+      } else {
+        const newBackendRoomIds = mapped.map(m => m.id);
+        const prevBackendRoomIds: string[] = (() => {
+          try { return JSON.parse(localStorage.getItem('schedule_backend_room_ids') || '[]'); } catch { return []; }
+        })();
+        setSuppressRoomsPersist(true);
+        setRoomsState(prev => {
+          const demoOnly = prev.filter(r => !prevBackendRoomIds.includes(r.id));
+          saveRooms(demoOnly);
+          return [...demoOnly, ...mapped];
+        });
+        localStorage.setItem('schedule_backend_room_ids', JSON.stringify(newBackendRoomIds));
+      }
     } catch {
       // ignore silently for now
     } finally {
       setSuppressRoomsPersist(false);
+    }
+  }, [currentUser?.token]);
+
+  // NEW: Reusable backend patients refresh
+  const refreshBackendPatientsGlobal = useCallback(async () => {
+    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+    if (!token) return;
+    try {
+      const apiPatients = await fetchPatients(token);
+      // Store as-is (backend Patient shape), do not persist to local demo storage
+      setSuppressPatientsPersist(true);
+      setPatientsState(apiPatients as any);
+    } catch {
+      // ignore for now
+    } finally {
+      setSuppressPatientsPersist(false);
     }
   }, [currentUser?.token]);
 
@@ -153,6 +306,26 @@ function App() {
     return () => { cancelled = true; };
   }, [refreshBackendRoomsGlobal]);
 
+  // NEW: Fetch patients from backend when token available
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await refreshBackendPatientsGlobal();
+    })();
+    return () => { cancelled = true; };
+  }, [refreshBackendPatientsGlobal]);
+
+  // NEW: Fetch events from backend and merge with local meetings
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await refreshBackendEventsGlobal();
+    })();
+    return () => { cancelled = true; };
+  }, [refreshBackendEventsGlobal]);
+
   // Only restore current user (do NOT overwrite entity states)
   useEffect(() => {
     const storedUser = loadCurrentUser();
@@ -160,11 +333,11 @@ function App() {
   }, []);
 
   // Persist rooms on change
-  useEffect(()=>{ if (!suppressRoomsPersist) saveRooms(roomsState); },[roomsState, suppressRoomsPersist]);
+  useEffect(()=>{ if (!BACKEND_ONLY && !suppressRoomsPersist) saveRooms(roomsState); },[roomsState, suppressRoomsPersist]);
   // Persist users on change (skip when syncing backend)
-  useEffect(()=>{ if (!suppressUsersPersist) saveUsers(usersState); },[usersState, suppressUsersPersist]);
-  useEffect(()=>{ savePatients(patientsState); },[patientsState]);
-  useEffect(()=>{ saveMeetings(meetings); },[meetings]);
+  useEffect(()=>{ if (!BACKEND_ONLY && !suppressUsersPersist) saveUsers(usersState); },[usersState, suppressUsersPersist]);
+  useEffect(()=>{ if (!BACKEND_ONLY && !suppressPatientsPersist) savePatients(patientsState as any); },[patientsState, suppressPatientsPersist]);
+  useEffect(()=>{ if (!BACKEND_ONLY) saveMeetings(meetings); },[meetings]);
 
   const handleLogin = async (user: any, token?: string) => {
     // Jeśli user ma pole 'roles' (Employee z backendu), wykonaj mapowanie
@@ -197,7 +370,6 @@ function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem('schedule_current_user');
-    setCurrentView('dashboard');
   };
 
   const handleMeetingCreate = (meetingData: Omit<Meeting, 'id'>) => {
@@ -247,17 +419,7 @@ function App() {
     });
   };
 
-  const viewMeta: Record<string, { title: string; icon: JSX.Element }> = {
-    'dashboard': { title: 'Panel główny', icon: <BarChart3 className="h-6 w-6" /> },
-    'shared-calendar': { title: 'Kalendarz wspólny', icon: <CalendarIcon className="h-6 w-6" /> },
-    'employee-calendar': { title: 'Grafiki pracowników', icon: <Users className="h-6 w-6" /> },
-    'room-calendar': { title: 'Rezerwacje sal', icon: <MapPin className="h-6 w-6" /> },
-    'employees-manage': { title: 'Zarządzaj pracownikami', icon: <Users className="h-6 w-6" /> },
-    'patients': { title: 'Podopieczni', icon: <UserIcon className="h-6 w-6" /> },
-    'settings': { title: 'Ustawienia', icon: <SettingsIcon className="h-6 w-6" /> },
-    'quizes': { title: 'Quizy', icon: <ListChecks className="h-6 w-6" /> },
-    'tasks': { title: 'Zadania', icon: <ClipboardList className="h-6 w-6" /> },
-  };
+  // const viewMeta: Record<string, { title: string; icon: JSX.Element }> = { ... };
 
 
   return (
@@ -269,7 +431,7 @@ function App() {
         {/* Protected routes */}
         <Route element={<ProtectedLayout currentUser={currentUser} onLogout={handleLogout} />}>
           <Route path="/dashboard" element={<Dashboard users={usersState} rooms={roomsState} meetings={meetings} />} />
-          <Route path="/employees/schedule" element={<EmployeeCalendar users={usersState} rooms={roomsState} meetings={meetings} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} />} />
+          <Route path="/employees/schedule" element={<EmployeeCalendar users={usersState} rooms={roomsState} meetings={meetings} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} patients={patientsState as any} />} />
           <Route path="/employees/menage" element={<EmployeesManage users={usersState} onAdd={handleAddEmployee} onUpdate={handleUpdateEmployee} onDelete={handleDeleteEmployee} onBackendRefresh={refreshBackendUsersGlobal} />} />
           <Route path="/reservation/schedule" element={<RoomCalendar users={usersState} rooms={roomsState} meetings={meetings} patients={patientsState} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} />} />
           <Route path="/reservation/menage" element={<RoomsManage rooms={roomsState} onRoomsChange={setRoomsState} userRole={currentUser?.role || 'employee'} onBackendRoomsRefresh={refreshBackendRoomsGlobal} />} />
