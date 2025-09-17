@@ -7,22 +7,10 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchPatients } from '../../utils/api/patients';
 import {Patient} from '../../types/index'
 import { Search } from 'lucide-react';
-import { loadMeetings, loadUsers, loadRooms, savePatients, saveTherapistAssignments } from '../../utils/storage';
+import { loadMeetings, loadUsers, loadRooms, saveTherapistAssignments } from '../../utils/storage';
 
 /*
-Backend integration (commented plan):
-- API Patient shape (see types.Patient): { id: number; name: string; surname: string; birthDate: string; info?: string | null }
-- UI shape used here: PatientDemo { id: string; firstName; lastName; birthDate?; status?; notes?; therapists? }
-- Mappers:
-  // function mapPatientApiToUi(p: Patient): PatientDemo {
-  //   return { id: String(p.id), firstName: p.name, lastName: p.surname, birthDate: p.birthDate || '' };
-  // }
-  // function mapPatientUiToApi(u: PatientDemo): Partial<Patient> {
-  //   return { id: Number(u.id), name: u.firstName, surname: u.lastName, birthDate: u.birthDate || '' };
-  // }
-- To switch to backend later:
-  - Replace loadPatients/savePatients calls with API fetch/post using these mappers.
-  - Keep UI types unchanged to avoid refactors in the view.
+// Całość przełączona na typ Patient z backendu. Usunięto PatientDemo, mappersy i demo storage.
 */
 
 interface Visit {
@@ -198,8 +186,6 @@ useEffect(() => {
 
   useEffect(()=>{ try { saveTherapistAssignments(therapistAssignments); } catch {} },[therapistAssignments]);
 
-  // Persist patients to storage (demo)
-  useEffect(()=>{ try { savePatients(patients); } catch {} }, [patients]);
 
   // Close dropdowns on outside click
   useEffect(()=>{
@@ -259,16 +245,16 @@ useEffect(() => {
     );
   };
 
-  const statusBadge = (isActive?: string): JSX.Element => {
-    const st = (isActive as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
-    const color = st==='aktywny' ? 'bg-green-500' : 'bg-gray-400';
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-gray-700">
-        <span className={`inline-block h-2 w-2 rounded-full ${color}`} aria-hidden="true" />
-        <span className="capitalize">{st}</span>
-      </span>
-    );
-  };
+  // const statusBadge = (isActive?: string): JSX.Element => {
+  //   const st = (isActive as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
+  //   const color = st==='aktywny' ? 'bg-green-500' : 'bg-gray-400';
+  //   return (
+  //     <span className="inline-flex items-center gap-1.5 text-xs text-gray-700">
+  //       <span className={`inline-block h-2 w-2 rounded-full ${color}`} aria-hidden="true" />
+  //       <span className="capitalize">{st}</span>
+  //     </span>
+  //   );
+  // };
 
   const visitStatusLabel = (status: Visit['status']): JSX.Element => {
     const map: Record<Visit['status'], { color: string; text: string }> = {
