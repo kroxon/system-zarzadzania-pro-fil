@@ -1,4 +1,4 @@
-import { Employee, UpdateEmployee, WorkHours } from '../../types';
+import { Employee, UpdateEmployee, WorkHours, AssignPatient, UnAssignPatient } from '../../types';
 const API_URL = import.meta.env.VITE_API_URL;
 
 
@@ -82,3 +82,36 @@ export const fetchEmployees = async (token: string): Promise<Employee[]> => {
   }
   return await response.json();
 };
+
+// POST /api/employees/{id}/assign-patients
+
+export async function assignPatientsToEmployee(id: number, data: AssignPatient, token: string): Promise<void> {
+  const response = await fetch(`${API_URL}/api/employees/${id}/assign-patients`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify(data)
+  });
+  if (!response.ok) throw new Error('Failed to assign patients to employee');
+}
+
+
+// POST /api/employees/{id}/UNassign-patients
+
+export async function unassignPatientsFromEmployee(id: number, data: UnAssignPatient, token: string): Promise<void> {
+  const response = await fetch(`${API_URL}/api/employees/${id}/unassign-patients`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify(data)
+  });
+  if (!response.ok) throw new Error('Failed to unassign patients from employee');
+}
+
+
