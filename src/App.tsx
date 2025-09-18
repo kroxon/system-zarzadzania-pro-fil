@@ -339,6 +339,7 @@ function App() {
       participantIds,
       roomId: meetingData.roomId ? Number(meetingData.roomId) : null,
       info: meetingData.notes || null,
+      guest: meetingData.guestName || undefined,
     };
     try {
       await createEvent(payload, token);
@@ -379,6 +380,7 @@ function App() {
       participantIds,
       roomId: (updates.roomId ?? existing.roomId) ? Number(updates.roomId ?? existing.roomId) : null,
       info: (updates.notes ?? existing.notes) || null,
+      guest: (updates.guestName ?? existing.guestName) || undefined,
     };
     try {
       await updateEvent(idNum, payload, token);
