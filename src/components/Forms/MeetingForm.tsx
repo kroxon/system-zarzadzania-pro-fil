@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Clock, Trash2, AlertCircle } from 'lucide-react';
 import { Meeting, User, Room, Patient } from '../../types';
 import { generateTimeSlots } from '../../utils/timeSlots';
-// Availability will be validated against backend workhours; simple stub here (always true) until EmployeeCalendar migration
-const isSpecialistAvailable = (_id: string, _date: string, _start: string, _end: string) => true;
+import { fetchEmployeeWorkHours } from '../../utils/api/employees';
+import type { WorkHours } from '../../types';
+
+// Availability will be validated against backend workhours
 
 
 interface MeetingFormProps {
@@ -63,6 +65,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
 
   // helpery konfliktów (pełny przedział)
   const toMin = (t:string) => { const [h,m]=t.split(':').map(Number); return h*60+m; };
+  // Overlap uses half-open intervals [start, end); end==start means no conflict (back-to-back allowed)
   const overlap = (s1:string,e1:string,s2:string,e2:string) => !(toMin(e1) <= toMin(s2) || toMin(s1) >= toMin(e2));
   const specialistHasConflict = (specialistId:string, date:string, start:string, end:string, excludeId?:string) => meetings.some(m=> m.id!==excludeId && m.date===date && ((m.specialistIds && m.specialistIds.includes(specialistId)) || m.specialistId===specialistId) && overlap(start,end,m.startTime,m.endTime));
   const roomHasConflict = (roomId:string, date:string, start:string, end:string, excludeId?:string) => meetings.some(m=> m.id!==excludeId && m.date===date && m.roomId===roomId && overlap(start,end,m.startTime,m.endTime));
@@ -94,6 +97,95 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const [patientAssignmentFilter, setPatientAssignmentFilter] = useState<'wszyscy'|'przypisani'>('wszyscy'); // filter patients
   const effectivePatients = patients.length ? patients : [];
   const [showPastSubmitInfo, setShowPastSubmitInfo] = useState(false);
+
+  // Workhours cache for employees used to determine availability
+  const [workhoursByEmployee, setWorkhoursByEmployee] = useState<Record<string, WorkHours[]>>({});
+  const [loadingEmployees, setLoadingEmployees] = useState<Set<string>>(new Set());
+  const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+
+  const fetchWorkhoursForIds = React.useCallback(async (ids: string[], dateYmd: string) => {
+    if (!token || !ids.length || !dateYmd) return;
+    // compute week window for filtering (Mon..Sun)
+    const [y, m, d] = dateYmd.split('-').map(Number);
+    const day = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+    const weekStart = new Date(day); // Monday
+    weekStart.setDate(day.getDate() - ((day.getDay() + 6) % 7));
+    weekStart.setHours(0,0,0,0);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    weekEnd.setHours(23,59,59,999);
+    const wsMs = weekStart.getTime();
+    const weMs = weekEnd.getTime();
+
+    // mark all as loading
+    setLoadingEmployees(prev => {
+      const next = new Set(prev);
+      ids.forEach(id => next.add(id));
+      return next;
+    });
+    try {
+      // limit concurrency in chunks to avoid spamming backend
+      const chunkSize = 10;
+      const toApply: Record<string, WorkHours[]> = {};
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const chunk = ids.slice(i, i + chunkSize);
+        const results = await Promise.allSettled(chunk.map(async (id) => {
+          const numId = Number(id);
+          const raw = Number.isFinite(numId) ? await fetchEmployeeWorkHours(numId, token) : [];
+          // filter to current week window
+          const list = (raw || []).filter(w => {
+            const s = new Date(w.start).getTime();
+            const e = new Date(w.end).getTime();
+            return e >= wsMs && s <= weMs;
+          });
+          return { id, list: list as WorkHours[] };
+        }));
+        results.forEach((r, idx) => {
+          const id = chunk[idx];
+          if (r.status === 'fulfilled') toApply[id] = r.value.list;
+          else toApply[id] = [];
+        });
+      }
+      setWorkhoursByEmployee(prev => ({ ...prev, ...toApply }));
+    } finally {
+      // clear loading flags
+      setLoadingEmployees(prev => {
+        const next = new Set(prev);
+        ids.forEach(id => next.delete(id));
+        return next;
+      });
+    }
+  }, [token]);
+
+  // (effects to load workhours are defined later, after specOpen declaration)
+
+  // Check availability using backend workhours: requires the requested interval to be fully covered by at least one workhour range
+  const isSpecialistAvailable = React.useCallback((id: string, date: string, start: string, end: string) => {
+    const list = workhoursByEmployee[id];
+    if (!list) return false; // not loaded yet -> treat as niedostępny until data arrives
+    if (!date || !start || !end) return false;
+    const startLocal = new Date(`${date}T${start}:00`);
+    const endLocal = new Date(`${date}T${end}:00`);
+    let coverFrom = startLocal.getTime();
+    const reqEnd = endLocal.getTime();
+    if (!(coverFrom < reqEnd)) return false;
+    // consider union of workhour intervals that overlap the requested date/time
+    const intervals = list
+      .map(w => ({ s: new Date(w.start).getTime(), e: new Date(w.end).getTime() }))
+      .filter(r => r.e > coverFrom && r.s < reqEnd)
+      .sort((a,b) => a.s - b.s);
+    for (const r of intervals) {
+      if (r.s > coverFrom) {
+        // gap before next interval
+        return false;
+      }
+      if (r.e >= coverFrom) {
+        coverFrom = Math.max(coverFrom, r.e);
+        if (coverFrom >= reqEnd) return true;
+      }
+    }
+    return coverFrom >= reqEnd;
+  }, [workhoursByEmployee]);
 
   // Reset validation errors on open and when switching context (create/edit another meeting)
   useEffect(() => { if (isOpen) setErrors([]); }, [isOpen]);
@@ -175,7 +267,11 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     }
     // conflict per specialist and room (using effectiveDate)
     formData.specialistIds.forEach(id => {
-      if (specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) newErrors.push(`Specjalista (${users.find(u=>u.id===id)?.name||id}) jest zajęty`);
+      if (!isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime)) {
+        newErrors.push(`Specjalista (${users.find(u=>u.id===id)?.name||id}) jest niedostępny`);
+      } else if (specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) {
+        newErrors.push(`Specjalista (${users.find(u=>u.id===id)?.name||id}) jest zajęty`);
+      }
     });
     if (roomHasConflict(formData.roomId, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) newErrors.push('Sala jest zajęta w tym przedziale czasu');
     setErrors(newErrors); return newErrors.length===0;
@@ -363,6 +459,27 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const [specOpen, setSpecOpen] = useState(false);
   const [patientsOpen, setPatientsOpen] = useState(false);
 
+  // Load workhours for currently selected specialists (lazy)
+  useEffect(() => {
+    if (!isOpen || !token) return;
+    const ids = formData.specialistIds;
+    const idsToFetch = ids.filter(id => !Object.prototype.hasOwnProperty.call(workhoursByEmployee, id) && !loadingEmployees.has(id));
+    if (!idsToFetch.length) return;
+    fetchWorkhoursForIds(idsToFetch, effectiveDate);
+  }, [isOpen, token, formData.specialistIds, workhoursByEmployee, loadingEmployees, fetchWorkhoursForIds, effectiveDate]);
+
+  // When opening specialists dropdown, prefetch all employees' workhours to show correct statuses in the list
+  useEffect(() => {
+    if (!isOpen || !token || !specOpen) return;
+    const allEmpIds = users.filter(u => u.role === 'employee').map(u => u.id);
+    const idsToFetch = allEmpIds.filter(id => !Object.prototype.hasOwnProperty.call(workhoursByEmployee, id) && !loadingEmployees.has(id));
+    if (!idsToFetch.length) return;
+    fetchWorkhoursForIds(idsToFetch, effectiveDate);
+  }, [isOpen, specOpen, token, users, workhoursByEmployee, loadingEmployees, fetchWorkhoursForIds, effectiveDate]);
+
+  // Prefetch all employees' workhours once when form opens (speed up statuses)
+  // Removed aggressive prefetch-all on open to avoid heavy load with many employees/entries
+
   // Inline computed validations for live feedback on time and collisions
   const startEndInvalid = React.useMemo(() => {
     if (!formData.startTime || !formData.endTime) return false;
@@ -373,10 +490,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   // Sprawdź dostępność specjalistów (czy są dostępni wg EmployeeCalendar)
   const unavailableSpecialists = React.useMemo(() => {
     if (!formData.startTime || !formData.endTime) return [] as string[];
-    return formData.specialistIds.filter(id =>
-      !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime)
-    );
-  }, [formData.specialistIds, formData.startTime, formData.endTime, effectiveDate]);
+    return formData.specialistIds.filter(id => !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime));
+  }, [formData.specialistIds, formData.startTime, formData.endTime, effectiveDate, isSpecialistAvailable]);
 
   // Sprawdź konflikty spotkań (zajętość)
   const conflictedSpecialists = React.useMemo(() => {
@@ -485,16 +600,17 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                       <ul className="py-1">
                         {users.filter(u=>u.role==='employee').map(u=> {
                           const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
-                          const unavailable = !!(formData.startTime && formData.endTime && !isSpecialistAvailable(u.id, effectiveDate, formData.startTime, formData.endTime));
+                          const workLoaded = Object.prototype.hasOwnProperty.call(workhoursByEmployee, u.id);
+                          const unavailable = !!(formData.startTime && formData.endTime && workLoaded && !isSpecialistAvailable(u.id, effectiveDate, formData.startTime, formData.endTime));
                           const already = formData.specialistIds.includes(u.id);
-                          const isAvailable = !busy && !unavailable;
-                          const disabledOpt = busy || unavailable || already;
+                          const isAvailable = workLoaded && !busy && !unavailable;
+                          const disabledOpt = (workLoaded && (busy || unavailable)) || already;
 
                           // Less intense backgrounds; selected (already) highlighted in blue
-                          const baseBg = already ? 'bg-indigo-50' : (unavailable ? 'bg-red-50' : busy ? 'bg-amber-50' : 'bg-emerald-50');
-                          const hoverBg = already ? 'hover:bg-indigo-100' : (unavailable ? 'hover:bg-red-100' : busy ? 'hover:bg-amber-100' : 'hover:bg-emerald-100');
-                          const leftBorder = already ? 'border-l-4 border-indigo-300' : (unavailable ? 'border-l-4 border-red-300' : busy ? 'border-l-4 border-amber-300' : 'border-l-4 border-emerald-300');
-                          const nameColor = already ? 'text-indigo-900' : (unavailable ? 'text-red-900' : busy ? 'text-amber-900' : 'text-emerald-900');
+                          const baseBg = already ? 'bg-indigo-50' : (!workLoaded ? 'bg-white' : unavailable ? 'bg-red-50' : busy ? 'bg-amber-50' : 'bg-emerald-50');
+                          const hoverBg = already ? 'hover:bg-indigo-100' : (!workLoaded ? 'hover:bg-gray-50' : unavailable ? 'hover:bg-red-100' : busy ? 'hover:bg-amber-100' : 'hover:bg-emerald-100');
+                          const leftBorder = already ? 'border-l-4 border-indigo-300' : (!workLoaded ? 'border-l border-gray-200' : unavailable ? 'border-l-4 border-red-300' : busy ? 'border-l-4 border-amber-300' : 'border-l-4 border-emerald-300');
+                          const nameColor = already ? 'text-indigo-900' : (!workLoaded ? 'text-gray-700' : unavailable ? 'text-red-900' : busy ? 'text-amber-900' : 'text-emerald-900');
                           const disabledClass = 'cursor-not-allowed';
                           return (
                             <li key={u.id}>
@@ -511,13 +627,14 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
-                                  {isAvailable && !already && (
+                                  {/* before load show neutral styling, no badge */}
+                                  {workLoaded && isAvailable && !already && (
                                     <span className="text-[10px] text-emerald-900 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300">dostępny</span>
                                   )}
-                                  {busy && !unavailable && (
+                                  {workLoaded && busy && !unavailable && (
                                     <span className="text-[10px] text-amber-900 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300">zajęty</span>
                                   )}
-                                  {unavailable && (
+                                  {workLoaded && unavailable && (
                                     <span className="text-[10px] text-red-900 px-2 py-0.5 rounded-full bg-red-100 border border-red-300">niedostępny</span>
                                   )}
                                   {already && (
@@ -544,11 +661,13 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                     {formData.specialistIds.map(id=> {
                       const u = users.find(us=>us.id===id);
                       if(!u) return null;
-                      const unavailable = !!(formData.startTime && formData.endTime && !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime));
+                      const workLoaded = Object.prototype.hasOwnProperty.call(workhoursByEmployee, id);
+                      const unavailable = !!(formData.startTime && formData.endTime && workLoaded && !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime));
                       const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
                       let bg = 'bg-indigo-50 hover:bg-indigo-100';
                       let text = 'text-gray-900';
-                      if (unavailable) { bg = 'bg-gray-100'; text = 'text-gray-400'; }
+                      if (!workLoaded) { bg = 'bg-gray-50'; text = 'text-gray-500'; }
+                      else if (unavailable) { bg = 'bg-gray-100'; text = 'text-gray-400'; }
                       else if (busy) { bg = 'bg-yellow-50 hover:bg-yellow-100'; text = 'text-yellow-800'; }
                       else { bg = 'bg-emerald-50 hover:bg-emerald-100'; text = 'text-emerald-800'; }
                       return (
@@ -558,8 +677,9 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                             <div className="text-xs text-gray-600 truncate">{u.specialization || 'Specjalista'}</div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            {busy && !unavailable && <span className="text-[11px] text-yellow-800 px-2 py-0.5 rounded-full bg-yellow-50 border border-yellow-200">zajęty</span>}
-                            {unavailable && <span className="text-[11px] text-gray-500 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200">niedostępny</span>}
+                            {/* before load show neutral styling, no badge */}
+                            {workLoaded && busy && !unavailable && <span className="text-[11px] text-yellow-800 px-2 py-0.5 rounded-full bg-yellow-50 border border-yellow-200">zajęty</span>}
+                            {workLoaded && unavailable && <span className="text-[11px] text-gray-500 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200">niedostępny</span>}
                             <button type="button" onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed" aria-label="Usuń specjalistę" title="Usuń" disabled={isEditingPast}>×</button>
                           </div>
                         </li>
