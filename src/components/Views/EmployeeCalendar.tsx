@@ -5,6 +5,8 @@ import { User, Room, Meeting, Patient } from '../../types';
 import { ChevronDown, Check, Trash2 } from 'lucide-react';
 import MonthCalendar from './MonthCalendar';
 import MeetingForm from '../Forms/MeetingForm';
+import { fetchEmployeeWorkHours } from '../../utils/api/employees';
+import { createWorkHour, deleteWorkHour } from '../../utils/api/workhours';
 
 const DAYOFF_MEETING_PREFIX = 'dayoff-';
 
@@ -145,13 +147,76 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   };
 
   // Save & discard
-  const saveAvailabilities = () => {
+  // Persist selected employee availability ranges to backend WorkHours by replacing the affected date range
+  const saveAvailabilities = async () => {
     if (!selectedEmployee) return;
-    // Merge and update only in memory; persistence disabled during cutover
-    const merged = mergeRangesAdjacency([...availabilities, ...tempRanges].filter(r=> r.specialistId===selectedEmployee));
-    setAvailabilities(merged);
-    setTempRanges([]);
-    setDeletedRangeIds([]);
+    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+    if (!token) {
+      console.warn('Brak tokenu – nie można zapisać dostępności.');
+      return;
+    }
+    const employeeIdNum = Number(selectedEmployee);
+    if (!Number.isFinite(employeeIdNum)) {
+      console.warn('Nieprawidłowe ID pracownika – oczekiwano liczby.');
+      return;
+    }
+
+    // Build merged ranges for the selected employee (can include copied future weeks)
+    const merged = mergeRangesAdjacency(
+      [...availabilities, ...tempRanges].filter(r => r.specialistId === selectedEmployee)
+    );
+    if (!merged.length) {
+      // Nothing to save; just clear pending state
+      setAvailabilities([]);
+      setTempRanges([]);
+      setDeletedRangeIds([]);
+      return;
+    }
+
+    try {
+      // Helper to format local datetime without timezone (YYYY-MM-DDTHH:mm:ss)
+      const toLocalNoZ = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const ss = '00';
+        return `${y}-${m}-${dd}T${hh}:${mm}:${ss}`;
+      };
+      // 1) Load current employee work hours and delete those that overlap ANY of the new merged ranges
+      const existing = await fetchEmployeeWorkHours(employeeIdNum, token);
+      const mergedIntervals = merged.map(r => ({ s: new Date(r.start).getTime(), e: new Date(r.end).getTime() }));
+      const toDelete = existing.filter(w => {
+        const ws = new Date(w.start).getTime();
+        const we = new Date(w.end).getTime();
+        return mergedIntervals.some(mi => we >= mi.s && ws <= mi.e);
+      });
+      for (const w of toDelete) {
+        try { await deleteWorkHour(w.id, token); } catch (e) { console.warn('Delete workhour failed', w.id, e); }
+      }
+
+      // 2) Create new merged ranges as fresh work hours
+      for (const r of merged) {
+        try {
+          const payload = {
+            start: toLocalNoZ(new Date(r.start)),
+            end: toLocalNoZ(new Date(r.end)),
+            employeeId: employeeIdNum,
+          };
+          await createWorkHour(payload, token);
+        } catch (e) {
+          console.warn('Create workhour failed', r, e);
+        }
+      }
+
+      // 3) Update local state: keep merged (ids are client-side only for now)
+      setAvailabilities(merged);
+      setTempRanges([]);
+      setDeletedRangeIds([]);
+    } catch (e) {
+      console.warn('Nie udało się zapisać dostępności do backendu', e);
+    }
   };
   const discardChanges = () => { if(!selectedEmployee) return; setAvailabilities([]); setTempRanges([]); setDeletedRangeIds([]); setPendingDeleteRange(null); setActiveEdit(null); };
 
@@ -192,9 +257,17 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   // Copy availability handler
   const handleCopyAvailability = () => { if(!selectedEmployee) return; const working=[...availabilities.filter(r=> r.specialistId===selectedEmployee), ...tempRanges.filter(r=> r.specialistId===selectedEmployee)]; const baseWeekRanges= working.filter(r=> { const startDate=new Date(r.start); return startDate>=weekBounds.start && startDate<=weekBounds.end; }); if(!baseWeekRanges.length){ setShowCopyDropdown(false); return; } const weeksToCopy = copyPeriod==='week'? 1 : 4; const newRanges:AvailabilityRange[]=[]; let counter=0; for(let w=1; w<=weeksToCopy; w++){ const dayOffset=w*7; for(const r of baseWeekRanges){ const startDate=new Date(r.start); startDate.setDate(startDate.getDate()+dayOffset); const endDate=new Date(r.end); endDate.setDate(endDate.getDate()+dayOffset); newRanges.push({ id:`copy-${Date.now()}-${w}-${counter++}`, specialistId:r.specialistId, start:startDate.toISOString(), end:endDate.toISOString() }); } } if(!newRanges.length){ setShowCopyDropdown(false); return; } setTempRanges(prev=> [...prev, ...newRanges]); setShowCopyDropdown(false); };
 
-  // Abstract saving dialog (mock backend)
+  // Saving dialog overlay and helper
   const [showSavingDialog, setShowSavingDialog] = useState(false);
-  const runWithSaving = (action: ()=>void) => { if(showSavingDialog) return; setShowSavingDialog(true); requestAnimationFrame(()=> { action(); setTimeout(()=> setShowSavingDialog(false), 1200); }); };
+  const runWithSaving = async (action: ()=>void | Promise<void>) => {
+    if (showSavingDialog) return;
+    setShowSavingDialog(true);
+    try {
+      await action();
+    } finally {
+      setShowSavingDialog(false);
+    }
+  };
 
   // Patients resolver to display full names instead of IDs (prefer backend patients prop)
   const patientNameById = React.useMemo(() => {
@@ -416,7 +489,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
         <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 text-center animate-fade-in">
           <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center"><div className="h-6 w-6 rounded-full border-4 border-blue-300 border-t-blue-600 animate-spin" /></div>
           <h3 className="text-base font-semibold text-gray-800 mb-2">Wysyłanie zmian...</h3>
-            <p className="text-sm text-gray-600">Trwa przesyłanie zmian do backendu (mock).</p>
+            <p className="text-sm text-gray-600">Trwa zapisywanie zmian w backendzie.</p>
         </div>
       </div>)}
     </div>
