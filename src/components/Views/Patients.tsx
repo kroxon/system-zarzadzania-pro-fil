@@ -401,9 +401,26 @@ useEffect(() => {
     e.preventDefault();
     if(!validateNew()) return;
     setCreating(true);
-    // Tutaj będzie wywołanie API do dodania pacjenta
-    // ...existing code...
-    setCreating(false); setShowAddModal(false);
+    const token = localStorage.getItem('token') || '';
+    const payload = {
+      name: newPatientForm.name.trim(),
+      surname: newPatientForm.surname.trim(),
+      birthDate: newPatientForm.birthDate || '',
+      isActive: !!newPatientForm.isActive,
+      assignedEmployeesIds: Array.isArray(newPatientForm.assignedEmployeesIds) ? newPatientForm.assignedEmployeesIds.map(Number) : [],
+      info: newPatientForm.info?.trim() || ''
+    };
+    import('../../utils/api/patients').then(api => {
+      api.createPatient(payload, token)
+        .then(() => {
+          api.fetchPatients(token).then(data => setPatients(data));
+          setShowAddModal(false);
+        })
+        .catch(err => {
+          setNewErrors([err.message || 'Błąd dodawania pacjenta']);
+        })
+        .finally(() => setCreating(false));
+    });
   };
   const toggleNewTherapist = (id:number) => {
     setNewPatientForm(f => f.assignedEmployeesIds.includes(id) ? { ...f, assignedEmployeesIds: f.assignedEmployeesIds.filter(t=>t!==id) } : { ...f, assignedEmployeesIds:[...f.assignedEmployeesIds, id] });
