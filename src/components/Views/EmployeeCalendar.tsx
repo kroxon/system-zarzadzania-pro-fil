@@ -5,6 +5,8 @@ import { User, Room, Meeting, Patient } from '../../types';
 import { ChevronDown, Check, Trash2 } from 'lucide-react';
 import MonthCalendar from './MonthCalendar';
 import MeetingForm from '../Forms/MeetingForm';
+import { fetchEmployeeWorkHours } from '../../utils/api/employees';
+import { createWorkHour, deleteWorkHour, updateWorkHour } from '../../utils/api/workhours';
 
 const DAYOFF_MEETING_PREFIX = 'dayoff-';
 
@@ -118,8 +120,54 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   const getWeekBounds = (date: Date) => { const start=new Date(date); start.setDate(date.getDate()-date.getDay()+1); start.setHours(0,0,0,0); const end=new Date(start); end.setDate(end.getDate()+6); end.setHours(23,59,59,999); return { start, end }; };
   const weekBounds = getWeekBounds(currentDate);
 
-  // Load availabilities for employee + week (no localStorage: start empty)
-  React.useEffect(()=> { if(!selectedEmployee) { setAvailabilities([]); setTempRanges([]); return; } setAvailabilities([]); setTempRanges([]); }, [selectedEmployee, weekBounds.start.getTime()]);
+  // Load availabilities for employee + week from backend WorkHours
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!selectedEmployee) {
+        setAvailabilities([]);
+        setTempRanges([]);
+        return;
+      }
+      const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+      if (!token) {
+        setAvailabilities([]);
+        setTempRanges([]);
+        return;
+      }
+      try {
+        const empId = Number(selectedEmployee);
+        if (!Number.isFinite(empId)) {
+          setAvailabilities([]);
+          setTempRanges([]);
+          return;
+        }
+        const list = await fetchEmployeeWorkHours(empId, token);
+        const startMs = weekBounds.start.getTime();
+        const endMs = weekBounds.end.getTime();
+        const mapped = list
+          .filter(w => {
+            const s = new Date(w.start).getTime();
+            const e = new Date(w.end).getTime();
+            return e >= startMs && s <= endMs;
+          })
+          .map(w => ({ id: String(w.id), specialistId: selectedEmployee, start: w.start, end: w.end }));
+        if (!cancelled) {
+          setAvailabilities(mapped);
+          setTempRanges([]);
+          setDeletedRangeIds([]);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          console.warn('Nie udało się pobrać godzin pracy pracownika', e);
+          setAvailabilities([]);
+          setTempRanges([]);
+        }
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [selectedEmployee, weekBounds.start.getTime(), weekBounds.end.getTime(), currentUser?.token]);
 
   // Guard date change if unsaved
   const guardedSetCurrentDate = (d: Date) => { const newBounds=getWeekBounds(d); const sameWeek= weekBounds.start.getTime()===newBounds.start.getTime(); if(!sameWeek && tempRanges.length){ alert('Najpierw zapisz zmiany dostępności dla tego tygodnia.'); return; } setCurrentDate(d); };
@@ -145,15 +193,160 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   };
 
   // Save & discard
-  const saveAvailabilities = () => {
+  // Persist selected employee availability ranges to backend WorkHours by replacing the CURRENT WEEK fully
+  // Fixes: (1) Deletions were not persisted when week became empty; (2) Moves/edits created duplicates
+  const saveAvailabilities = async () => {
     if (!selectedEmployee) return;
-    // Merge and update only in memory; persistence disabled during cutover
-    const merged = mergeRangesAdjacency([...availabilities, ...tempRanges].filter(r=> r.specialistId===selectedEmployee));
-    setAvailabilities(merged);
-    setTempRanges([]);
-    setDeletedRangeIds([]);
+    const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+    if (!token) {
+      console.warn('Brak tokenu – nie można zapisać dostępności.');
+      return;
+    }
+    const employeeIdNum = Number(selectedEmployee);
+    if (!Number.isFinite(employeeIdNum)) {
+      console.warn('Nieprawidłowe ID pracownika – oczekiwano liczby.');
+      return;
+    }
+
+    // Helper week bounds
+    const weekStartMs = weekBounds.start.getTime();
+    const weekEndMs = weekBounds.end.getTime();
+    const intersectsRange = (s: Date, e: Date, ws: number, we: number) => e.getTime() >= ws && s.getTime() <= we;
+    // Union of ranges for this employee (UI state)
+    const unionRanges = [...availabilities, ...tempRanges].filter(r => r.specialistId === selectedEmployee);
+    // Determine which weeks to persist: always current week + any weeks that have tempRanges (e.g., copied)
+    const weeksToProcess = new Set<number>([weekStartMs]);
+    for (const tr of tempRanges) {
+      if (tr.specialistId !== selectedEmployee) continue;
+      const d = new Date(tr.start);
+      const start = new Date(d);
+      start.setDate(d.getDate() - d.getDay() + 1);
+      start.setHours(0,0,0,0);
+      weeksToProcess.add(start.getTime());
+    }
+
+    try {
+      // Helper to format local datetime without timezone (YYYY-MM-DDTHH:mm:ss)
+      const toLocalNoZ = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const ss = '00';
+        return `${y}-${m}-${dd}T${hh}:${mm}:${ss}`;
+      };
+      // Load all existing once (we'll slice by week per iteration)
+      const existingAll = await fetchEmployeeWorkHours(employeeIdNum, token);
+      const isNumericId = (id: string) => /^\d+$/.test(id);
+      const canonical = (s: string) => toLocalNoZ(new Date(s));
+
+      // Process each affected week
+      for (const wkStart of weeksToProcess) {
+        const wkStartDate = new Date(wkStart);
+        const wkEndDate = new Date(wkStartDate);
+        wkEndDate.setDate(wkEndDate.getDate() + 6);
+        wkEndDate.setHours(23,59,59,999);
+        const wsMs = wkStartDate.getTime();
+        const weMs = wkEndDate.getTime();
+
+        const existingInWeek = existingAll.filter(w => {
+          const s = new Date(w.start).getTime();
+          const e = new Date(w.end).getTime();
+          return e >= wsMs && s <= weMs;
+        });
+        const desiredInWeek = unionRanges.filter(r => intersectsRange(new Date(r.start), new Date(r.end), wsMs, weMs));
+
+        if (wkStart === weekStartMs) {
+          // Current week: granular DIFF (DELETE missing, PUT changed, POST new)
+          const existingById = new Map<string, { id: number; start: string; end: string }>();
+          for (const w of existingInWeek) existingById.set(String(w.id), { id: w.id, start: canonical(w.start), end: canonical(w.end) });
+          const desiredById = new Map<string, { id: string; start: string; end: string }>();
+          for (const r of desiredInWeek) desiredById.set(r.id, { id: r.id, start: canonical(r.start), end: canonical(r.end) });
+
+          const deleteIds: number[] = [];
+          for (const w of existingInWeek) {
+            const idStr = String(w.id);
+            if (!desiredById.has(idStr) || deletedRangeIds.includes(idStr)) deleteIds.push(w.id);
+          }
+          for (const id of deleteIds) {
+            try { await deleteWorkHour(id, token); } catch (e) { console.warn('Delete workhour failed', id, e); }
+          }
+
+          for (const r of desiredInWeek) {
+            const rStart = canonical(r.start);
+            const rEnd = canonical(r.end);
+            if (isNumericId(r.id) && existingById.has(r.id)) {
+              const ex = existingById.get(r.id)!;
+              if (ex.start !== rStart || ex.end !== rEnd) {
+                try { await updateWorkHour(Number(r.id), { start: rStart, end: rEnd, employeeId: employeeIdNum }, token); } catch (e) { console.warn('Update workhour failed', r.id, e); }
+              }
+            } else {
+              try { await createWorkHour({ start: rStart, end: rEnd, employeeId: employeeIdNum }, token); } catch (e) { console.warn('Create workhour failed', r, e); }
+            }
+          }
+        } else {
+          // Future (or other) week touched by copy: REPLACE that week (delete all existingInWeek then create desired)
+          for (const w of existingInWeek) {
+            try { await deleteWorkHour(w.id, token); } catch (e) { console.warn('Delete workhour (future) failed', w.id, e); }
+          }
+          for (const r of desiredInWeek) {
+            try { await createWorkHour({ start: canonical(r.start), end: canonical(r.end), employeeId: employeeIdNum }, token); } catch (e) { console.warn('Create workhour (future) failed', r, e); }
+          }
+        }
+      }
+
+      // 3) Refetch current week from backend to ensure consistency and avoid duplicates
+      try {
+        const refreshed = await fetchEmployeeWorkHours(employeeIdNum, token);
+        const mapped = refreshed
+          .filter(w => {
+            const s = new Date(w.start).getTime();
+            const e = new Date(w.end).getTime();
+            return e >= weekStartMs && s <= weekEndMs;
+          })
+          .map(w => ({ id: String(w.id), specialistId: selectedEmployee, start: w.start, end: w.end }));
+        setAvailabilities(mapped);
+      } catch (e) {
+        console.warn('Refetch after save failed', e);
+        // fallback: show current-week unionRanges filtered (best effort)
+        const fallback = unionRanges.filter(r => intersectsRange(new Date(r.start), new Date(r.end), weekStartMs, weekEndMs));
+        setAvailabilities(fallback);
+      }
+      setTempRanges([]);
+      setDeletedRangeIds([]);
+    } catch (e) {
+      console.warn('Nie udało się zapisać dostępności do backendu', e);
+    }
   };
-  const discardChanges = () => { if(!selectedEmployee) return; setAvailabilities([]); setTempRanges([]); setDeletedRangeIds([]); setPendingDeleteRange(null); setActiveEdit(null); };
+  const discardChanges = () => {
+    if (!selectedEmployee) return;
+    setPendingDeleteRange(null);
+    setActiveEdit(null);
+    setDeletedRangeIds([]);
+    setTempRanges([]);
+    // Reload backend availabilities for current employee and week (do not clear persistent data)
+    (async () => {
+      try {
+        const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+        const empId = Number(selectedEmployee);
+        if (!token || !Number.isFinite(empId)) return;
+        const list = await fetchEmployeeWorkHours(empId, token);
+        const startMs = weekBounds.start.getTime();
+        const endMs = weekBounds.end.getTime();
+        const mapped = list
+          .filter(w => {
+            const s = new Date(w.start).getTime();
+            const e = new Date(w.end).getTime();
+            return e >= startMs && s <= endMs;
+          })
+          .map(w => ({ id: String(w.id), specialistId: selectedEmployee, start: w.start, end: w.end }));
+        setAvailabilities(mapped);
+      } catch (e) {
+        console.warn('Nie udało się odświeżyć godzin pracy po odrzuceniu zmian', e);
+      }
+    })();
+  };
 
   // Delete confirm
   const handleConfirmDelete = () => { if(pendingDeleteRange){ const id=pendingDeleteRange.id; setAvailabilities(a=> a.filter(r=> r.id!==id)); setTempRanges(t=> t.filter(r=> r.id!==id)); setDeletedRangeIds(ids=> ids.includes(id)? ids : [...ids, id]); setPendingDeleteRange(null); } };
@@ -192,9 +385,17 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   // Copy availability handler
   const handleCopyAvailability = () => { if(!selectedEmployee) return; const working=[...availabilities.filter(r=> r.specialistId===selectedEmployee), ...tempRanges.filter(r=> r.specialistId===selectedEmployee)]; const baseWeekRanges= working.filter(r=> { const startDate=new Date(r.start); return startDate>=weekBounds.start && startDate<=weekBounds.end; }); if(!baseWeekRanges.length){ setShowCopyDropdown(false); return; } const weeksToCopy = copyPeriod==='week'? 1 : 4; const newRanges:AvailabilityRange[]=[]; let counter=0; for(let w=1; w<=weeksToCopy; w++){ const dayOffset=w*7; for(const r of baseWeekRanges){ const startDate=new Date(r.start); startDate.setDate(startDate.getDate()+dayOffset); const endDate=new Date(r.end); endDate.setDate(endDate.getDate()+dayOffset); newRanges.push({ id:`copy-${Date.now()}-${w}-${counter++}`, specialistId:r.specialistId, start:startDate.toISOString(), end:endDate.toISOString() }); } } if(!newRanges.length){ setShowCopyDropdown(false); return; } setTempRanges(prev=> [...prev, ...newRanges]); setShowCopyDropdown(false); };
 
-  // Abstract saving dialog (mock backend)
+  // Saving dialog overlay and helper
   const [showSavingDialog, setShowSavingDialog] = useState(false);
-  const runWithSaving = (action: ()=>void) => { if(showSavingDialog) return; setShowSavingDialog(true); requestAnimationFrame(()=> { action(); setTimeout(()=> setShowSavingDialog(false), 1200); }); };
+  const runWithSaving = async (action: ()=>void | Promise<void>) => {
+    if (showSavingDialog) return;
+    setShowSavingDialog(true);
+    try {
+      await action();
+    } finally {
+      setShowSavingDialog(false);
+    }
+  };
 
   // Patients resolver to display full names instead of IDs (prefer backend patients prop)
   const patientNameById = React.useMemo(() => {
@@ -416,7 +617,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
         <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 text-center animate-fade-in">
           <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center"><div className="h-6 w-6 rounded-full border-4 border-blue-300 border-t-blue-600 animate-spin" /></div>
           <h3 className="text-base font-semibold text-gray-800 mb-2">Wysyłanie zmian...</h3>
-            <p className="text-sm text-gray-600">Trwa przesyłanie zmian do backendu (mock).</p>
+            <p className="text-sm text-gray-600">Trwa zapisywanie zmian w backendzie.</p>
         </div>
       </div>)}
     </div>
