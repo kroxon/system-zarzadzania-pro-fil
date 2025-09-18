@@ -323,10 +323,13 @@ function App() {
     const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
     if (!token) return;
     // Map Meeting -> CreateEvent
-    const toIso = (date: string, time: string) => {
-      const [y, m, d] = date.split('-').map(Number);
-      const [hh, mm] = time.split(':').map(Number);
-      return new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0).toISOString();
+    // Build local time string without timezone (YYYY-MM-DDTHH:mm:ss)
+    const toLocalNaiveIso = (date: string, time: string) => {
+      // date is already YYYY-MM-DD, time is HH:mm
+      const [hh, mm] = time.split(':');
+      const h = hh?.padStart(2, '0') || '00';
+      const m = mm?.padStart(2, '0') || '00';
+      return `${date}T${h}:${m}:00`;
     };
     const participantIds: number[] = [
       ...(meetingData.specialistIds || (meetingData.specialistId ? [meetingData.specialistId] : [])).map(id => Number(id)).filter(n => Number.isFinite(n)),
@@ -334,8 +337,8 @@ function App() {
     ];
     const payload: CreateEvent = {
       name: meetingData.name || 'Spotkanie',
-      start: toIso(meetingData.date, meetingData.startTime),
-      end: toIso(meetingData.date, meetingData.endTime),
+      start: toLocalNaiveIso(meetingData.date, meetingData.startTime),
+      end: toLocalNaiveIso(meetingData.date, meetingData.endTime),
       participantIds,
       roomId: meetingData.roomId ? Number(meetingData.roomId) : null,
       info: meetingData.notes || null,
@@ -354,11 +357,13 @@ function App() {
     if (!token) return;
     const idNum = String(meetingId).startsWith('bevt-') ? Number(String(meetingId).replace('bevt-','')) : Number(meetingId);
     if (!Number.isFinite(idNum)) return;
-    const toIso = (date?: string, time?: string) => {
+    // Build local time string without timezone (YYYY-MM-DDTHH:mm:ss)
+    const toLocalNaiveIso = (date?: string, time?: string) => {
       if (!date || !time) return undefined;
-      const [y, m, d] = date.split('-').map(Number);
-      const [hh, mm] = time.split(':').map(Number);
-      return new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0).toISOString();
+      const [hh, mm] = time.split(':');
+      const h = hh?.padStart(2, '0') || '00';
+      const m = mm?.padStart(2, '0') || '00';
+      return `${date}T${h}:${m}:00`;
     };
     // Find existing meeting to fill required fields
     const existing = meetings.find(m => m.id === meetingId);
@@ -375,8 +380,8 @@ function App() {
     ];
     const payload: CreateEvent = {
       name,
-      start: toIso(date, startTime)!,
-      end: toIso(date, endTime)!,
+      start: toLocalNaiveIso(date, startTime)!,
+      end: toLocalNaiveIso(date, endTime)!,
       participantIds,
       roomId: (updates.roomId ?? existing.roomId) ? Number(updates.roomId ?? existing.roomId) : null,
       info: (updates.notes ?? existing.notes) || null,
