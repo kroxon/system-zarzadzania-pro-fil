@@ -190,6 +190,17 @@ export interface CreateEvent {
   participantIds: number[];
   roomId?: number | null;
   info?: string | null;
+  guest?: string;
+}
+
+export interface UpdateEvent {
+  name?: string;
+  start?: string; // ISO date-time
+  end?: string;   // ISO date-time
+  participantIds?: number[];
+  roomId?: number | null;
+  info?: string | null;
+  guest?: string;
 }
 
 export interface PatchEventPersons {
