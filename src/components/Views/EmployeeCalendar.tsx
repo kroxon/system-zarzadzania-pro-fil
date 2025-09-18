@@ -120,8 +120,54 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   const getWeekBounds = (date: Date) => { const start=new Date(date); start.setDate(date.getDate()-date.getDay()+1); start.setHours(0,0,0,0); const end=new Date(start); end.setDate(end.getDate()+6); end.setHours(23,59,59,999); return { start, end }; };
   const weekBounds = getWeekBounds(currentDate);
 
-  // Load availabilities for employee + week (no localStorage: start empty)
-  React.useEffect(()=> { if(!selectedEmployee) { setAvailabilities([]); setTempRanges([]); return; } setAvailabilities([]); setTempRanges([]); }, [selectedEmployee, weekBounds.start.getTime()]);
+  // Load availabilities for employee + week from backend WorkHours
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!selectedEmployee) {
+        setAvailabilities([]);
+        setTempRanges([]);
+        return;
+      }
+      const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+      if (!token) {
+        setAvailabilities([]);
+        setTempRanges([]);
+        return;
+      }
+      try {
+        const empId = Number(selectedEmployee);
+        if (!Number.isFinite(empId)) {
+          setAvailabilities([]);
+          setTempRanges([]);
+          return;
+        }
+        const list = await fetchEmployeeWorkHours(empId, token);
+        const startMs = weekBounds.start.getTime();
+        const endMs = weekBounds.end.getTime();
+        const mapped = list
+          .filter(w => {
+            const s = new Date(w.start).getTime();
+            const e = new Date(w.end).getTime();
+            return e >= startMs && s <= endMs;
+          })
+          .map(w => ({ id: String(w.id), specialistId: selectedEmployee, start: w.start, end: w.end }));
+        if (!cancelled) {
+          setAvailabilities(mapped);
+          setTempRanges([]);
+          setDeletedRangeIds([]);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          console.warn('Nie udało się pobrać godzin pracy pracownika', e);
+          setAvailabilities([]);
+          setTempRanges([]);
+        }
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [selectedEmployee, weekBounds.start.getTime(), weekBounds.end.getTime(), currentUser?.token]);
 
   // Guard date change if unsaved
   const guardedSetCurrentDate = (d: Date) => { const newBounds=getWeekBounds(d); const sameWeek= weekBounds.start.getTime()===newBounds.start.getTime(); if(!sameWeek && tempRanges.length){ alert('Najpierw zapisz zmiany dostępności dla tego tygodnia.'); return; } setCurrentDate(d); };
@@ -218,7 +264,34 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
       console.warn('Nie udało się zapisać dostępności do backendu', e);
     }
   };
-  const discardChanges = () => { if(!selectedEmployee) return; setAvailabilities([]); setTempRanges([]); setDeletedRangeIds([]); setPendingDeleteRange(null); setActiveEdit(null); };
+  const discardChanges = () => {
+    if (!selectedEmployee) return;
+    setPendingDeleteRange(null);
+    setActiveEdit(null);
+    setDeletedRangeIds([]);
+    setTempRanges([]);
+    // Reload backend availabilities for current employee and week (do not clear persistent data)
+    (async () => {
+      try {
+        const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+        const empId = Number(selectedEmployee);
+        if (!token || !Number.isFinite(empId)) return;
+        const list = await fetchEmployeeWorkHours(empId, token);
+        const startMs = weekBounds.start.getTime();
+        const endMs = weekBounds.end.getTime();
+        const mapped = list
+          .filter(w => {
+            const s = new Date(w.start).getTime();
+            const e = new Date(w.end).getTime();
+            return e >= startMs && s <= endMs;
+          })
+          .map(w => ({ id: String(w.id), specialistId: selectedEmployee, start: w.start, end: w.end }));
+        setAvailabilities(mapped);
+      } catch (e) {
+        console.warn('Nie udało się odświeżyć godzin pracy po odrzuceniu zmian', e);
+      }
+    })();
+  };
 
   // Delete confirm
   const handleConfirmDelete = () => { if(pendingDeleteRange){ const id=pendingDeleteRange.id; setAvailabilities(a=> a.filter(r=> r.id!==id)); setTempRanges(t=> t.filter(r=> r.id!==id)); setDeletedRangeIds(ids=> ids.includes(id)? ids : [...ids, id]); setPendingDeleteRange(null); } };
