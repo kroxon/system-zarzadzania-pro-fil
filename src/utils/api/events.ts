@@ -74,8 +74,9 @@ export async function deleteEvent(id: number, token: string): Promise<void> {
 
 // PUT /api/events/{id}
 
+import { UpdateEvent } from '../../types/index';
 
-export async function updateEvent(id: number, data: CreateEvent, token: string): Promise<void> {
+export async function updateEvent(id: number, data: UpdateEvent, token: string): Promise<void> {
   const response = await fetch(`${API_URL}/api/events/${id}`, {
     method: 'PUT',
     headers: {
