@@ -7,7 +7,6 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchPatients } from '../../utils/api/patients';
 import {Patient, User, Meeting} from '../../types/index'
 import { Search } from 'lucide-react';
-import { loadMeetings, loadUsers, loadRooms, saveTherapistAssignments } from '../../utils/storage';
 
 /*
 // Całość przełączona na typ Patient z backendu. Usunięto PatientDemo, mappersy i demo storage.
