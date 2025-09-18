@@ -401,20 +401,9 @@ useEffect(() => {
     e.preventDefault();
     if(!validateNew()) return;
     setCreating(true);
-    const id = Date.now(); // tymczasowy id jako number
-    const patient: Patient = {
-      id,
-      name: newPatientForm.name.trim(),
-      surname: newPatientForm.surname.trim(),
-      birthDate: newPatientForm.birthDate || '',
-      isActive: !!newPatientForm.isActive,
-      assignedEmployeesIds: Array.isArray(newPatientForm.assignedEmployeesIds) ? newPatientForm.assignedEmployeesIds.map(Number) : [],
-      info: newPatientForm.info?.trim() || ''
-    };
-    setPatients(prev => [...prev, patient]);
-    if(newPatientForm.assignedEmployeesIds.length){ setTherapistAssignments(prev => ({ ...prev, [id]: [...newPatientForm.assignedEmployeesIds] })); }
-    if(newPatientForm.info.trim()){ setPatientNotes(prev => ({ ...prev, [id]: newPatientForm.info.trim() })); }
-    setCreating(false); setShowAddModal(false); setSelected(patient);
+    // Tutaj będzie wywołanie API do dodania pacjenta
+    // ...existing code...
+    setCreating(false); setShowAddModal(false);
   };
   const toggleNewTherapist = (id:number) => {
     setNewPatientForm(f => f.assignedEmployeesIds.includes(id) ? { ...f, assignedEmployeesIds: f.assignedEmployeesIds.filter(t=>t!==id) } : { ...f, assignedEmployeesIds:[...f.assignedEmployeesIds, id] });
