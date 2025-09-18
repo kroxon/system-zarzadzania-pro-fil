@@ -30,6 +30,15 @@ export interface User {
   token?: string;
 }
 
+//employee to patient (un)assign
+export interface AssignPatient{
+  patientIds: number[];
+}
+
+export interface UnAssignPatient{
+  patientIds: number[];
+}
+
 
 export interface Room {
   id: string;
