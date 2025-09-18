@@ -6,7 +6,7 @@ import { ChevronDown, Check, Trash2 } from 'lucide-react';
 import MonthCalendar from './MonthCalendar';
 import MeetingForm from '../Forms/MeetingForm';
 import { fetchEmployeeWorkHours } from '../../utils/api/employees';
-import { createWorkHour, deleteWorkHour } from '../../utils/api/workhours';
+import { createWorkHour, deleteWorkHour, updateWorkHour } from '../../utils/api/workhours';
 
 const DAYOFF_MEETING_PREFIX = 'dayoff-';
 
@@ -193,7 +193,8 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   };
 
   // Save & discard
-  // Persist selected employee availability ranges to backend WorkHours by replacing the affected date range
+  // Persist selected employee availability ranges to backend WorkHours by replacing the CURRENT WEEK fully
+  // Fixes: (1) Deletions were not persisted when week became empty; (2) Moves/edits created duplicates
   const saveAvailabilities = async () => {
     if (!selectedEmployee) return;
     const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
@@ -207,16 +208,21 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
       return;
     }
 
-    // Build merged ranges for the selected employee (can include copied future weeks)
-    const merged = mergeRangesAdjacency(
-      [...availabilities, ...tempRanges].filter(r => r.specialistId === selectedEmployee)
-    );
-    if (!merged.length) {
-      // Nothing to save; just clear pending state
-      setAvailabilities([]);
-      setTempRanges([]);
-      setDeletedRangeIds([]);
-      return;
+    // Helper week bounds
+    const weekStartMs = weekBounds.start.getTime();
+    const weekEndMs = weekBounds.end.getTime();
+    const intersectsRange = (s: Date, e: Date, ws: number, we: number) => e.getTime() >= ws && s.getTime() <= we;
+    // Union of ranges for this employee (UI state)
+    const unionRanges = [...availabilities, ...tempRanges].filter(r => r.specialistId === selectedEmployee);
+    // Determine which weeks to persist: always current week + any weeks that have tempRanges (e.g., copied)
+    const weeksToProcess = new Set<number>([weekStartMs]);
+    for (const tr of tempRanges) {
+      if (tr.specialistId !== selectedEmployee) continue;
+      const d = new Date(tr.start);
+      const start = new Date(d);
+      start.setDate(d.getDate() - d.getDay() + 1);
+      start.setHours(0,0,0,0);
+      weeksToProcess.add(start.getTime());
     }
 
     try {
@@ -230,34 +236,83 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
         const ss = '00';
         return `${y}-${m}-${dd}T${hh}:${mm}:${ss}`;
       };
-      // 1) Load current employee work hours and delete those that overlap ANY of the new merged ranges
-      const existing = await fetchEmployeeWorkHours(employeeIdNum, token);
-      const mergedIntervals = merged.map(r => ({ s: new Date(r.start).getTime(), e: new Date(r.end).getTime() }));
-      const toDelete = existing.filter(w => {
-        const ws = new Date(w.start).getTime();
-        const we = new Date(w.end).getTime();
-        return mergedIntervals.some(mi => we >= mi.s && ws <= mi.e);
-      });
-      for (const w of toDelete) {
-        try { await deleteWorkHour(w.id, token); } catch (e) { console.warn('Delete workhour failed', w.id, e); }
-      }
+      // Load all existing once (we'll slice by week per iteration)
+      const existingAll = await fetchEmployeeWorkHours(employeeIdNum, token);
+      const isNumericId = (id: string) => /^\d+$/.test(id);
+      const canonical = (s: string) => toLocalNoZ(new Date(s));
 
-      // 2) Create new merged ranges as fresh work hours
-      for (const r of merged) {
-        try {
-          const payload = {
-            start: toLocalNoZ(new Date(r.start)),
-            end: toLocalNoZ(new Date(r.end)),
-            employeeId: employeeIdNum,
-          };
-          await createWorkHour(payload, token);
-        } catch (e) {
-          console.warn('Create workhour failed', r, e);
+      // Process each affected week
+      for (const wkStart of weeksToProcess) {
+        const wkStartDate = new Date(wkStart);
+        const wkEndDate = new Date(wkStartDate);
+        wkEndDate.setDate(wkEndDate.getDate() + 6);
+        wkEndDate.setHours(23,59,59,999);
+        const wsMs = wkStartDate.getTime();
+        const weMs = wkEndDate.getTime();
+
+        const existingInWeek = existingAll.filter(w => {
+          const s = new Date(w.start).getTime();
+          const e = new Date(w.end).getTime();
+          return e >= wsMs && s <= weMs;
+        });
+        const desiredInWeek = unionRanges.filter(r => intersectsRange(new Date(r.start), new Date(r.end), wsMs, weMs));
+
+        if (wkStart === weekStartMs) {
+          // Current week: granular DIFF (DELETE missing, PUT changed, POST new)
+          const existingById = new Map<string, { id: number; start: string; end: string }>();
+          for (const w of existingInWeek) existingById.set(String(w.id), { id: w.id, start: canonical(w.start), end: canonical(w.end) });
+          const desiredById = new Map<string, { id: string; start: string; end: string }>();
+          for (const r of desiredInWeek) desiredById.set(r.id, { id: r.id, start: canonical(r.start), end: canonical(r.end) });
+
+          const deleteIds: number[] = [];
+          for (const w of existingInWeek) {
+            const idStr = String(w.id);
+            if (!desiredById.has(idStr) || deletedRangeIds.includes(idStr)) deleteIds.push(w.id);
+          }
+          for (const id of deleteIds) {
+            try { await deleteWorkHour(id, token); } catch (e) { console.warn('Delete workhour failed', id, e); }
+          }
+
+          for (const r of desiredInWeek) {
+            const rStart = canonical(r.start);
+            const rEnd = canonical(r.end);
+            if (isNumericId(r.id) && existingById.has(r.id)) {
+              const ex = existingById.get(r.id)!;
+              if (ex.start !== rStart || ex.end !== rEnd) {
+                try { await updateWorkHour(Number(r.id), { start: rStart, end: rEnd, employeeId: employeeIdNum }, token); } catch (e) { console.warn('Update workhour failed', r.id, e); }
+              }
+            } else {
+              try { await createWorkHour({ start: rStart, end: rEnd, employeeId: employeeIdNum }, token); } catch (e) { console.warn('Create workhour failed', r, e); }
+            }
+          }
+        } else {
+          // Future (or other) week touched by copy: REPLACE that week (delete all existingInWeek then create desired)
+          for (const w of existingInWeek) {
+            try { await deleteWorkHour(w.id, token); } catch (e) { console.warn('Delete workhour (future) failed', w.id, e); }
+          }
+          for (const r of desiredInWeek) {
+            try { await createWorkHour({ start: canonical(r.start), end: canonical(r.end), employeeId: employeeIdNum }, token); } catch (e) { console.warn('Create workhour (future) failed', r, e); }
+          }
         }
       }
 
-      // 3) Update local state: keep merged (ids are client-side only for now)
-      setAvailabilities(merged);
+      // 3) Refetch current week from backend to ensure consistency and avoid duplicates
+      try {
+        const refreshed = await fetchEmployeeWorkHours(employeeIdNum, token);
+        const mapped = refreshed
+          .filter(w => {
+            const s = new Date(w.start).getTime();
+            const e = new Date(w.end).getTime();
+            return e >= weekStartMs && s <= weekEndMs;
+          })
+          .map(w => ({ id: String(w.id), specialistId: selectedEmployee, start: w.start, end: w.end }));
+        setAvailabilities(mapped);
+      } catch (e) {
+        console.warn('Refetch after save failed', e);
+        // fallback: show current-week unionRanges filtered (best effort)
+        const fallback = unionRanges.filter(r => intersectsRange(new Date(r.start), new Date(r.end), weekStartMs, weekEndMs));
+        setAvailabilities(fallback);
+      }
       setTempRanges([]);
       setDeletedRangeIds([]);
     } catch (e) {
