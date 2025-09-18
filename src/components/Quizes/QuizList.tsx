@@ -39,30 +39,7 @@ const initialQuizzes: Quiz[] = [
 ];
 
 export default function QuizzesPage() {
-  const [quizzes, setQuizzes] = React.useState<Quiz[]>(() => {
-    const stored = localStorage.getItem('schedule_quizzes');
-    if (stored) {
-      try {
-        const parsed: unknown = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed[0]?.questions?.[0]?.answers) {
-          // migrate correct to array if needed
-          return (parsed as Quiz[]).map((q) => ({
-            id: q.id ?? '',
-            title: q.title ?? '',
-            status: q.status ?? 'Szkic',
-            date: q.date ?? '',
-            questions: Array.isArray(q.questions) ? q.questions.map((qq) => ({
-              question: qq.question ?? '',
-              answers: Array.isArray(qq.answers) ? qq.answers : [],
-              correct: Array.isArray(qq.correct) ? qq.correct : typeof qq.correct === 'number' ? [qq.correct] : []
-            })) : []
-          }));
-        }
-        return initialQuizzes;
-      } catch { return initialQuizzes; }
-    }
-    return initialQuizzes;
-  });
+  const [quizzes, setQuizzes] = React.useState<Quiz[]>(initialQuizzes);
 
   const [editingQuiz, setEditingQuiz] = React.useState<Quiz | null>(null);
   const [editedQuizData, setEditedQuizData] = React.useState<Quiz | null>(null);

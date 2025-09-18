@@ -55,17 +55,25 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   // Availability state
   interface AvailabilityRange { id: string; specialistId: string; start: string; end: string; }
   const [pendingDeleteRange, setPendingDeleteRange] = useState<AvailabilityRange | null>(null);
-  const AVAIL_KEY = 'schedule_availabilities';
   const [availabilities, setAvailabilities] = useState<AvailabilityRange[]>([]);
   const [tempRanges, setTempRanges] = useState<AvailabilityRange[]>([]);
 
-  // Day-offs for month view (filtered by employee just for initial load; MonthCalendar ma własną bazę)
+  // Day-offs for month view (now purely in-memory; no localStorage)
   interface DayOff { id: string; specialistId: string; date: string; note?: string; groupId?: string; }
-  const DAY_OFF_KEY = 'schedule_day_offs';
   const [dayOffs, setDayOffs] = useState<DayOff[]>([]);
   const [allDayOffs, setAllDayOffs] = useState<DayOff[]>([]);
-  const loadDayOffs = React.useCallback(()=> { if(!selectedEmployee) { setDayOffs([]); setAllDayOffs([]); return; } try { const raw=localStorage.getItem(DAY_OFF_KEY); const all: DayOff[] = raw? JSON.parse(raw): []; setAllDayOffs(all); setDayOffs(all.filter(d=> d.specialistId===selectedEmployee)); } catch(e){ console.warn('Load dayOffs failed', e);} }, [selectedEmployee]);
-  React.useEffect(()=> { loadDayOffs(); }, [loadDayOffs]);
+  const handleMonthBaselineChange = React.useCallback((base: DayOff[]) => {
+    setAllDayOffs(base);
+    if (selectedEmployee) {
+      setDayOffs(base.filter(d => d.specialistId === selectedEmployee));
+    } else {
+      setDayOffs([]);
+    }
+  }, [selectedEmployee]);
+  React.useEffect(() => {
+    // re-filter when employee changes
+    setDayOffs(selectedEmployee ? allDayOffs.filter(d => d.specialistId === selectedEmployee) : []);
+  }, [selectedEmployee, allDayOffs]);
   // Helpers for rendering day-off blocks in week view
   const formatDayDisplayFull = React.useCallback((iso:string)=> { if(!iso) return ''; const [y,m,d]=iso.split('-'); return `${d}.${m}.${y}`; }, []);
   const dayOffGroupMeta = React.useMemo(()=> {
@@ -110,8 +118,8 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   const getWeekBounds = (date: Date) => { const start=new Date(date); start.setDate(date.getDate()-date.getDay()+1); start.setHours(0,0,0,0); const end=new Date(start); end.setDate(end.getDate()+6); end.setHours(23,59,59,999); return { start, end }; };
   const weekBounds = getWeekBounds(currentDate);
 
-  // Load availabilities for employee + week
-  React.useEffect(()=> { if(!selectedEmployee) return; try { const raw=localStorage.getItem(AVAIL_KEY); const all: AvailabilityRange[] = raw? JSON.parse(raw): []; const filtered= all.filter(a=> a.specialistId===selectedEmployee && new Date(a.start)>=weekBounds.start && new Date(a.start)<=weekBounds.end); setAvailabilities(filtered); setTempRanges([]); } catch(e){ console.warn('Load availabilities failed', e);} }, [selectedEmployee, weekBounds.start.getTime()]);
+  // Load availabilities for employee + week (no localStorage: start empty)
+  React.useEffect(()=> { if(!selectedEmployee) { setAvailabilities([]); setTempRanges([]); return; } setAvailabilities([]); setTempRanges([]); }, [selectedEmployee, weekBounds.start.getTime()]);
 
   // Guard date change if unsaved
   const guardedSetCurrentDate = (d: Date) => { const newBounds=getWeekBounds(d); const sameWeek= weekBounds.start.getTime()===newBounds.start.getTime(); if(!sameWeek && tempRanges.length){ alert('Najpierw zapisz zmiany dostępności dla tego tygodnia.'); return; } setCurrentDate(d); };
@@ -139,17 +147,13 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   // Save & discard
   const saveAvailabilities = () => {
     if (!selectedEmployee) return;
-    const raw = localStorage.getItem(AVAIL_KEY);
-    const all: AvailabilityRange[] = raw ? JSON.parse(raw) : [];
+    // Merge and update only in memory; persistence disabled during cutover
     const merged = mergeRangesAdjacency([...availabilities, ...tempRanges].filter(r=> r.specialistId===selectedEmployee));
-    const keep = all.filter(a=> a.specialistId!==selectedEmployee || new Date(a.start) < weekBounds.start || new Date(a.start) > weekBounds.end);
-    const next = [...keep, ...merged];
-    localStorage.setItem(AVAIL_KEY, JSON.stringify(next));
     setAvailabilities(merged);
     setTempRanges([]);
     setDeletedRangeIds([]);
   };
-  const discardChanges = () => { if(!selectedEmployee) return; try { const raw=localStorage.getItem(AVAIL_KEY); const all: AvailabilityRange[] = raw? JSON.parse(raw): []; const filtered= all.filter(a=> a.specialistId===selectedEmployee && new Date(a.start)>=weekBounds.start && new Date(a.start)<=weekBounds.end); setAvailabilities(filtered); setTempRanges([]); setDeletedRangeIds([]); setPendingDeleteRange(null); setActiveEdit(null); } catch(e){ console.warn('Discard changes failed', e);} };
+  const discardChanges = () => { if(!selectedEmployee) return; setAvailabilities([]); setTempRanges([]); setDeletedRangeIds([]); setPendingDeleteRange(null); setActiveEdit(null); };
 
   // Delete confirm
   const handleConfirmDelete = () => { if(pendingDeleteRange){ const id=pendingDeleteRange.id; setAvailabilities(a=> a.filter(r=> r.id!==id)); setTempRanges(t=> t.filter(r=> r.id!==id)); setDeletedRangeIds(ids=> ids.includes(id)? ids : [...ids, id]); setPendingDeleteRange(null); } };
@@ -360,7 +364,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
                   <button onClick={handleCopyAvailability} disabled={!selectedEmployee} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors">Powiel</button>
                 </>)}
                 {viewType==='month' && monthPending && (<div className="flex items-center gap-2 ml-8 md:ml-12">
-                  <button onClick={()=> runWithSaving(()=> { monthActionsRef.current?.save(); loadDayOffs(); })} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors">Zapisz zmiany</button>
+                  <button onClick={()=> runWithSaving(()=> { monthActionsRef.current?.save(); })} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors">Zapisz zmiany</button>
                   <button onClick={()=> monthActionsRef.current?.discard()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors">Odrzuć</button>
                 </div>)}
                 {viewType==='week' && (!pendingDeleteRange && (tempRanges.length>0 || deletedRangeIds.length>0)) && (<div className="flex items-center gap-2 ml-8 md:ml-12">
@@ -371,7 +375,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
           </div>
           <div className="flex-1 min-h-0">
             {viewType==='week' && renderWeekView()}
-            {viewType==='month' && (<MonthCalendar currentDate={currentDate} dayOffs={dayOffs} buildDateRange={buildDateRange} formatLocalDate={formatLocalDate} employees={sortedEmployees.map(e=> ({ id:e.id, name:e.name }))} defaultEmployeeId={selectedEmployee || undefined} onPendingStateChange={(has, actions)=> { setMonthPending(has); monthActionsRef.current = actions; }} />)}
+            {viewType==='month' && (<MonthCalendar currentDate={currentDate} dayOffs={dayOffs} buildDateRange={buildDateRange} formatLocalDate={formatLocalDate} employees={sortedEmployees.map(e=> ({ id:e.id, name:e.name }))} defaultEmployeeId={selectedEmployee || undefined} onPendingStateChange={(has, actions)=> { setMonthPending(has); monthActionsRef.current = actions; }} onBaselineChange={handleMonthBaselineChange} />)}
           </div>
         </div>
       ) : (

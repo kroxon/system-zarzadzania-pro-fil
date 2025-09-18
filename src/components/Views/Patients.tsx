@@ -5,7 +5,7 @@ function getPatientStatusLabel(isActive: boolean): 'aktywny' | 'nieaktywny' {
 import { useState, useEffect, useMemo, useRef } from 'react';
 // Using demo UI shape for patients for now. When backend is ready, map API <-> UI.
 import { fetchPatients } from '../../utils/api/patients';
-import {Patient} from '../../types/index'
+import {Patient, User, Meeting} from '../../types/index'
 import { Search } from 'lucide-react';
 import { loadMeetings, loadUsers, loadRooms, saveTherapistAssignments } from '../../utils/storage';
 
@@ -21,7 +21,7 @@ interface Visit {
   room: string;
   status: 'zrealizowana' | 'odwołana' | 'zaplanowana' | 'nieobecny'; }
 
-const ASSIGN_KEY = 'schedule_therapist_assignments';
+// Brak localStorage dla przypisań terapeutów – stan tylko w pamięci
 
 export default function Patients(){
   // Pacjenci z backendu
@@ -43,19 +43,11 @@ useEffect(() => {
 useEffect(() => {
   console.log('Patients state:', patients);
 }, [patients]);
-  const [meetings, setMeetings] = useState(() => loadMeetings());
-  const [users, setUsers] = useState(() => loadUsers());
-  const [rooms, setRooms] = useState(() => loadRooms());
+  const meetings = useMemo<Meeting[]>(() => [], []);
+  const users = useMemo<User[]>(() => [], []);
+  const rooms = useMemo<{ id: string; name: string }[]>(() => [], []);
 
-  useEffect(()=>{
-    const handler = () => {
-      setMeetings(loadMeetings());
-      setUsers(loadUsers());
-      setRooms(loadRooms());
-    };
-    window.addEventListener('focus', handler);
-    return ()=> window.removeEventListener('focus', handler);
-  },[]);
+  // Brak odczytów lokalnych — te listy będą puste lub zasilone backendem w przyszłości
 
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -67,9 +59,7 @@ useEffect(() => {
     info: ''
   });
 
-  const [therapistAssignments, setTherapistAssignments] = useState<Record<string,string[]>>(()=>{
-    try { const raw = localStorage.getItem(ASSIGN_KEY); return raw? JSON.parse(raw): {}; } catch { return {}; }
-  });
+  const [therapistAssignments, setTherapistAssignments] = useState<Record<string,string[]>>({});
   const [patientNotes, setPatientNotes] = useState<Record<string,string>>({});
   const [sessionNotes, setSessionNotes] = useState<Record<string,string>>({});
   const [openSessionNotes, setOpenSessionNotes] = useState<Set<string>>(new Set());
@@ -136,34 +126,34 @@ useEffect(() => {
   }, [showDatePicker]);
 
   const visits: Visit[] = useMemo(()=>{
-    const userMap = new Map(users.map(u=> [u.id, u.name]));
-    const roomMap = new Map(rooms.map(r=> [r.id, r.name]));
+    const userMap = new Map<string, string>(users.map((u: User)=> [u.id, u.name]));
+    const roomMap = new Map<string, string>(rooms.map((r: {id:string; name:string})=> [r.id, r.name]));
     const todayStr = new Date().toISOString().split('T')[0];
     return meetings
-      .filter(m=> !!m.patientId)
-      .map(m=>{
+      .filter((m: Meeting)=> !!m.patientId)
+      .map((m: Meeting)=>{
         let status: Visit['status'];
         if(m.status === 'cancelled') status = 'odwołana';
         else if(m.status === 'absent') status = 'nieobecny';
         else if(m.status === 'in-progress') status = 'zaplanowana';
         else status = m.date > todayStr ? 'zaplanowana' : 'zrealizowana';
         const therapistIds = (m.specialistIds && m.specialistIds.length ? m.specialistIds : (m.specialistId ? [m.specialistId] : []));
-        const therapists = therapistIds.map(id => userMap.get(id) || id).filter(Boolean);
+        const therapists = therapistIds.map((id: string) => userMap.get(id) || id).filter(Boolean) as string[];
         return { id:m.id, patientId:m.patientId!, date:m.date, therapists, room: roomMap.get(m.roomId) || m.roomId, status };
       })
-      .sort((a,b)=> a.date.localeCompare(b.date));
+      .sort((a: Visit,b: Visit)=> a.date.localeCompare(b.date));
   },[meetings, users, rooms]);
 
   useEffect(()=>{
     setSessionNotes(prev => {
       let changed = false; const next = { ...prev };
-      meetings.forEach(m=> { if(m.notes && !next[m.id]) { next[m.id] = m.notes; changed = true; }});
+      meetings.forEach((m: Meeting)=> { if(m.notes && !next[m.id]) { next[m.id] = m.notes; changed = true; }});
       return changed ? next : prev;
     });
   },[meetings]);
 
   const userIdToName = useMemo(()=>{
-    const m: Record<string,string> = {}; users.forEach(u=> m[u.id]=u.name); return m;
+    const m: Record<string,string> = {}; users.forEach((u: User)=> { m[u.id]=u.name; }); return m;
   },[users]);
 
   const getStatusLabel = (v: 'aktywny'|'nieaktywny'|'wszyscy') => v==='aktywny' ? 'Aktywni' : v==='nieaktywny' ? 'Nieaktywni' : 'Wszyscy';
@@ -172,8 +162,8 @@ useEffect(() => {
   const employeesSorted = useMemo(()=>{
     const strip = (s:string)=> s.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase();
     return users
-      .filter(u=> u.role==='employee')
-      .map(u=> {
+      .filter((u: User)=> u.role==='employee')
+      .map((u: User)=> {
         const parts = (u.name||'').trim().split(/\s+/).filter(Boolean);
         const last = parts.length>1 ? parts[parts.length-1] : '';
         const first = parts.length>1 ? parts.slice(0,-1).join(' ') : (parts[0]||'');
@@ -181,10 +171,10 @@ useEffect(() => {
         const sortKey = `${strip(last)} ${strip(first)}`;
         return { id: u.id, label, sortKey };
       })
-      .sort((a,b)=> a.sortKey.localeCompare(b.sortKey));
+      .sort((a: {id:string; label:string; sortKey:string},b: {id:string; label:string; sortKey:string})=> a.sortKey.localeCompare(b.sortKey));
   },[users]);
 
-  useEffect(()=>{ try { saveTherapistAssignments(therapistAssignments); } catch {} },[therapistAssignments]);
+  // Disabled persistence of therapist assignments to localStorage
 
 
   // Close dropdowns on outside click
@@ -513,7 +503,7 @@ useEffect(() => {
             aria-haspopup="listbox"
             aria-expanded={showSpecialistMenu}
           >
-            <span className="truncate text-gray-700">{specialistFilter==='wszyscy' ? 'Wszyscy specjaliści' : (employeesSorted.find(e=> e.id===specialistFilter)?.label || '—')}</span>
+            <span className="truncate text-gray-700">{specialistFilter==='wszyscy' ? 'Wszyscy specjaliści' : (employeesSorted.find((e: any)=> e.id===specialistFilter)?.label || '—')}</span>
             <svg className={`h-4 w-4 text-gray-400 transition-transform ${showSpecialistMenu?'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.02l3.71-3.79a.75.75 0 111.08 1.04l-4.24 4.34a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
           </button>
           {showSpecialistMenu && (
@@ -538,7 +528,7 @@ useEffect(() => {
                   )}
                 </button>
                 <div className="my-1 border-t border-gray-100" />
-                {employeesSorted.map(emp => (
+                {employeesSorted.map((emp: any) => (
                   <button
                     type="button"
                     key={emp.id}
@@ -809,7 +799,7 @@ useEffect(() => {
                                     className="absolute z-50 mt-2 w-72 overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 border border-gray-100"
                                   >
                                     <div className="max-h-64 overflow-y-auto py-1">
-                                      {employeesSorted.filter(emp => !editForm.assignedEmployeesIds.includes(Number(emp.id))).map(emp => (
+                                      {employeesSorted.filter((emp: any) => !editForm.assignedEmployeesIds.includes(Number(emp.id))).map((emp: any) => (
                                         <button
                                           type="button"
                                           key={emp.id}
@@ -821,7 +811,7 @@ useEffect(() => {
                                           <svg className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd"/></svg>
                                         </button>
                                       ))}
-                                      {employeesSorted.filter(emp => !editForm.assignedEmployeesIds.includes(Number(emp.id))).length===0 && (
+                                      {employeesSorted.filter((emp: any) => !editForm.assignedEmployeesIds.includes(Number(emp.id))).length===0 && (
                                         <div className="px-3 py-2 text-sm text-gray-500">Wszyscy terapeuci są już dodani</div>
                                       )}
                                     </div>
@@ -1019,7 +1009,7 @@ useEffect(() => {
                 <div className="col-span-2">
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Terapeuci</label>
                   <div className="flex flex-wrap gap-2 mb-2 min-h-[34px] p-2 rounded-lg border border-gray-200 bg-gray-50">
-                    {newPatientForm.assignedEmployeesIds.map(tId=>{ const u=users.find(x=>Number(x.id) === Number(tId)); return (
+                    {newPatientForm.assignedEmployeesIds.map((tId:number)=>{ const u=users.find((x: User)=>Number(x.id) === Number(tId)); return (
                       <span key={tId} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium bg-indigo-100 text-indigo-700 border border-indigo-300">
                         {u? u.name.split(' ').slice(0,2).join(' '): tId}
                         <button type="button" onClick={()=> toggleNewTherapist(tId)} className="hover:text-indigo-900">×</button>
@@ -1029,7 +1019,7 @@ useEffect(() => {
                   </div>
                   <select onChange={e=> { const v=e.target.value; if(v){ toggleNewTherapist(Number(v)); e.target.selectedIndex=0; } }} value="" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
                     <option value="">Dodaj terapeutę...</option>
-                    {users.filter(u=>u.role==='employee' && !newPatientForm.assignedEmployeesIds.includes(Number(u.id))).map(u=> <option key={u.id} value={u.id}>{u.name} {u.specialization? '– '+u.specialization:''}</option>)}
+                    {users.filter((u: User)=>u.role==='employee' && !newPatientForm.assignedEmployeesIds.includes(Number(u.id))).map((u: User)=> <option key={u.id} value={u.id}>{u.name} {u.specialization? '– '+u.specialization:''}</option>)}
                   </select>
                 </div>
                 <div className="col-span-2">
