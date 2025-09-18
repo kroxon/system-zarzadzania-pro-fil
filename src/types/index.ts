@@ -221,6 +221,7 @@ export interface CreatePatient {
   surname: string;
   info?: string | null;
   birthDate: string;
+  isActive: boolean;
 }
 
 export interface UpdatePatient {
@@ -228,6 +229,7 @@ export interface UpdatePatient {
   surname: string;
   info?: string | null;
   birthDate: string;
+  isActive: boolean;
 }
 
 
