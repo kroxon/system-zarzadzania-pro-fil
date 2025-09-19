@@ -64,6 +64,8 @@ export interface Meeting {
   startTime: string;
   endTime: string;
   notes?: string;
+  // Backend Event.statusId preserved for exact status selection in UI
+  statusId?: number;
   status: 'present' | 'absent' | 'cancelled' | 'in-progress';
   createdBy: string;
 }

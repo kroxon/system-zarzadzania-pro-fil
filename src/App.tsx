@@ -171,6 +171,7 @@ function App() {
           startTime: start.time,
           endTime: end.time,
           notes: ev.info || undefined,
+          statusId: ev.statusId,
           status: normalizeStatus(ev.statusId),
           createdBy: 'backend',
         } as Meeting;

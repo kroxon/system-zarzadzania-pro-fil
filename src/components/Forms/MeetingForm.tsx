@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Clock, Trash2, AlertCircle } from 'lucide-react';
-import { Meeting, User, Room, Patient } from '../../types';
+import { Meeting, User, Room, Patient, EventStatus } from '../../types';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { fetchEmployeeWorkHours } from '../../utils/api/employees';
 import type { WorkHours } from '../../types';
+import { getAllEventStasuses } from '../../utils/api/eventStatuses';
 
 // Availability will be validated against backend workhours
 
@@ -102,6 +103,48 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const [workhoursByEmployee, setWorkhoursByEmployee] = useState<Record<string, WorkHours[]>>({});
   const [loadingEmployees, setLoadingEmployees] = useState<Set<string>>(new Set());
   const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+
+  // Test-only: event statuses fetch and display
+  const [eventStatuses, setEventStatuses] = useState<EventStatus[]>([]);
+  const [eventStatusesLoading, setEventStatusesLoading] = useState(false);
+  const [eventStatusesError, setEventStatusesError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!isOpen || !token) return;
+      setEventStatusesLoading(true);
+      setEventStatusesError(null);
+      try {
+        const list = await getAllEventStasuses(token);
+        if (!cancelled) setEventStatuses(list);
+      } catch (e: any) {
+        if (!cancelled) setEventStatusesError(e?.message || 'Nie udało się pobrać statusów');
+      } finally {
+        if (!cancelled) setEventStatusesLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [isOpen, token]);
+
+  // Helper: normalize backend status name to Meeting.status union
+  const normalizeStatusName = React.useCallback((name?: string): 'present' | 'absent' | 'cancelled' | 'in-progress' => {
+    const s = (name || '').toLowerCase();
+    if (/(cancel|odwo)/.test(s)) return 'cancelled';
+    if (/(absent|nieobec)/.test(s)) return 'absent';
+    if (/(progress|w toku)/.test(s)) return 'in-progress';
+    return 'present';
+  }, []);
+
+  // Determine which statusId should be selected (only one) when editing an event
+  const activeStatusId = React.useMemo(() => {
+    // Prefer editingMeeting.statusId if present
+    if (editingMeeting?.statusId != null) return editingMeeting.statusId;
+    // Otherwise, try to infer from current normalized status (formData.status)
+    if (!eventStatuses || !eventStatuses.length) return undefined;
+    const match = eventStatuses.find(s => normalizeStatusName(s.name) === formData.status);
+    return match?.id;
+  }, [editingMeeting?.statusId, eventStatuses, formData.status, normalizeStatusName]);
 
   const fetchWorkhoursForIds = React.useCallback(async (ids: string[], dateYmd: string) => {
     if (!token || !ids.length || !dateYmd) return;
@@ -267,10 +310,12 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     }
     // conflict per specialist and room (using effectiveDate)
     formData.specialistIds.forEach(id => {
+      const u = users.find(u=>u.id===id);
+      const fullName = u ? `${u.surname} ${u.name}` : id;
       if (!isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime)) {
-        newErrors.push(`Specjalista (${users.find(u=>u.id===id)?.name||id}) jest niedostępny`);
+        newErrors.push(`Specjalista (${fullName}) jest niedostępny`);
       } else if (specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) {
-        newErrors.push(`Specjalista (${users.find(u=>u.id===id)?.name||id}) jest zajęty`);
+        newErrors.push(`Specjalista (${fullName}) jest zajęty`);
       }
     });
     if (roomHasConflict(formData.roomId, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) newErrors.push('Sala jest zajęta w tym przedziale czasu');
@@ -458,6 +503,10 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   // NEW: custom dropdown states for specialists and patients
   const [specOpen, setSpecOpen] = useState(false);
   const [patientsOpen, setPatientsOpen] = useState(false);
+  // Search term for specialists dropdown
+  const [specSearch, setSpecSearch] = useState<string>('');
+  // Search term for patients dropdown
+  const [patientsSearch, setPatientsSearch] = useState<string>('');
 
   // Load workhours for currently selected specialists (lazy)
   useEffect(() => {
@@ -533,8 +582,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     if (!isOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (specMenuRef.current && !specMenuRef.current.contains(t)) setSpecOpen(false);
-      if (patientsMenuRef.current && !patientsMenuRef.current.contains(t)) setPatientsOpen(false);
+  if (specMenuRef.current && !specMenuRef.current.contains(t)) { setSpecOpen(false); setSpecSearch(''); }
+  if (patientsMenuRef.current && !patientsMenuRef.current.contains(t)) { setPatientsOpen(false); setPatientsSearch(''); }
     };
     document.addEventListener('mousedown', onDown, true);
     return () => document.removeEventListener('mousedown', onDown, true);
@@ -581,185 +630,151 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
             </div>
           )}
           <div className="grid grid-cols-12 gap-6">
+            {/* Left column: date and time pickers now at top, then room */}
             <div className="col-span-12 lg:col-span-4 space-y-6">
-              <div>
-                <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Specjaliści</label>
-                {/* Custom dropdown trigger instead of native select */}
-                <div className="relative" ref={specMenuRef}>
-                  <button
-                    type="button"
-                    onClick={() => { if (isEditingPast) return; setSpecOpen(o=>!o); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); }}
-                    className="w-full px-3 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:outline-none focus:ring-0 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-between"
-                    disabled={isEditingPast}
-                  >
-                    <span className="text-sm text-gray-700 truncate">Dodaj specjalistę...</span>
-                    <svg className={`h-4 w-4 text-gray-500 transition-transform ${specOpen? 'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.38a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
+              {/* Modern date + time picker: Date on top, Start/End side by side */}
+              <div className="space-y-4">
+                {/* Date picker */}
+                <div className="relative min-w-0">
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Data</label>
+                  <button type="button" disabled={isEditingPast} onClick={()=> setDateOpen(o=>!o)} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Calendar className="h-3.5 w-3.5" /></span>
+                    {formatPolishDate(effectiveDate)}
                   </button>
-                  {specOpen && !isEditingPast && (
-                    <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto text-[15px]">
-                      <ul className="py-1">
-                        {users.filter(u=>u.role==='employee').map(u=> {
-                          const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
-                          const workLoaded = Object.prototype.hasOwnProperty.call(workhoursByEmployee, u.id);
-                          const unavailable = !!(formData.startTime && formData.endTime && workLoaded && !isSpecialistAvailable(u.id, effectiveDate, formData.startTime, formData.endTime));
-                          const already = formData.specialistIds.includes(u.id);
-                          const isAvailable = workLoaded && !busy && !unavailable;
-                          const disabledOpt = (workLoaded && (busy || unavailable)) || already;
-
-                          // Less intense backgrounds; selected (already) highlighted in blue
-                          const baseBg = already ? 'bg-indigo-50' : (!workLoaded ? 'bg-white' : unavailable ? 'bg-red-50' : busy ? 'bg-amber-50' : 'bg-emerald-50');
-                          const hoverBg = already ? 'hover:bg-indigo-100' : (!workLoaded ? 'hover:bg-gray-50' : unavailable ? 'hover:bg-red-100' : busy ? 'hover:bg-amber-100' : 'hover:bg-emerald-100');
-                          const leftBorder = already ? 'border-l-4 border-indigo-300' : (!workLoaded ? 'border-l border-gray-200' : unavailable ? 'border-l-4 border-red-300' : busy ? 'border-l-4 border-amber-300' : 'border-l-4 border-emerald-300');
-                          const nameColor = already ? 'text-indigo-900' : (!workLoaded ? 'text-gray-700' : unavailable ? 'text-red-900' : busy ? 'text-amber-900' : 'text-emerald-900');
-                          const disabledClass = 'cursor-not-allowed';
+                  {dateOpen && !isEditingPast && (
+                    <div className="absolute z-20 mt-2 w-72 bg-white border border-gray-200 rounded-lg shadow-xl p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <button type="button" onClick={prevMonth} className="px-2 py-1 text-sm rounded hover:bg-gray-100">‹</button>
+                        <div className="text-sm font-medium capitalize">{monthLabelPl}</div>
+                        <button type="button" onClick={nextMonth} className="px-2 py-1 text-sm rounded hover:bg-gray-100">›</button>
+                      </div>
+                      <div className="grid grid-cols-7 text-[11px] text-gray-500 mb-1">
+                        {['Pn','Wt','Śr','Cz','Pt','So','Nd'].map(d=> <div key={d} className="text-center py-1">{d}</div>)}
+                      </div>
+                      <div className="grid grid-cols-7 gap-1">
+                        {calendarDays.map(({d,inMonth},i)=>{
+                          const ymd = toYMD(d);
+                          const isSelected = ymd === effectiveDate;
+                          const todayYMD = toYMD(new Date());
+                          const isPastDay = ymd < todayYMD;
                           return (
-                            <li key={u.id}>
-                              <button
-                                type="button"
-                                disabled={disabledOpt}
-                                onClick={() => { if (disabledOpt) return; setFormData(fd=> fd.specialistIds.includes(u.id)? fd : {...fd, specialistIds:[...fd.specialistIds, u.id]}); setSpecOpen(false); }}
-                                className={`w-full flex items-center justify-between gap-2 px-3 py-3 text-left ${baseBg} ${hoverBg} ${leftBorder} ${disabledOpt? disabledClass:''}`}
-                              >
-                                <div className="min-w-0 flex items-center gap-2">
-                                  <div className="min-w-0">
-                                    <div className={`font-semibold truncate ${nameColor}`}>{u.name}</div>
-                                    <div className="text-[13px] text-gray-700 truncate">{u.specialization || 'Specjalista'}</div>
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  {/* before load show neutral styling, no badge */}
-                                  {workLoaded && isAvailable && !already && (
-                                    <span className="text-[10px] text-emerald-900 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300">dostępny</span>
-                                  )}
-                                  {workLoaded && busy && !unavailable && (
-                                    <span className="text-[10px] text-amber-900 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300">zajęty</span>
-                                  )}
-                                  {workLoaded && unavailable && (
-                                    <span className="text-[10px] text-red-900 px-2 py-0.5 rounded-full bg-red-100 border border-red-300">niedostępny</span>
-                                  )}
-                                  {already && (
-                                    <span className="text-[10px] text-indigo-700 px-2 py-0.5 rounded-full bg-indigo-100 border border-indigo-300">wybrany</span>
-                                  )}
-                                </div>
-                              </button>
-                            </li>
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={()=> { if (!editingMeeting && isPastDay) { setShowPastSubmitInfo(true); setDateOpen(false); return; } setLocalDate(ymd); setDateOpen(false); }}
+                              aria-disabled={!editingMeeting && isPastDay}
+                              className={`text-sm py-1.5 rounded text-center ${inMonth? '':'text-gray-400'} ${isSelected? 'bg-indigo-600 text-white':'hover:bg-gray-100'} ${(!editingMeeting && isPastDay && !isSelected) ? 'text-gray-300 cursor-not-allowed' : ''}`}
+                            >
+                              {d.getDate()}
+                            </button>
                           );
                         })}
-                        {users.filter(u=>u.role==='employee').length===0 && (
-                          <li className="px-3 py-2 text-xs text-gray-400">Brak pracowników</li>
-                        )}
-                      </ul>
+                      </div>
                     </div>
                   )}
                 </div>
-                {/* Selected specialists list */}
-                <div className="mt-2">
-                  <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-40 overflow-auto">
-                    {formData.specialistIds.length===0 && (
-                      <li className="p-3 text-sm text-gray-400">Brak wybranych specjalistów</li>
+                {/* Start and End side-by-side */}
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Start time picker */}
+                  <div className="relative min-w-0">
+                    <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Start</label>
+                    <button type="button" disabled={isEditingPast} onClick={()=> { setStartOpen(o=>!o); setEndOpen(false); }} className="relative w-full pl-10 pr-2 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
+                      {formData.startTime || 'Wybierz...'}
+                    </button>
+                    {startOpen && !isEditingPast && (
+                      <div className="absolute z-20 mt-2 w-44 max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
+                        <ul className="py-1 text-sm">
+                          {timeOptions.map(t=> {
+                            const disabledOpt = isCreateToday && toMin(t) <= nowMinutes;
+                            return (
+                              <li key={t}>
+                                <button
+                                  type="button"
+                                  disabled={disabledOpt}
+                                  onClick={()=> { if(disabledOpt) return; setFormData(fd=> ({...fd, startTime:t, endTime: (fd.endTime && toMin(fd.endTime) > toMin(t)) ? fd.endTime : computeDefaultEnd(t)})); setStartOpen(false); }}
+                                  className={`w-full text-left px-3 py-1.5 ${disabledOpt ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-50'}`}
+                                >
+                                  {t}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
                     )}
-                    {formData.specialistIds.map(id=> {
-                      const u = users.find(us=>us.id===id);
-                      if(!u) return null;
-                      const workLoaded = Object.prototype.hasOwnProperty.call(workhoursByEmployee, id);
-                      const unavailable = !!(formData.startTime && formData.endTime && workLoaded && !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime));
-                      const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
-                      let bg = 'bg-indigo-50 hover:bg-indigo-100';
-                      let text = 'text-gray-900';
-                      if (!workLoaded) { bg = 'bg-gray-50'; text = 'text-gray-500'; }
-                      else if (unavailable) { bg = 'bg-gray-100'; text = 'text-gray-400'; }
-                      else if (busy) { bg = 'bg-yellow-50 hover:bg-yellow-100'; text = 'text-yellow-800'; }
-                      else { bg = 'bg-emerald-50 hover:bg-emerald-100'; text = 'text-emerald-800'; }
-                      return (
-                        <li key={id} className={`flex items-center justify-between p-2.5 transition-colors ${bg}`}>
-                          <div className="min-w-0 pr-3">
-                            <div className={`text-sm font-semibold leading-5 truncate ${text}`}>{u.name}</div>
-                            <div className="text-xs text-gray-600 truncate">{u.specialization || 'Specjalista'}</div>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            {/* before load show neutral styling, no badge */}
-                            {workLoaded && busy && !unavailable && <span className="text-[11px] text-yellow-800 px-2 py-0.5 rounded-full bg-yellow-50 border border-yellow-200">zajęty</span>}
-                            {workLoaded && unavailable && <span className="text-[11px] text-gray-500 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200">niedostępny</span>}
-                            <button type="button" onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed" aria-label="Usuń specjalistę" title="Usuń" disabled={isEditingPast}>×</button>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                  </div>
+                  {/* End time picker */}
+                  <div className="relative min-w-0">
+                    <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Koniec</label>
+                    <button type="button" disabled={isEditingPast} onClick={()=> { setEndOpen(o=>!o); setStartOpen(false); }} className="relative w-full pl-10 pr-2 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
+                      {formData.endTime || 'Wybierz...'}
+                    </button>
+                    {endOpen && !isEditingPast && (
+                      <div className="absolute z-20 mt-2 w-44 max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
+                        <ul className="py-1 text-sm">
+                          {timeOptions
+                            .filter(t=> !formData.startTime || toMin(t) > toMin(formData.startTime))
+                            .map(t=> {
+                              const disabledOpt = isCreateToday && !formData.startTime && toMin(t) <= nowMinutes;
+                              return (
+                                <li key={t}>
+                                  <button
+                                    type="button"
+                                    disabled={disabledOpt}
+                                    onClick={()=> { if(disabledOpt) return; setFormData(fd=> ({...fd, endTime:t})); setEndOpen(false); }}
+                                    className={`w-full text-left px-3 py-1.5 ${disabledOpt ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-50'}`}
+                                  >
+                                    {t}
+                                  </button>
+                                </li>
+                              );
+                            })}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-              <div>
-                <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Podopieczni</label>
-                <div className="mb-1 flex items-center gap-3">
-                  <div className="inline-flex text-[11px] rounded-lg overflow-hidden border border-indigo-300 bg-indigo-50">
-                    <button type="button" onClick={()=> setPatientAssignmentFilter('wszyscy')} className={`px-3 py-1.5 font-medium transition-colors ${patientAssignmentFilter==='wszyscy' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`} disabled={isEditingPast}>Wszyscy</button>
-                    <button type="button" onClick={()=> setPatientAssignmentFilter('przypisani')} className={`px-3 py-1.5 font-medium transition-colors border-l border-indigo-300 ${patientAssignmentFilter==='przypisani' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`} disabled={isEditingPast}>Przypisani</button>
-                  </div>
-                </div>
-                {patientAssignmentFilter==='przypisani' && (
-                  <div className="mb-2">
-                    {formData.specialistIds.length===0 ? (
-                      <div className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-amber-700"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l6.518 11.598c.75 1.335-.213 2.998-1.742 2.998H3.48c-1.53 0-2.492-1.663-1.743-2.998L8.257 3.1zM11 14a1 1 0 10-2 0 1 1 0 002 0zm-.25-6.75a.75.75 0 00-1.5 0v3.5a.75.75 0 001.5 0v-3.5z" clipRule="evenodd" /></svg><span>Wybierz specjalistę aby zobaczyć przypisanych</span></div>
-                    ) : (filteredPatients.length===0 ? (
-                      <div className="text-[10px] px-2 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-700">Brak wspólnych przypisanych pacjentów</div>
-                    ) : null)}
-                  </div>
-                )}
-                {/* Selected patients list first */}
-                <div className="mt-2">
-                  <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-44 overflow-auto">
-                    {formData.patientIds.length===0 && (<li className="p-3 text-sm text-gray-400">Brak</li>)}
-                    {formData.patientIds.map(pid=>{
-                      const p = effectivePatients.find(pp=> String(pp.id) === String(pid));
-                      let fullName: string;
-                      if (p) {
-                        fullName = `${p.name} ${p.surname}`;
-                      } else if (editingMeeting?.patientNamesList && editingMeeting.patientIds && editingMeeting.patientIds.length) {
-                        const idx = editingMeeting.patientIds.findIndex(x => String(x) === String(pid));
-                        fullName = idx >= 0 ? (editingMeeting.patientNamesList[idx] || String(pid)) : String(pid);
-                      } else {
-                        fullName = String(pid);
-                      }
-                      return (
-                        <li key={pid} className="flex items-center justify-between p-2.5 transition-colors bg-emerald-50 hover:bg-emerald-100">
-                          <div className="min-w-0 pr-3"><div className="text-sm font-semibold leading-5 text-gray-900 truncate">{fullName}</div></div>
-                          <button type="button" onClick={()=> setFormData(fd=>({...fd, patientIds: fd.patientIds.filter(x=>x!==pid)}))} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed" aria-label="Usuń podopiecznego" title="Usuń" disabled={isEditingPast}>×</button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-                {/* Custom dropdown for adding patients */}
-                <div className="relative mt-2" ref={patientsMenuRef}>
-                  <button type="button" onClick={() => { if (isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) return; setPatientsOpen(o=>!o); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); }} className="w-full px-3 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:outline-none focus:ring-0 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-between" disabled={isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)}>
-                    <span className="text-sm text-gray-700 truncate">Dodaj podopiecznego...</span>
-                    <svg className={`h-4 w-4 text-gray-500 transition-transform ${patientsOpen? 'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.38a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
-                  </button>
-                  {patientsOpen && !(isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) && (
-                    <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto text-sm">
-                      <ul className="py-1">
-                        {effectivePatients.length>0 ? filteredPatients.map(p=> {
-                          const already = formData.patientIds.includes(String(p.id));
-                          const firstName = (p as Patient).name;
-                          const lastName = (p as Patient).surname;
-                          return (
-                            <li key={p.id}>
-                              <button type="button" disabled={already} onClick={()=> { if (already) return; setFormData(fd=> fd.patientIds.includes(String(p.id)) ? fd : {...fd, patientIds:[...fd.patientIds, String(p.id)]}); setPatientsOpen(false); }} className={`w-full text-left px-3 py-2 hover:bg-indigo-50 ${already? 'opacity-40 cursor-not-allowed':''}`}>
-                                {`${firstName} ${lastName}`}{already ? ' (dodany)' : ''}
-                              </button>
-                            </li>
-                          );
-                        }) : (
-                          <li className="px-3 py-2 text-xs text-gray-400">Brak listy pacjentów z backendu</li>
-                        )}
-                        {effectivePatients.length>0 && filteredPatients.length===0 && (
-                          <li className="px-3 py-2 text-xs text-gray-400">{patientAssignmentFilter==='przypisani'? (formData.specialistIds.length? 'Brak przypisanych':'Najpierw wybierz specjalistę') : 'Brak wyników'}</li>
-                        )}
-                      </ul>
+
+              {/* Live validation hints for time and collisions */}
+              {!restrictPastEdit && (
+                <div className="mt-1 space-y-1">
+                  {startEndInvalid && (
+                    <div className="text-xs text-red-600 flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>Koniec musi być późniejszy niż start.</span>
+                    </div>
+                  )}
+                  {!startEndInvalid && isCreatePastSelection && (
+                    <div className="text-xs text-red-600 flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>Data i godzina rozpoczęcia są w przeszłości. Wybierz termin w przyszłości.</span>
+                    </div>
+                  )}
+                  {!startEndInvalid && !isCreatePastSelection && unavailableSpecialists.length>0 && (
+                    <div className="text-xs text-red-700 flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>{unavailableSpecialists.length === 1 ? 'Wybrany specjalista jest niedostępny w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest niedostępny w tym czasie.'}</span>
+                    </div>
+                  )}
+                  {!startEndInvalid && !isCreatePastSelection && unavailableSpecialists.length===0 && conflictedSpecialists.length>0 && (
+                    <div className="text-xs text-amber-700 flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>{conflictedSpecialists.length === 1 ? 'Wybrany specjalista jest zajęty w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest zajęty w tym czasie.'}</span>
+                    </div>
+                  )}
+                  {!startEndInvalid && !isCreatePastSelection && hasRoomConflict && (
+                    <div className="text-xs text-amber-700 flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>Sala jest zajęta w tym przedziale czasu.</span>
                     </div>
                   )}
                 </div>
-              </div>
+              )}
+
+              {/* Sala selector remains under date/time */}
               <div>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Sala</label>
                 <div className="relative">
@@ -804,193 +819,360 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* Right column: specialists on the left, patients on the right */}
             <div className="col-span-12 lg:col-span-8 space-y-6">
-              {/* Modern date + time picker (custom popovers) */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* Date picker */}
-                <div className="relative min-w-0">
-                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Data</label>
-                  <button type="button" disabled={isEditingPast} onClick={()=> setDateOpen(o=>!o)} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
-                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Calendar className="h-3.5 w-3.5" /></span>
-                    {formatPolishDate(effectiveDate)}
-                  </button>
-                  {dateOpen && !isEditingPast && (
-                    <div className="absolute z-20 mt-2 w-72 bg-white border border-gray-200 rounded-lg shadow-xl p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <button type="button" onClick={prevMonth} className="px-2 py-1 text-sm rounded hover:bg-gray-100">‹</button>
-                        <div className="text-sm font-medium capitalize">{monthLabelPl}</div>
-                        <button type="button" onClick={nextMonth} className="px-2 py-1 text-sm rounded hover:bg-gray-100">›</button>
-                      </div>
-                      <div className="grid grid-cols-7 text-[11px] text-gray-500 mb-1">
-                        {['Pn','Wt','Śr','Cz','Pt','So','Nd'].map(d=> <div key={d} className="text-center py-1">{d}</div>)}
-                      </div>
-                      <div className="grid grid-cols-7 gap-1">
-                        {calendarDays.map(({d,inMonth},i)=>{
-                          const ymd = toYMD(d);
-                          const isSelected = ymd === effectiveDate;
-                          const todayYMD = toYMD(new Date());
-                          const isPastDay = ymd < todayYMD;
-                          return (
-                            <button
-                              key={i}
-                              type="button"
-                              onClick={()=> { if (!editingMeeting && isPastDay) { setShowPastSubmitInfo(true); setDateOpen(false); return; } setLocalDate(ymd); setDateOpen(false); }}
-                              aria-disabled={!editingMeeting && isPastDay}
-                              className={`text-sm py-1.5 rounded text-center ${inMonth? '':'text-gray-400'} ${isSelected? 'bg-indigo-600 text-white':'hover:bg-gray-100'} ${(!editingMeeting && isPastDay && !isSelected) ? 'text-gray-300 cursor-not-allowed' : ''}`}
-                            >
-                              {d.getDate()}
-                            </button>
-                          );
-                        })}
-                      </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Specjaliści (left) */}
+                <div>
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Specjaliści</label>
+                  {/* Searchable input trigger with chevron */}
+                  <div className="relative" ref={specMenuRef}>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={specSearch}
+                        onChange={(e)=> { setSpecSearch(e.target.value); if (!isEditingPast) { setSpecOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); } }}
+                        onFocus={()=> { if (!isEditingPast) { setSpecOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); } }}
+                        onKeyDown={(e)=> {
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setSpecOpen(false);
+                            setSpecSearch('');
+                            (e.currentTarget as HTMLInputElement).blur();
+                            return;
+                          }
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (isEditingPast) return;
+                            const q = specSearch.trim().toLowerCase();
+                            const candidates = users
+                              .filter(u=>u.role==='employee')
+                              .filter(u=> !q || (u.surname||'').toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q));
+                            for (const u of candidates) {
+                              const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
+                              const workLoaded = Object.prototype.hasOwnProperty.call(workhoursByEmployee, u.id);
+                              const unavailable = !!(formData.startTime && formData.endTime && workLoaded && !isSpecialistAvailable(u.id, effectiveDate, formData.startTime, formData.endTime));
+                              const already = formData.specialistIds.includes(u.id);
+                              const disabledOpt = (workLoaded && (busy || unavailable)) || already;
+                              if (!disabledOpt) {
+                                setFormData(fd=> fd.specialistIds.includes(u.id)? fd : {...fd, specialistIds:[...fd.specialistIds, u.id]});
+                                setSpecOpen(false);
+                                setSpecSearch('');
+                                (e.currentTarget as HTMLInputElement).blur();
+                                break;
+                              }
+                            }
+                          }
+                        }}
+                        placeholder="Dodaj specjalistę..."
+                        className="w-full px-3 pr-8 py-2 border border-indigo-200 rounded-lg bg-white text-sm shadow-sm focus:outline-none focus:ring-0 disabled:opacity-60 disabled:cursor-not-allowed"
+                        disabled={isEditingPast}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { if (isEditingPast) return; setSpecOpen(o=>{ const next = !o; if (!next) setSpecSearch(''); return next; }); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); }}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                        aria-label="Rozwiń listę"
+                        disabled={isEditingPast}
+                      >
+                        <svg className={`h-4 w-4 text-gray-500 transition-transform ${specOpen? 'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.38a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
+                      </button>
                     </div>
-                  )}
-                </div>
+                    {specOpen && !isEditingPast && (
+                      <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto text-[15px]">
+                        <ul className="py-1">
+                          {users
+                            .filter(u=>u.role==='employee')
+                            .filter(u=> { const q = specSearch.trim().toLowerCase(); if(!q) return true; return (u.surname||'').toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q); })
+                            .map(u=> {
+                            const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
+                            const workLoaded = Object.prototype.hasOwnProperty.call(workhoursByEmployee, u.id);
+                            const unavailable = !!(formData.startTime && formData.endTime && workLoaded && !isSpecialistAvailable(u.id, effectiveDate, formData.startTime, formData.endTime));
+                            const already = formData.specialistIds.includes(u.id);
+                            const isAvailable = workLoaded && !busy && !unavailable;
+                            const disabledOpt = (workLoaded && (busy || unavailable)) || already;
 
-                {/* Start time picker */}
-                <div className="relative min-w-0">
-                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Start</label>
-                  <button type="button" disabled={isEditingPast} onClick={()=> { setStartOpen(o=>!o); setEndOpen(false); }} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
-                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
-                    {formData.startTime || 'Wybierz...'}
-                  </button>
-                  {startOpen && !isEditingPast && (
-                    <div className="absolute z-20 mt-2 w-44 max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
-                      <ul className="py-1 text-sm">
-                        {timeOptions.map(t=> {
-                          const disabledOpt = isCreateToday && toMin(t) <= nowMinutes;
-                          return (
-                            <li key={t}>
-                              <button
-                                type="button"
-                                disabled={disabledOpt}
-                                onClick={()=> { if(disabledOpt) return; setFormData(fd=> ({...fd, startTime:t, endTime: (fd.endTime && toMin(fd.endTime) > toMin(t)) ? fd.endTime : computeDefaultEnd(t)})); setStartOpen(false); }}
-                                className={`w-full text-left px-3 py-1.5 ${disabledOpt ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-50'}`}
-                              >
-                                {t}
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-
-                {/* End time picker */}
-                <div className="relative min-w-0">
-                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Koniec</label>
-                  <button type="button" disabled={isEditingPast} onClick={()=> { setEndOpen(o=>!o); setStartOpen(false); }} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
-                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
-                    {formData.endTime || 'Wybierz...'}
-                  </button>
-                  {endOpen && !isEditingPast && (
-                    <div className="absolute z-20 mt-2 w-44 max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
-                      <ul className="py-1 text-sm">
-                        {timeOptions
-                          .filter(t=> !formData.startTime || toMin(t) > toMin(formData.startTime))
-                          .map(t=> {
-                            const disabledOpt = isCreateToday && !formData.startTime && toMin(t) <= nowMinutes;
+                            // Less intense backgrounds; selected (already) highlighted in blue
+                            const baseBg = already ? 'bg-indigo-50' : (!workLoaded ? 'bg-white' : unavailable ? 'bg-red-50' : busy ? 'bg-amber-50' : 'bg-emerald-50');
+                            const hoverBg = already ? 'hover:bg-indigo-100' : (!workLoaded ? 'hover:bg-gray-50' : unavailable ? 'hover:bg-red-100' : busy ? 'hover:bg-amber-100' : 'hover:bg-emerald-100');
+                            const leftBorder = already ? 'border-l-4 border-indigo-300' : (!workLoaded ? 'border-l border-gray-200' : unavailable ? 'border-l-4 border-red-300' : busy ? 'border-l-4 border-amber-300' : 'border-l-4 border-emerald-300');
+                            const nameColor = already ? 'text-indigo-900' : (!workLoaded ? 'text-gray-700' : unavailable ? 'text-red-900' : busy ? 'text-amber-900' : 'text-emerald-900');
+                            const disabledClass = 'cursor-not-allowed';
                             return (
-                              <li key={t}>
+                              <li key={u.id}>
                                 <button
                                   type="button"
                                   disabled={disabledOpt}
-                                  onClick={()=> { if(disabledOpt) return; setFormData(fd=> ({...fd, endTime:t})); setEndOpen(false); }}
-                                  className={`w-full text-left px-3 py-1.5 ${disabledOpt ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-50'}`}
+                                  onClick={() => { if (disabledOpt) return; setFormData(fd=> fd.specialistIds.includes(u.id)? fd : {...fd, specialistIds:[...fd.specialistIds, u.id]}); setSpecOpen(false); setSpecSearch(''); }}
+                                  className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left ${baseBg} ${hoverBg} ${leftBorder} ${disabledOpt? disabledClass:''}`}
                                 >
-                                  {t}
+                                  <div className="min-w-0 flex items-center gap-2">
+                                    <div className="min-w-0">
+                                      <div className={`font-semibold truncate ${nameColor}`}>{`${u.surname} ${u.name}`}</div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {/* before load show neutral styling, no badge */}
+                                    {workLoaded && isAvailable && !already && (
+                                      <span className="text-[10px] text-emerald-900 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300">dostępny</span>
+                                    )}
+                                    {workLoaded && busy && !unavailable && (
+                                      <span className="text-[10px] text-amber-900 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300">zajęty</span>
+                                    )}
+                                    {workLoaded && unavailable && (
+                                      <span className="text-[10px] text-red-900 px-2 py-0.5 rounded-full bg-red-100 border border-red-300">niedostępny</span>
+                                    )}
+                                    {already && (
+                                      <span className="text-[10px] text-indigo-700 px-2 py-0.5 rounded-full bg-indigo-100 border border-indigo-300">wybrany</span>
+                                    )}
+                                  </div>
                                 </button>
                               </li>
                             );
                           })}
-                      </ul>
+                          {users.filter(u=>u.role==='employee').length===0 && (
+                            <li className="px-3 py-2 text-xs text-gray-400">Brak pracowników</li>
+                          )}
+                          {users.filter(u=>u.role==='employee').filter(u=> { const q = specSearch.trim().toLowerCase(); if(!q) return true; return (u.surname||'').toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q); }).length===0 && users.filter(u=>u.role==='employee').length>0 && (
+                            <li className="px-3 py-2 text-xs text-gray-400">Brak wyników</li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                  {/* Selected specialists list */}
+                  <div className="mt-2">
+                    <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-56 overflow-auto">
+                      {formData.specialistIds.length===0 && (
+                        <li className="p-3 text-sm text-gray-400">Brak wybranych specjalistów</li>
+                      )}
+                      {formData.specialistIds.map(id=> {
+                        const u = users.find(us=>us.id===id);
+                        if(!u) return null;
+                        const workLoaded = Object.prototype.hasOwnProperty.call(workhoursByEmployee, id);
+                        const unavailable = !!(formData.startTime && formData.endTime && workLoaded && !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime));
+                        const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
+                        let bg = 'bg-indigo-50 hover:bg-indigo-100';
+                        let text = 'text-gray-900';
+                        if (!workLoaded) { bg = 'bg-gray-50'; text = 'text-gray-500'; }
+                        else if (unavailable) { bg = 'bg-gray-100'; text = 'text-gray-400'; }
+                        else if (busy) { bg = 'bg-yellow-50 hover:bg-yellow-100'; text = 'text-yellow-800'; }
+                        else { bg = 'bg-emerald-50 hover:bg-emerald-100'; text = 'text-emerald-800'; }
+                        return (
+                          <li key={id} className={`flex items-center justify-between p-2 transition-colors ${bg}`}>
+                            <div className="min-w-0 pr-3">
+                              <div className={`text-sm font-semibold leading-5 truncate ${text}`}>{`${u.surname} ${u.name}`}</div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {/* before load show neutral styling, no badge */}
+                              {workLoaded && busy && !unavailable && <span className="text-[11px] text-yellow-800 px-2 py-0.5 rounded-full bg-yellow-50 border border-yellow-200">zajęty</span>}
+                              {workLoaded && unavailable && <span className="text-[11px] text-gray-500 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200">niedostępny</span>}
+                              <button type="button" onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed" aria-label="Usuń specjalistę" title="Usuń" disabled={isEditingPast}>×</button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                </div>
+
+                {/* Podopieczni (right) */}
+                <div className="relative">
+                  {/* Toggle buttons positioned above (slightly higher) */}
+                  <div className="absolute -top-4 left-28 md:left-32 inline-flex text-[11px] rounded-lg overflow-hidden border border-indigo-300 bg-indigo-50 shadow-sm">
+                    <button type="button" onClick={()=> setPatientAssignmentFilter('wszyscy')} className={`px-3 py-1.5 font-medium transition-colors ${patientAssignmentFilter==='wszyscy' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`} disabled={isEditingPast}>Wszyscy</button>
+                    <button type="button" onClick={()=> setPatientAssignmentFilter('przypisani')} className={`px-3 py-1.5 font-medium transition-colors border-l border-indigo-300 ${patientAssignmentFilter==='przypisani' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`} disabled={isEditingPast}>Przypisani</button>
+                  </div>
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Podopieczni</label>
+                  {patientAssignmentFilter==='przypisani' && (
+                    <div className="mb-2">
+                      {formData.specialistIds.length===0 ? (
+                        <div className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-amber-700"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l6.518 11.598c.75 1.335-.213 2.998-1.742 2.998H3.48c-1.53 0-2.492-1.663-1.743-2.998L8.257 3.1zM11 14a1 1 0 10-2 0 1 1 0 002 0zm-.25-6.75a.75.75 0 00-1.5 0v3.5a.75.75 0 001.5 0v-3.5z" clipRule="evenodd" /></svg><span>Wybierz specjalistę aby zobaczyć przypisanych</span></div>
+                      ) : (filteredPatients.length===0 ? (
+                        <div className="text-[10px] px-2 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-700">Brak wspólnych przypisanych pacjentów</div>
+                      ) : null)}
                     </div>
                   )}
+                  {/* Searchable patients input + dropdown (above selected list) */}
+                  <div className="relative" ref={patientsMenuRef}>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={patientsSearch}
+                        onChange={(e)=> { setPatientsSearch(e.target.value); if (!(isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0))) { setPatientsOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); } }}
+                        onFocus={()=> { if (!(isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0))) { setPatientsOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); } }}
+                        onKeyDown={(e)=> {
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setPatientsOpen(false);
+                            setPatientsSearch('');
+                            (e.currentTarget as HTMLInputElement).blur();
+                            return;
+                          }
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) return;
+                            const q = patientsSearch.trim().toLowerCase();
+                            const base = patientAssignmentFilter==='przypisani' ? filteredPatients : effectivePatients;
+                            const candidates = base.filter(p=> !q || (p.name||'').toLowerCase().includes(q) || (p.surname||'').toLowerCase().includes(q));
+                            for (const p of candidates) {
+                              const idStr = String(p.id);
+                              const already = formData.patientIds.includes(idStr);
+                              if (!already) {
+                                setFormData(fd=> fd.patientIds.includes(idStr) ? fd : {...fd, patientIds:[...fd.patientIds, idStr]});
+                                setPatientsOpen(false);
+                                setPatientsSearch('');
+                                (e.currentTarget as HTMLInputElement).blur();
+                                break;
+                              }
+                            }
+                          }
+                        }}
+                        placeholder="Dodaj podopiecznego..."
+                        className="w-full px-3 pr-8 py-2 border border-indigo-200 rounded-lg bg-white text-sm shadow-sm focus:outline-none focus:ring-0 disabled:opacity-60 disabled:cursor-not-allowed"
+                        disabled={isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { if (isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) return; setPatientsOpen(o=>{ const next = !o; if (!next) setPatientsSearch(''); return next; }); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); }}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                        aria-label="Rozwiń listę podopiecznych"
+                        disabled={isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)}
+                      >
+                        <svg className={`h-4 w-4 text-gray-500 transition-transform ${patientsOpen? 'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.38a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
+                      </button>
+                    </div>
+                    {patientsOpen && !(isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) && (
+                      <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto text-sm">
+                        <ul className="py-1">
+                          {effectivePatients.length>0 ? (
+                            (patientAssignmentFilter==='przypisani' ? filteredPatients : effectivePatients)
+                              .filter(p=> { const q = patientsSearch.trim().toLowerCase(); if(!q) return true; return (p.name||'').toLowerCase().includes(q) || (p.surname||'').toLowerCase().includes(q); })
+                              .map(p=> {
+                                const already = formData.patientIds.includes(String(p.id));
+                                const firstName = (p as Patient).name;
+                                const lastName = (p as Patient).surname;
+                                return (
+                                  <li key={p.id}>
+                                    <button type="button" disabled={already} onClick={()=> { if (already) return; setFormData(fd=> fd.patientIds.includes(String(p.id)) ? fd : {...fd, patientIds:[...fd.patientIds, String(p.id)]}); setPatientsOpen(false); setPatientsSearch(''); }} className={`w-full text-left px-3 py-2 hover:bg-indigo-50 ${already? 'opacity-40 cursor-not-allowed':''}`}>
+                                      {`${lastName} ${firstName}`}{already ? ' (dodany)' : ''}
+                                    </button>
+                                  </li>
+                                );
+                              })
+                          ) : (
+                            <li className="px-3 py-2 text-xs text-gray-400">Brak listy pacjentów z backendu</li>
+                          )}
+                          {effectivePatients.length>0 && ((patientAssignmentFilter==='przypisani' ? filteredPatients : effectivePatients).filter(p=> { const q = patientsSearch.trim().toLowerCase(); if(!q) return true; return (p.name||'').toLowerCase().includes(q) || (p.surname||'').toLowerCase().includes(q); }).length===0) && (
+                            <li className="px-3 py-2 text-xs text-gray-400">{patientAssignmentFilter==='przypisani'? (formData.specialistIds.length? 'Brak przypisanych':'Najpierw wybierz specjalistę') : 'Brak wyników'}</li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Selected patients list below input */}
+                  <div className="mt-2">
+                    <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg bg-white max-h-56 overflow-auto">
+                      {formData.patientIds.length===0 && (<li className="p-3 text-sm text-gray-400">Brak</li>)}
+                      {formData.patientIds.map(pid=>{
+                        const p = effectivePatients.find(pp=> String(pp.id) === String(pid));
+                        let fullName: string;
+                        if (p) {
+                          fullName = `${p.surname} ${p.name}`;
+                        } else if (editingMeeting?.patientNamesList && editingMeeting.patientIds && editingMeeting.patientIds.length) {
+                          const idx = editingMeeting.patientIds.findIndex(x => String(x) === String(pid));
+                          fullName = idx >= 0 ? (editingMeeting.patientNamesList[idx] || String(pid)) : String(pid);
+                        } else {
+                          fullName = String(pid);
+                        }
+                        return (
+                          <li key={pid} className="flex items-center justify-between p-2 transition-colors bg-emerald-50 hover:bg-emerald-100">
+                            <div className="min-w-0 pr-3"><div className="text-sm font-semibold leading-5 text-gray-900 truncate">{fullName}</div></div>
+                            <button type="button" onClick={()=> setFormData(fd=>({...fd, patientIds: fd.patientIds.filter(x=>x!==pid)}))} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed" aria-label="Usuń podopiecznego" title="Usuń" disabled={isEditingPast}>×</button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
                 </div>
               </div>
 
-              {/* Live validation hints for time and collisions */}
-              {!restrictPastEdit && (
-                <div className="mt-1 space-y-1">
-                  {startEndInvalid && (
-                    <div className="text-xs text-red-600 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>Koniec musi być późniejszy niż start.</span>
-                    </div>
-                  )}
-                  {!startEndInvalid && isCreatePastSelection && (
-                    <div className="text-xs text-red-600 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>Data i godzina rozpoczęcia są w przeszłości. Wybierz termin w przyszłości.</span>
-                    </div>
-                  )}
-                  {!startEndInvalid && !isCreatePastSelection && unavailableSpecialists.length>0 && (
-                    <div className="text-xs text-red-700 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>{unavailableSpecialists.length === 1 ? 'Wybrany specjalista jest niedostępny w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest niedostępny w tym czasie.'}</span>
-                    </div>
-                  )}
-                  {!startEndInvalid && !isCreatePastSelection && unavailableSpecialists.length===0 && conflictedSpecialists.length>0 && (
-                    <div className="text-xs text-amber-700 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>{conflictedSpecialists.length === 1 ? 'Wybrany specjalista jest zajęty w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest zajęty w tym czasie.'}</span>
-                    </div>
-                  )}
-                  {!startEndInvalid && !isCreatePastSelection && hasRoomConflict && (
-                    <div className="text-xs text-amber-700 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>Sala jest zajęta w tym przedziale czasu.</span>
-                    </div>
-                  )}
+              {isEditingPast && (
+                <div>
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Status</label>
+                  <div className="bg-white border border-gray-300 rounded-lg p-3 space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name="status" value="present" checked={effectiveStatus==='present'} onChange={()=> setFormData({...formData, status: 'present'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
+                      <span className="text-sm text-gray-800">Podopieczny obecny</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name="status" value="absent" checked={effectiveStatus==='absent'} onChange={()=> setFormData({...formData, status: 'absent'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
+                      <span className="text-sm text-gray-800">Podopieczny nieobecny</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name="status" value="cancelled" checked={effectiveStatus==='cancelled'} onChange={()=> setFormData({...formData, status: 'cancelled'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
+                      <span className="text-sm text-gray-800">Odwołano</span>
+                    </label>
+                  </div>
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-6">
-                {isEditingPast && (
-                  <div>
-                    <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Status</label>
-                    <div className="bg-white border border-gray-300 rounded-lg p-3 space-y-2">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="status" value="present" checked={effectiveStatus==='present'} onChange={()=> setFormData({...formData, status: 'present'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
-                        <span className="text-sm text-gray-800">Podopieczny obecny</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="status" value="absent" checked={effectiveStatus==='absent'} onChange={()=> setFormData({...formData, status: 'absent'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
-                        <span className="text-sm text-gray-800">Podopieczny nieobecny</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="status" value="cancelled" checked={effectiveStatus==='cancelled'} onChange={()=> setFormData({...formData, status: 'cancelled'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
-                        <span className="text-sm text-gray-800">Odwołano</span>
-                      </label>
-                    </div>
-                  </div>
-                )}
-                <div className={!isEditingPast ? 'col-span-2' : ''}>
-                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Gość (opcjonalnie)</label>
-                   <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast} />
-                 </div>
-               </div>
-               <div>
-                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Notatki</label>
-                 <textarea
-                   value={formData.notes}
-                   onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                   onInput={e => {
-                     const ta = e.currentTarget;
-                     ta.style.height = 'auto';
-                     ta.style.height = ta.scrollHeight + 'px';
-                   }}
-                   rows={1}
-                   placeholder="Cel sesji, materiały, obserwacje..."
-                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 resize-y disabled:opacity-60 disabled:cursor-not-allowed"
-                   disabled={isEditingPast && !canEditThis}
-                   style={{overflow: 'hidden', minHeight: '40px'}}
-                 />
-               </div>
-               <div className="bg-gray-50 rounded-lg p-4 text-xs text-gray-500 leading-relaxed">
-                 Sesja musi zawierać przynajmniej jednego specjalistę. Podopieczny jest opcjonalny. Konflikty czasowe są sprawdzane automatycznie.
-               </div>
-             </div>
+              {/* Informational note removed as requested */}
+            </div>
+          </div>
+
+          {/* Guest + statuses row and enlarged notes */}
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+              {/* Guest field half width */}
+              <div className={!isEditingPast ? '' : ''}>
+                <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Gość (opcjonalnie)</label>
+                <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast} />
+              </div>
+              {/* Moved statuses preview (unchanged logic) */}
+              <div>
+                <div className="text-[11px] font-semibold text-gray-600 uppercase mb-1">Statusy wydarzeń (test)</div>
+                <div className="text-[12px] rounded-md border border-gray-200 bg-white p-2 min-h-[36px] max-h-40 overflow-auto">
+                  {eventStatusesLoading && <span className="text-gray-500">Ładowanie…</span>}
+                  {!eventStatusesLoading && eventStatusesError && <span className="text-red-600">{eventStatusesError}</span>}
+                  {!eventStatusesLoading && !eventStatusesError && (
+                    eventStatuses.length ? (
+                      <div className="flex flex-wrap gap-1">
+                        {eventStatuses.map(s => {
+                          const isActive = activeStatusId != null && s.id === activeStatusId;
+                          const base = isActive
+                            ? 'bg-indigo-600 border-indigo-600 text-white'
+                            : 'bg-gray-100 border-gray-200 text-gray-800';
+                          return (
+                            <span
+                              key={s.id}
+                              className={`px-2 py-0.5 text-[11px] rounded-full border ${base}`}
+                              title={isActive ? 'Aktualny status' : ''}
+                            >
+                              {s.name}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <span className="text-gray-500">Brak danych</span>
+                    )
+                  )}
+                </div>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Notatki</label>
+              <textarea
+                value={formData.notes}
+                onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                placeholder="Cel sesji, materiały, obserwacje..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 disabled:opacity-60 disabled:cursor-not-allowed resize-none"
+                disabled={isEditingPast && !canEditThis}
+                style={{minHeight: '120px', maxHeight:'120px', overflow: 'auto'}}
+              />
+            </div>
           </div>
           <div className="flex justify-between items-center gap-3 pt-2">
             {/* Delete button on the left when allowed */}
