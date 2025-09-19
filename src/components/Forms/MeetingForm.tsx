@@ -497,7 +497,14 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   };
 
   // Time pickers state and options
-  const timeOptions = React.useMemo(()=> generateTimeSlots(7, 20), []);
+  // Time range adjusted to business hours 08:00 - 17:00
+  const timeOptions = React.useMemo(()=> {
+    // base half-hour slots 08:00..16:30 then explicitly add 17:00 as selectable end
+    const base = generateTimeSlots(8, 17); // stops at 16:30
+    // ensure 17:00 present (avoid duplicate if implementation changes later)
+    if (!base.includes('17:00')) base.push('17:00');
+    return base;
+  }, []);
   const [startOpen, setStartOpen] = useState(false);
   const [endOpen, setEndOpen] = useState(false);
   // NEW: custom dropdown states for specialists and patients
@@ -604,6 +611,41 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               <h2 id="meetingFormTitle" className="text-lg font-semibold text-gray-900">{editingMeeting ? 'Edytuj spotkanie' : 'Nowe spotkanie'}</h2>
             </div>
           </div>
+          {/* Moved live conflict & validation hints to top */}
+          {!restrictPastEdit && (
+            <div className="space-y-1" aria-live="polite">
+              {startEndInvalid && (
+                <div className="text-xs text-red-600 flex items-center gap-1">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Koniec musi być późniejszy niż start.</span>
+                </div>
+              )}
+              {!startEndInvalid && isCreatePastSelection && (
+                <div className="text-xs text-red-600 flex items-center gap-1">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Data i godzina rozpoczęcia są w przeszłości. Wybierz termin w przyszłości.</span>
+                </div>
+              )}
+              {!startEndInvalid && !isCreatePastSelection && unavailableSpecialists.length>0 && (
+                <div className="text-xs text-red-700 flex items-center gap-1">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>{unavailableSpecialists.length === 1 ? 'Wybrany specjalista jest niedostępny w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest niedostępny w tym czasie.'}</span>
+                </div>
+              )}
+              {!startEndInvalid && !isCreatePastSelection && unavailableSpecialists.length===0 && conflictedSpecialists.length>0 && (
+                <div className="text-xs text-amber-700 flex items-center gap-1">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>{conflictedSpecialists.length === 1 ? 'Wybrany specjalista jest zajęty w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest zajęty w tym czasie.'}</span>
+                </div>
+              )}
+              {!startEndInvalid && !isCreatePastSelection && hasRoomConflict && (
+                <div className="text-xs text-amber-700 flex items-center gap-1">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Sala jest zajęta w tym przedziale czasu.</span>
+                </div>
+              )}
+            </div>
+          )}
           {/* Meeting name - full width below header */}
           <div>
             <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Nazwa spotkania</label>
@@ -652,18 +694,25 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                         {['Pn','Wt','Śr','Cz','Pt','So','Nd'].map(d=> <div key={d} className="text-center py-1">{d}</div>)}
                       </div>
                       <div className="grid grid-cols-7 gap-1">
-                        {calendarDays.map(({d,inMonth},i)=>{
+                        {calendarDays.map(({ d, inMonth }, i) => {
                           const ymd = toYMD(d);
                           const isSelected = ymd === effectiveDate;
                           const todayYMD = toYMD(new Date());
                           const isPastDay = ymd < todayYMD;
+                          const isToday = ymd === todayYMD;
                           return (
                             <button
                               key={i}
                               type="button"
-                              onClick={()=> { if (!editingMeeting && isPastDay) { setShowPastSubmitInfo(true); setDateOpen(false); return; } setLocalDate(ymd); setDateOpen(false); }}
-                              aria-disabled={!editingMeeting && isPastDay}
-                              className={`text-sm py-1.5 rounded text-center ${inMonth? '':'text-gray-400'} ${isSelected? 'bg-indigo-600 text-white':'hover:bg-gray-100'} ${(!editingMeeting && isPastDay && !isSelected) ? 'text-gray-300 cursor-not-allowed' : ''}`}
+                              disabled={isEditingPast}
+                              onClick={() => { if (isEditingPast) return; setLocalDate(ymd); setDateOpen(false); }}
+                              className={[
+                                'h-8 w-8 rounded-md text-[12px] flex items-center justify-center transition-colors',
+                                !inMonth ? 'text-gray-300' : 'text-gray-700',
+                                isPastDay && !isToday ? 'opacity-50' : '',
+                                isSelected ? 'bg-indigo-600 text-white shadow ring-1 ring-indigo-500' : 'hover:bg-indigo-100',
+                                isToday && !isSelected ? 'ring-1 ring-indigo-300 font-medium' : ''
+                              ].join(' ')}
                             >
                               {d.getDate()}
                             </button>
@@ -674,32 +723,39 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                   )}
                 </div>
                 {/* Start and End side-by-side */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4 mt-4">
                   {/* Start time picker */}
                   <div className="relative min-w-0">
                     <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Start</label>
-                    <button type="button" disabled={isEditingPast} onClick={()=> { setStartOpen(o=>!o); setEndOpen(false); }} className="relative w-full pl-10 pr-2 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                    <button
+                      type="button"
+                      disabled={isEditingPast}
+                      onClick={()=> { setStartOpen(o=>!o); setEndOpen(false); }}
+                      className="relative w-full pl-10 pr-2 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate"
+                    >
                       <span className="absolute left-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
                       {formData.startTime || 'Wybierz...'}
                     </button>
                     {startOpen && !isEditingPast && (
-                      <div className="absolute z-20 mt-2 w-44 max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
+                      <div className="absolute z-20 mt-2 w-full max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
                         <ul className="py-1 text-sm">
-                          {timeOptions.map(t=> {
-                            const disabledOpt = isCreateToday && toMin(t) <= nowMinutes;
-                            return (
-                              <li key={t}>
-                                <button
-                                  type="button"
-                                  disabled={disabledOpt}
-                                  onClick={()=> { if(disabledOpt) return; setFormData(fd=> ({...fd, startTime:t, endTime: (fd.endTime && toMin(fd.endTime) > toMin(t)) ? fd.endTime : computeDefaultEnd(t)})); setStartOpen(false); }}
-                                  className={`w-full text-left px-3 py-1.5 ${disabledOpt ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-50'}`}
-                                >
-                                  {t}
-                                </button>
-                              </li>
-                            );
-                          })}
+                          {timeOptions
+                            .filter(t=> !formData.endTime || toMin(t) < toMin(formData.endTime))
+                            .map(t=> {
+                              const disabledOpt = isCreateToday && toMin(t) <= nowMinutes; // disable past times for today
+                              return (
+                                <li key={t}>
+                                  <button
+                                    type="button"
+                                    disabled={disabledOpt}
+                                    onClick={()=> { if(disabledOpt) return; setFormData(fd=> ({...fd, startTime:t, endTime: (!fd.endTime || toMin(fd.endTime) <= toMin(t)) ? computeDefaultEnd(t) : fd.endTime })); setStartOpen(false); }}
+                                    className={`w-full text-left pl-10 pr-3 py-1.5 ${disabledOpt ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-50'}`}
+                                  >
+                                    {t}
+                                  </button>
+                                </li>
+                              );
+                            })}
                         </ul>
                       </div>
                     )}
@@ -712,7 +768,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                       {formData.endTime || 'Wybierz...'}
                     </button>
                     {endOpen && !isEditingPast && (
-                      <div className="absolute z-20 mt-2 w-44 max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
+                      <div className="absolute z-20 mt-2 w-full max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
                         <ul className="py-1 text-sm">
                           {timeOptions
                             .filter(t=> !formData.startTime || toMin(t) > toMin(formData.startTime))
@@ -724,7 +780,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                                     type="button"
                                     disabled={disabledOpt}
                                     onClick={()=> { if(disabledOpt) return; setFormData(fd=> ({...fd, endTime:t})); setEndOpen(false); }}
-                                    className={`w-full text-left px-3 py-1.5 ${disabledOpt ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-50'}`}
+                                    className={`w-full text-left pl-10 pr-3 py-1.5 ${disabledOpt ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-50'}`}
                                   >
                                     {t}
                                   </button>
@@ -738,41 +794,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 </div>
               </div>
 
-              {/* Live validation hints for time and collisions */}
-              {!restrictPastEdit && (
-                <div className="mt-1 space-y-1">
-                  {startEndInvalid && (
-                    <div className="text-xs text-red-600 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>Koniec musi być późniejszy niż start.</span>
-                    </div>
-                  )}
-                  {!startEndInvalid && isCreatePastSelection && (
-                    <div className="text-xs text-red-600 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>Data i godzina rozpoczęcia są w przeszłości. Wybierz termin w przyszłości.</span>
-                    </div>
-                  )}
-                  {!startEndInvalid && !isCreatePastSelection && unavailableSpecialists.length>0 && (
-                    <div className="text-xs text-red-700 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>{unavailableSpecialists.length === 1 ? 'Wybrany specjalista jest niedostępny w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest niedostępny w tym czasie.'}</span>
-                    </div>
-                  )}
-                  {!startEndInvalid && !isCreatePastSelection && unavailableSpecialists.length===0 && conflictedSpecialists.length>0 && (
-                    <div className="text-xs text-amber-700 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>{conflictedSpecialists.length === 1 ? 'Wybrany specjalista jest zajęty w tym czasie.' : 'Co najmniej jeden wybrany specjalista jest zajęty w tym czasie.'}</span>
-                    </div>
-                  )}
-                  {!startEndInvalid && !isCreatePastSelection && hasRoomConflict && (
-                    <div className="text-xs text-amber-700 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>Sala jest zajęta w tym przedziale czasu.</span>
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* (Validation hints moved to top) */}
 
               {/* Sala selector remains under date/time */}
               <div>
@@ -1120,7 +1142,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               )}
               {/* Informational note removed as requested */}
             </div>
-          </div>
+          </div> {/* end grid of left + right columns */}
 
           {/* Guest + statuses row and enlarged notes */}
           <div className="space-y-6">
