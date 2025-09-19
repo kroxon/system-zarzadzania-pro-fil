@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User } from '../../types';
 import { X, Pencil, Trash2, ChevronDown } from 'lucide-react';
-import { fetchEmployees, fetchEmployee, updateEmployee, deleteEmployee } from '../../utils/api/employees';
+import { fetchEmployees, fetchEmployee, updateEmployee, deleteEmployee, assignPatientsToEmployee, unassignPatientsFromEmployee } from '../../utils/api/employees';
 import { mapBackendRolesToFrontend } from '../../utils/roleMapper';
-import type { Employee as ApiEmployee, Occupation } from '../../types';
+import type { Employee as ApiEmployee, Occupation, Patient } from '../../types';
+import { fetchPatients } from '../../utils/api/patients';
 import { getAllOccupations } from '../../utils/api/occupations';
 
 interface EmployeesManageProps {
@@ -29,6 +30,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
       role: (mapBackendRolesToFrontend(e.roles)[0]) || 'employee',
       specialization: e.occupationName,
       notes: e.info || undefined,
+      assignedPatientsIds: e.assignedPatientsIds || [],
     }))
   );
 
@@ -57,6 +59,28 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
   const [editFetchError, setEditFetchError] = useState<string | null>(null);
   type EditDraft = { name: string; surname: string; email: string; occupationId: number; occupationName: string; info: string };
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  // Patients data for assignment UI
+  const [allPatients, setAllPatients] = useState<Patient[]>([]);
+  const [patientsLoading, setPatientsLoading] = useState(false);
+  const [patientsError, setPatientsError] = useState<string | null>(null);
+  // Loading/error for assignment persistence when saving (not per-click now)
+  const [assignActionLoading, setAssignActionLoading] = useState<boolean>(false);
+  const [patientSearch, setPatientSearch] = useState<string>('');
+  const [onlyActivePatients, setOnlyActivePatients] = useState<boolean>(true); // default aktywni
+  const [onlyAssignedPatients, setOnlyAssignedPatients] = useState<boolean>(false); // nowy filtr 'Przypisani'
+  // Draft list of assigned patients – changes persisted only on final save
+  const [draftAssignedPatientIds, setDraftAssignedPatientIds] = useState<number[]>([]);
+  const normalized = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase();
+  const filteredPatients = allPatients
+    .filter(p => !onlyActivePatients || p.isActive)
+    .filter(p => !onlyAssignedPatients || (draftAssignedPatientIds.includes(p.id)))
+    .filter(p => {
+      if (!patientSearch.trim()) return true;
+      const q = normalized(patientSearch.trim());
+      return normalized(p.name).includes(q) || normalized(p.surname).includes(q) || normalized(`${p.surname} ${p.name}`).includes(q) || normalized(`${p.name} ${p.surname}`).includes(q);
+    })
+    .sort((a,b) => a.surname.localeCompare(b.surname,'pl',{sensitivity:'base'}));
+  // (Relacja column prep) will extend filtering later (tylko aktywni)
 
   // Sync with incoming users (demo/local)
   useEffect(() => {
@@ -208,6 +232,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
       try {
         const fresh = await fetchEmployee(idNum, token);
         setEditApiData(fresh);
+        setDraftAssignedPatientIds(fresh.assignedPatientsIds ? [...fresh.assignedPatientsIds] : []);
         setEditDraft({
           name: fresh.name,
           surname: fresh.surname,
@@ -216,6 +241,17 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
           occupationName: fresh.occupationName,
           info: fresh.info ?? ''
         });
+        // Load patients list (only once per opening)
+        setPatientsLoading(true);
+        setPatientsError(null);
+        try {
+          const pts = await fetchPatients(token);
+          setAllPatients(pts);
+        } catch {
+          setPatientsError('Nie udało się pobrać listy pacjentów');
+        } finally {
+          setPatientsLoading(false);
+        }
       } catch (err) {
         console.warn('Nie udało się pobrać szczegółów pracownika');
         setEditFetchError('Nie udało się pobrać danych pracownika');
@@ -234,14 +270,14 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
     if (!editApiData || !editDraft) return;
     const token = getAuthToken();
     if (!token) return;
-    // Simple validation
     if (!editDraft.name.trim() || !editDraft.surname.trim() || !editDraft.email.trim() || !Number.isFinite(editDraft.occupationId)) {
       setSaveBackendError('Uzupełnij wymagane pola');
       return;
     }
-    setSaveBackendError(null);
+  setSaveBackendError(null);
     setIsSavingBackend(true);
     try {
+      // 1. Update core employee data
       await updateEmployee(editApiData.id, {
         name: editDraft.name.trim(),
         surname: editDraft.surname.trim(),
@@ -249,15 +285,33 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
         occupationId: Number(editDraft.occupationId),
         info: editDraft.info?.trim() ? editDraft.info.trim() : null,
       }, token);
-      // Refresh lists (local + global) and close modal
+
+      // 2. Compute assignment diffs
+      const original = new Set(editApiData.assignedPatientsIds || []);
+      const current = new Set(draftAssignedPatientIds);
+      const toAssign: number[] = [];
+      const toUnassign: number[] = [];
+      current.forEach(id => { if (!original.has(id)) toAssign.push(id); });
+      original.forEach(id => { if (!current.has(id)) toUnassign.push(id); });
+
+      // 3. Apply diffs (sequential to keep things simple)
+      if (toAssign.length > 0) {
+        await assignPatientsToEmployee(editApiData.id, { patientIds: toAssign }, token, false);
+      }
+      if (toUnassign.length > 0) {
+        await unassignPatientsFromEmployee(editApiData.id, { patientIds: toUnassign }, token, false);
+      }
+
+      // 4. Refresh lists and close
       await refreshBackendUsers();
       if (onBackendRefresh) await onBackendRefresh();
       setShowForm(false);
       resetEditApiState();
     } catch (e) {
-      setSaveBackendError('Nie udało się zapisać zmian');
+      setSaveBackendError('Nie udało się zapisać zmian (sprawdź sieć)');
     } finally {
       setIsSavingBackend(false);
+      setAssignActionLoading(false);
     }
   };
 
@@ -360,9 +414,6 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div className="text-sm text-gray-500">Liczba pracowników: {demoUsersToShow.length + backendUsersToShow.length}</div>
-      </div>
 
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200">
@@ -373,6 +424,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rola</th>
               {/* Zatrudnienie column removed */}
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notatki</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Podopieczni</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
@@ -386,6 +438,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                 <td className="px-4 py-3 text-xs text-gray-600">
                   <div className="max-w-xs truncate" title={u.notes}>{u.notes || '—'}</div>
                 </td>
+                <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{Array.isArray(u.assignedPatientsIds) ? u.assignedPatientsIds.length : '—'}</td>
                 <td className="px-4 py-3 text-sm text-right space-x-2">
                   <button onClick={() => openEditModal(u)} className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-xs border border-blue-200">
                     <Pencil className="w-3 h-3 mr-1"/>Edytuj
@@ -397,18 +450,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
               </tr>
             ))}
 
-            {backendUsersSorted.length > 0 && (
-              <tr>
-                <td colSpan={5} className="px-4">
-                  <div className="relative mt-1 mb-2">
-                    <div className="border-t-2 border-red-500"></div>
-                    <div className="absolute inset-x-0 -top-3 text-center">
-                      <span className="inline-block bg-white px-2 text-xs font-medium text-red-600">backend data</span>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            )}
+            {/* separator removed */}
 
             {backendUsersSorted.map(u => (
               <tr key={u.id} className={`hover:bg-gray-50 ${isInactive(u) ? 'opacity-60 italic' : ''}`}>
@@ -419,6 +461,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                 <td className="px-4 py-3 text-xs text-gray-600">
                   <div className="max-w-xs truncate" title={u.notes}>{u.notes || '—'}</div>
                 </td>
+                <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{Array.isArray(u.assignedPatientsIds) ? u.assignedPatientsIds.length : '—'}</td>
                 <td className="px-4 py-3 text-sm text-right space-x-2">
                   <button onClick={() => openEditModal(u)} className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-xs border border-blue-200">
                     <Pencil className="w-3 h-3 mr-1"/>Edytuj
@@ -441,7 +484,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
 
       {showForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md border border-blue-100">
+          <div className={`bg-white rounded-xl shadow-xl w-full ${modalMode==='edit' && editApiData ? 'max-w-4xl' : 'max-w-md'} border border-blue-100 flex flex-col max-h-[88vh]`}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-blue-100">
               <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                 {modalMode === 'edit' && (
@@ -455,122 +498,192 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                 <X className="h-5 w-5 text-gray-500" />
               </button>
             </div>
-            {/* If we have backend API data and are in edit mode, render API-aligned edit form */}
+            {/* If we have backend API data and are in edit mode, render redesigned API-aligned edit form */}
             {modalMode === 'edit' && (isEditLoading || editApiData || editFetchError) ? (
-              <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-                {isEditLoading && (
-                  <div className="text-sm text-gray-500">Ładowanie danych pracownika…</div>
-                )}
-                {editFetchError && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{editFetchError}</div>
-                )}
+              <form onSubmit={handleSubmit} className="flex-1 flex flex-col">
+                {isEditLoading && <div className="p-6 text-sm text-gray-500">Ładowanie danych pracownika…</div>}
+                {editFetchError && <div className="m-6 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{editFetchError}</div>}
                 {editApiData && editDraft && (
                   <>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Imię<span className="text-red-500">*</span></label>
-                        <input
-                          type="text"
-                          value={editDraft.name}
-                          onChange={e => setEditDraft({ ...(editDraft ?? editApiData), name: e.target.value })}
-                          required
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Nazwisko<span className="text-red-500">*</span></label>
-                        <input
-                          type="text"
-                          value={editDraft.surname}
-                          onChange={e => setEditDraft({ ...(editDraft ?? editApiData), surname: e.target.value })}
-                          required
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Email<span className="text-red-500">*</span></label>
-                      <input
-                        type="email"
-                        value={editDraft.email}
-                        onChange={e => setEditDraft({ ...(editDraft ?? editApiData), email: e.target.value })}
-                        required
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-                      />
-                    </div>
-                    <div className="grid grid-cols-1 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Specjalizacja<span className="text-red-500">*</span></label>
-                        <div className="relative">
-                          <button
-                            ref={occBtnBackendRef}
-                            type="button"
-                            disabled={occLoading}
-                            onClick={() => !occLoading && setShowOccMenuBackend(v => !v)}
-                            className={`w-full px-3 py-2 border rounded-lg text-left flex items-center justify-between ${occLoading ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'} border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400`}
-                          >
-                            <span className={`text-sm ${editDraft.occupationId ? 'text-gray-900' : 'text-gray-500'}`}>
-                              {editDraft.occupationName || 'Wybierz profesję...'}
-                            </span>
-                            <ChevronDown className="w-4 h-4 text-gray-500" />
-                          </button>
-                          {showOccMenuBackend && (
-                            <div ref={occMenuBackendRef} className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg">
-                              <div className="max-h-60 overflow-auto py-1">
-                                {occupations.map(o => (
-                                  <button
-                                    key={o.id}
-                                    type="button"
-                                    onClick={() => { setEditDraft({ ...(editDraft ?? editApiData), occupationId: o.id, occupationName: o.name }); setShowOccMenuBackend(false); }}
-                                    className={`w-full text-left px-3 py-2 text-sm ${editDraft.occupationId === o.id ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-50'}`}
-                                  >
-                                    {o.name}
-                                  </button>
+                    <div className="flex-1 overflow-y-auto px-6 py-5">
+                      <div className="grid gap-6 md:grid-cols-[1fr_minmax(0,_0.75rem)_1fr] items-start">
+                        {/* Left column: core data */}
+                        <div className="space-y-5">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1 uppercase tracking-wide">Imię<span className="text-red-500">*</span></label>
+                              <input type="text" value={editDraft.name} onChange={e => setEditDraft({ ...(editDraft ?? editApiData), name: e.target.value })} required className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400" />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1 uppercase tracking-wide">Nazwisko<span className="text-red-500">*</span></label>
+                              <input type="text" value={editDraft.surname} onChange={e => setEditDraft({ ...(editDraft ?? editApiData), surname: e.target.value })} required className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400" />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1 uppercase tracking-wide">Email<span className="text-red-500">*</span></label>
+                            <input type="email" value={editDraft.email} onChange={e => setEditDraft({ ...(editDraft ?? editApiData), email: e.target.value })} required className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1 uppercase tracking-wide">Specjalizacja<span className="text-red-500">*</span></label>
+                            <div className="relative">
+                              <button ref={occBtnBackendRef} type="button" disabled={occLoading} onClick={() => !occLoading && setShowOccMenuBackend(v => !v)} className={`w-full px-3 py-2 border rounded-lg text-left flex items-center justify-between ${occLoading ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'} border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400`}>
+                                <span className={`text-sm ${editDraft.occupationId ? 'text-gray-900' : 'text-gray-500'}`}>{editDraft.occupationName || 'Wybierz profesję...'}</span>
+                                <ChevronDown className="w-4 h-4 text-gray-500" />
+                              </button>
+                              {showOccMenuBackend && (
+                                <div ref={occMenuBackendRef} className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg">
+                                  <div className="max-h-60 overflow-auto py-1">
+                                    {occupations.map(o => (
+                                      <button key={o.id} type="button" onClick={() => { setEditDraft({ ...(editDraft ?? editApiData), occupationId: o.id, occupationName: o.name }); setShowOccMenuBackend(false); }} className={`w-full text-left px-3 py-2 text-sm ${editDraft.occupationId === o.id ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-50'}`}>{o.name}</button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            {occError && <div className="text-xs text-red-600 mt-1">{occError}</div>}
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1 uppercase tracking-wide">Notatki</label>
+                            <textarea value={editDraft.info} onChange={e => setEditDraft({ ...(editDraft ?? editApiData), info: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400 resize-none h-28" placeholder="Uwagi kadrowe..." />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1 uppercase tracking-wide">Rola</label>
+                            {(() => { const selected = backendPrimaryRoleFromArray(editApiData.roles); return (
+                              <div className="flex flex-wrap items-center gap-5 text-sm text-gray-700">
+                                {(['admin','contact','employee'] as const).map(r => (
+                                  <label key={r} className="inline-flex items-center gap-2">
+                                    <input type="radio" className="accent-blue-600" name="role_backend" value={r} checked={selected===r} readOnly disabled />
+                                    <span>{r === 'contact' ? 'pierwszy kontakt' : r === 'employee' ? 'pracownik' : 'admin'}</span>
+                                  </label>
                                 ))}
                               </div>
-                            </div>
-                          )}
+                            ); })()}
+                            <div className="mt-1 text-xs text-gray-500">Zmiana roli — dostępne wkrótce</div>
+                          </div>
                         </div>
-                        {occError && <div className="text-xs text-red-600 mt-1">{occError}</div>}
+                        {/* Vertical separator (hidden on small screens) */}
+                        <div className="hidden md:block h-full relative select-none" aria-hidden="true">
+                          <div className="absolute top-4 bottom-12 left-1/2 -translate-x-1/2 w-px bg-gradient-to-b from-transparent via-gray-200 to-transparent" />
+                        </div>
+                        {/* Right column: assignments */}
+                        <div className="space-y-4">
+                          <div className="rounded-lg p-4 h-full flex flex-col">
+                            <div className="mb-3 flex items-center justify-between">
+                              <h3 className="text-xs font-semibold tracking-wide text-gray-800 uppercase">Przypisani pacjenci</h3>
+                            </div>
+                            {patientsLoading && <div className="text-xs text-gray-500">Ładowanie pacjentów…</div>}
+                            {patientsError && <div className="text-xs text-red-600 mb-2">{patientsError}</div>}
+                            {!patientsLoading && !patientsError && (
+                              <>
+                                <div
+                                  className={`mb-3 flex flex-wrap gap-2 ${draftAssignedPatientIds.length > 10 ? 'overflow-y-auto pr-1' : ''}`}
+                                  style={draftAssignedPatientIds.length > 10 ? { maxHeight: '220px' } : undefined}
+                                >
+                                  {draftAssignedPatientIds.length === 0 && <span className="text-[11px] text-gray-500">Brak przypisanych</span>}
+                                  {(() => {
+                                    // Build enriched list with patient objects for sorting & styling
+                                    const enriched = draftAssignedPatientIds.map(pid => {
+                                      const patient = allPatients.find(ap => ap.id === pid);
+                                      return { pid, patient, label: patient ? `${patient.surname} ${patient.name}` : `ID ${pid}` };
+                                    }).sort((a,b) => {
+                                      const aActive = !!a.patient?.isActive;
+                                      const bActive = !!b.patient?.isActive;
+                                      if (aActive !== bActive) return aActive ? -1 : 1; // aktywni najpierw
+                                      return a.label.localeCompare(b.label, 'pl', { sensitivity: 'base' });
+                                    });
+                                    return enriched.map(({ pid, patient, label }) => {
+                                      const active = !!patient?.isActive;
+                                      const cls = active
+                                        ? 'bg-green-50 text-green-700 border-green-200'
+                                        : 'bg-gray-100 text-gray-600 border-gray-300';
+                                      return (
+                                        <span
+                                          key={pid}
+                                          className={`inline-flex items-center gap-2 pl-3 pr-3 py-1.5 rounded-md text-[12px] font-medium border shadow-sm ${cls}`}
+                                          title={active ? 'Aktywny' : 'Nieaktywny'}
+                                        >
+                                          {label}
+                                        </span>
+                                      );
+                                    });
+                                  })()}
+                                </div>
+                                <div className="space-y-2 flex-1 flex flex-col">
+                                  <div className="flex gap-2 items-center">
+                                    <input type="text" value={patientSearch} onChange={e => setPatientSearch(e.target.value)} placeholder="Szukaj pacjenta (imię / nazwisko)" className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400 bg-white" />
+                                    {patientSearch && (
+                                      <button type="button" onClick={() => setPatientSearch('')} className="text-[10px] px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700" aria-label="Wyczyść wyszukiwanie">Wyczyść</button>
+                                    )}
+                                    <label className="inline-flex items-center gap-1 text-[11px] text-gray-600 ml-2 whitespace-nowrap">
+                                      <input type="checkbox" className="accent-blue-600 h-3 w-3" checked={onlyActivePatients} onChange={e => setOnlyActivePatients(e.target.checked)} />
+                                      <span>Aktywni</span>
+                                    </label>
+                                    <label className="inline-flex items-center gap-1 text-[11px] text-gray-600 ml-1 whitespace-nowrap">
+                                      <input type="checkbox" className="accent-blue-600 h-3 w-3" checked={onlyAssignedPatients} onChange={e => setOnlyAssignedPatients(e.target.checked)} />
+                                      <span>Przypisani</span>
+                                    </label>
+                                  </div>
+                                  <div className="flex-1 min-h-0">
+                                    <div
+                                      className={`h-full overflow-auto border border-gray-200 rounded-md ${filteredPatients.length > 10 ? 'shadow-inner' : ''}`}
+                                      style={filteredPatients.length > 10 ? { maxHeight: '275px' } : undefined}
+                                    >
+                                      <table className="min-w-full text-[11px]">
+                                        <thead className="bg-gray-50 sticky top-0 z-10 border-b border-gray-200">
+                                          <tr>
+                                            <th className="px-2 py-2 text-left font-medium text-gray-700">Pacjent</th>
+                                            <th className="px-2 py-2 text-left font-medium text-gray-700">Status</th>
+                                            <th className="px-2 py-2 text-left font-medium text-gray-700">Relacja</th>
+                                            <th className="px-2 py-1" />
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {filteredPatients.map(p => {
+                                            const assigned = draftAssignedPatientIds.includes(p.id);
+                                            return (
+                                              <tr key={p.id} className={`${assigned ? 'bg-blue-50 hover:bg-blue-100' : 'odd:bg-white even:bg-gray-50 hover:bg-gray-100'} transition-colors`}>                            
+                                                <td className="px-2 py-1 whitespace-nowrap">
+                                                  <span className={`truncate max-w-[160px] font-medium ${p.isActive ? 'text-gray-800' : 'text-gray-500'}`}>{p.surname} {p.name}</span>
+                                                </td>
+                                                <td className="px-2 py-1 whitespace-nowrap"><span className={`font-semibold ${p.isActive ? 'text-green-700' : 'text-gray-500'}`}>{p.isActive ? 'aktywny' : 'nieaktywny'}</span></td>
+                                                <td className="px-2 py-1 whitespace-nowrap"><span className={`font-semibold ${assigned ? 'text-blue-700' : 'text-gray-600'}`}>{assigned ? 'przypisany' : 'wolny'}</span></td>
+                                                <td className="px-2 py-1 text-right">
+                                                  <button type="button" disabled={assignActionLoading} onClick={() => {
+                                                    setDraftAssignedPatientIds(ids => assigned ? ids.filter(id => id !== p.id) : [...ids, p.id]);
+                                                  }} className={`px-2 py-1 rounded-md text-[11px] font-medium border shadow-sm transition-colors ${assigned ? 'bg-red-600 text-white border-red-700 hover:bg-red-700' : 'bg-blue-600 text-white border-blue-700 hover:bg-blue-700'} disabled:opacity-50 disabled:cursor-not-allowed`}>{assigned ? 'Usuń' : 'Dodaj'}</button>
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                          {filteredPatients.length === 0 && (
+                                            <tr>
+                                              <td colSpan={4} className="px-2 py-3 text-center text-gray-500">Brak wyników</td>
+                                            </tr>
+                                          )}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Notatki</label>
-                      <textarea
-                        value={editDraft.info}
-                        onChange={e => setEditDraft({ ...(editDraft ?? editApiData), info: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400 resize-none h-24"
-                        placeholder="Uwagi kadrowe..."
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Rola</label>
-                      {(() => { const selected = backendPrimaryRoleFromArray(editApiData.roles); return (
-                        <div className="flex items-center gap-6 text-sm text-gray-700">
-                          {(['admin','contact','employee'] as const).map(r => (
-                            <label key={r} className="inline-flex items-center gap-2">
-                              <input type="radio" className="accent-blue-600" name="role_backend" value={r} checked={selected===r} readOnly disabled />
-                              <span>{r === 'contact' ? 'pierwszy kontakt' : r === 'employee' ? 'pracownik' : 'admin'}</span>
-                            </label>
-                          ))}
-                        </div>
-                      ); })()}
-                      <div className="mt-1 text-xs text-gray-500">Zmiana roli — dostępne wkrótce</div>
-                    </div>
-                    {saveBackendError && (
-                      <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{saveBackendError}</div>
-                    )}
-                    <div className="flex justify-end space-x-3 pt-2">
-                      <button type="button" onClick={() => { if (!isSavingBackend) { setShowForm(false); resetEditApiState(); } }} className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors" disabled={isSavingBackend}>Anuluj</button>
-                      {isSavingBackend ? (
-                        <div className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm inline-flex items-center justify-center min-w-[140px]">
-                          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                        </div>
-                      ) : (
-                        <button type="button" onClick={handleBackendSave} className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors text-sm">
-                          Zapisz zmiany
-                        </button>
-                      )}
+                    {/* Footer / actions */}
+                    <div className="border-t border-gray-200 px-6 py-4 bg-white flex justify-between items-center gap-4">
+                      {saveBackendError && <div className="text-sm text-red-600">{saveBackendError}</div>}
+                      <div className="ml-auto flex gap-3">
+                        <button type="button" onClick={() => { if (!isSavingBackend) { setShowForm(false); resetEditApiState(); } }} className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-sm" disabled={isSavingBackend}>Anuluj</button>
+                        {isSavingBackend ? (
+                          <div className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm inline-flex items-center justify-center min-w-[140px]">
+                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                          </div>
+                        ) : (
+                          <button type="button" onClick={handleBackendSave} className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors text-sm">Zapisz zmiany</button>
+                        )}
+                      </div>
                     </div>
                   </>
                 )}

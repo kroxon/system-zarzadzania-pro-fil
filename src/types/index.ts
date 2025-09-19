@@ -8,6 +8,7 @@ export interface Employee {
   occupationName: string; //np. terapeuta 
   info?: string | null;
   roles: string[]; // admin, contact, employee
+  assignedPatientsIds: number[];
 }
 
 export interface UpdateEmployee {
@@ -28,6 +29,7 @@ export interface User {
   employmentEnd?: string;   // YYYY-MM-DD
   notes?: string;
   token?: string;
+  assignedPatientsIds?: number[]; // opcjonalnie: liczba podopiecznych dla backendowych użytkowników
 }
 
 //employee to patient (un)assign

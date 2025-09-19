@@ -85,7 +85,9 @@ export const fetchEmployees = async (token: string): Promise<Employee[]> => {
 
 // POST /api/employees/{id}/assign-patients
 
-export async function assignPatientsToEmployee(id: number, data: AssignPatient, token: string): Promise<void> {
+// POST /api/employees/{id}/assign-patients
+// Backend zwraca 204 No Content – funkcja opcjonalnie refetchuje pojedynczego pracownika jeśli caller chce wynik
+export async function assignPatientsToEmployee(id: number, data: AssignPatient, token: string, refetchAfter: boolean = false): Promise<Employee | void> {
   const response = await fetch(`${API_URL}/api/employees/${id}/assign-patients`, {
     method: 'POST',
     headers: {
@@ -96,12 +98,15 @@ export async function assignPatientsToEmployee(id: number, data: AssignPatient, 
     body: JSON.stringify(data)
   });
   if (!response.ok) throw new Error('Failed to assign patients to employee');
+  if (refetchAfter) {
+    return await fetchEmployee(id, token);
+  }
 }
 
 
 // POST /api/employees/{id}/UNassign-patients
 
-export async function unassignPatientsFromEmployee(id: number, data: UnAssignPatient, token: string): Promise<void> {
+export async function unassignPatientsFromEmployee(id: number, data: UnAssignPatient, token: string, refetchAfter: boolean = false): Promise<Employee | void> {
   const response = await fetch(`${API_URL}/api/employees/${id}/unassign-patients`, {
     method: 'POST',
     headers: {
@@ -112,6 +117,9 @@ export async function unassignPatientsFromEmployee(id: number, data: UnAssignPat
     body: JSON.stringify(data)
   });
   if (!response.ok) throw new Error('Failed to unassign patients from employee');
+  if (refetchAfter) {
+    return await fetchEmployee(id, token);
+  }
 }
 
 
