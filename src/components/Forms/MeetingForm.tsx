@@ -23,21 +23,21 @@ interface MeetingFormProps {
   editingMeeting?: Meeting;
   initialRoomId?: string;
   selectedEndTime?: string;
-  patients?: Patient[]; // NEW list of patients for multi-select
+  patients?: Patient[];
 }
 
 interface MeetingFormState {
-  specialistId: string; // legacy primary
-  patientName: string; // legacy primary name
+  specialistId: string;
+  patientName: string;
   guestName: string;
   roomId: string;
   startTime: string;
   endTime: string;
   notes: string;
   status: Meeting['status'];
-  specialistIds: string[]; // NEW multi
-  patientIds: string[];    // NEW multi
-  meetingName: string;     // NEW: display name/title for the meeting
+  specialistIds: string[];
+  patientIds: string[];
+  meetingName: string;
 }
 
 const MeetingForm: React.FC<MeetingFormProps> = ({
@@ -64,14 +64,14 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
 
-  // helpery konfliktów (pełny przedział)
+  // pomocnicze funkcje wykrywania konfliktów
   const toMin = (t:string) => { const [h,m]=t.split(':').map(Number); return h*60+m; };
   // Overlap uses half-open intervals [start, end); end==start means no conflict (back-to-back allowed)
   const overlap = (s1:string,e1:string,s2:string,e2:string) => !(toMin(e1) <= toMin(s2) || toMin(s1) >= toMin(e2));
   const specialistHasConflict = (specialistId:string, date:string, start:string, end:string, excludeId?:string) => meetings.some(m=> m.id!==excludeId && m.date===date && ((m.specialistIds && m.specialistIds.includes(specialistId)) || m.specialistId===specialistId) && overlap(start,end,m.startTime,m.endTime));
   const roomHasConflict = (roomId:string, date:string, start:string, end:string, excludeId?:string) => meetings.some(m=> m.id!==excludeId && m.date===date && m.roomId===roomId && overlap(start,end,m.startTime,m.endTime));
 
-  // creation guard: allow only future start times
+  // tworzenie tylko dla przyszłych terminów
   const isDateTimeInFuture = (date: string, time: string) => {
     if (!date || !time) return false;
     const [y, mo, d] = date.split('-').map(Number);
@@ -104,7 +104,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const [loadingEmployees, setLoadingEmployees] = useState<Set<string>>(new Set());
   const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
 
-  // Test-only: event statuses fetch and display
+  // pobranie statusów (tylko wyświetlanie)
   const [eventStatuses, setEventStatuses] = useState<EventStatus[]>([]);
   const [eventStatusesLoading, setEventStatusesLoading] = useState(false);
   const [eventStatusesError, setEventStatusesError] = useState<string | null>(null);
@@ -136,7 +136,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return 'present';
   }, []);
 
-  // Determine which statusId should be selected (only one) when editing an event
+  // aktywny status (edycja)
   const activeStatusId = React.useMemo(() => {
     // Prefer editingMeeting.statusId if present
     if (editingMeeting?.statusId != null) return editingMeeting.statusId;
@@ -200,7 +200,6 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     }
   }, [token]);
 
-  // (effects to load workhours are defined later, after specOpen declaration)
 
   // Check availability using backend workhours: requires the requested interval to be fully covered by at least one workhour range
   const isSpecialistAvailable = React.useCallback((id: string, date: string, start: string, end: string) => {
@@ -230,11 +229,11 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return coverFrom >= reqEnd;
   }, [workhoursByEmployee]);
 
-  // Reset validation errors on open and when switching context (create/edit another meeting)
+  // reset błędów przy otwarciu i zmianie spotkania
   useEffect(() => { if (isOpen) setErrors([]); }, [isOpen]);
   useEffect(() => { setErrors([]); }, [editingMeeting]);
 
-  // Centralized close to also clear transient UI states and errors
+  // zamknięcie + czyszczenie stanów pomocniczych
   const handleClose = () => {
     setErrors([]);
     setRoomsOpen(false);
@@ -246,7 +245,6 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     onClose();
   };
 
-  // In cutover: no persisted therapist assignments; show all patients regardless of specialist selection
   const assignedPatientIds = React.useMemo(()=> new Set<string>(), []);
 
   const filteredPatients = React.useMemo(()=> {
@@ -290,7 +288,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   }, [editingMeeting, currentUser, selectedTime, initialRoomId, selectedEndTime]);
 
   const validateForm = (): boolean => {
-    // When editing a past meeting with permissions, allow saving status/notes only without blocking on other validations
+    // edycja przeszłego spotkania: pozwól tylko na status/notatki
     if (restrictPastEdit) {
       setErrors([]);
       return true;
@@ -431,16 +429,13 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const canShowDelete = !!editingMeeting && isMeetingInFuture(editingMeeting) && canCurrentUserDelete(editingMeeting) && !!onDelete;
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isEditingPast = !!editingMeeting && isMeetingInPastByEnd(editingMeeting);
-  const effectiveStatus: 'present' | 'absent' | 'cancelled' = ((): any => {
-    const s = (formData.status as any);
-    return s === 'present' || s === 'absent' || s === 'cancelled' ? s : 'present';
-  })();
+  // (Manual status editing removed – statuses are now display-only)
 
   // When editing a past meeting and user has permission, restrict editing to status + notes only
   const restrictPastEdit = !!editingMeeting && isEditingPast && canCurrentUserEdit(editingMeeting);
   const canEditThis = !!editingMeeting && canCurrentUserEdit(editingMeeting);
 
-  // Local date state with Polish formatting helpers
+  // lokalna data + format PL
   const [localDate, setLocalDate] = useState<string>(selectedDate);
   useEffect(()=>{ if(isOpen) setLocalDate(selectedDate); }, [isOpen, selectedDate]);
   const toYMD = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -448,7 +443,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const formatPolishDate = (s: string) => { const d = parseYMD(s); const day = String(d.getDate()).padStart(2,'0'); const month = new Intl.DateTimeFormat('pl-PL', { month: 'long' }).format(d); const year = d.getFullYear(); return `${day}.${month}.${year}`; };
   const effectiveDate = localDate || selectedDate;
 
-  // If opening create form on a past date, correct to today and show info, but keep form visible
+  // jeśli tworzenie w przeszłości -> ustaw dziś + pokaż info
   useEffect(() => {
     if (!isOpen || editingMeeting) return;
     const todayYMD = toYMD(new Date());
@@ -458,10 +453,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     }
   }, [isOpen, editingMeeting, localDate]);
 
-  // Reset form on open
-  useEffect(() => {
-    // Removed auto-reset on open to avoid overriding edit state; initialization handled elsewhere
-  }, [isOpen, currentUser, initialRoomId, selectedTime, selectedEndTime]);
+  useEffect(() => {}, [isOpen, currentUser, initialRoomId, selectedTime, selectedEndTime]);
 
   const [dateOpen, setDateOpen] = useState(false);
   const base = parseYMD(localDate);
@@ -507,7 +499,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   }, []);
   const [startOpen, setStartOpen] = useState(false);
   const [endOpen, setEndOpen] = useState(false);
-  // NEW: custom dropdown states for specialists and patients
+  // stany dropdownów specjalistów i pacjentów
   const [specOpen, setSpecOpen] = useState(false);
   const [patientsOpen, setPatientsOpen] = useState(false);
   // Search term for specialists dropdown
@@ -580,11 +572,11 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return n.getHours() * 60 + n.getMinutes();
   }, []);
 
-  // NEW: refs for outside-click handling on custom dropdowns
+  // refy do obsługi kliknięcia poza dropdownem
   const specMenuRef = useRef<HTMLDivElement|null>(null);
   const patientsMenuRef = useRef<HTMLDivElement|null>(null);
 
-  // NEW: close dropdowns on outside click
+  // zamykanie dropdownów po kliknięciu poza
   useEffect(() => {
     if (!isOpen) return;
     const onDown = (e: MouseEvent) => {
@@ -1121,66 +1113,35 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 </div>
               </div>
 
-              {isEditingPast && (
-                <div>
-                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Status</label>
-                  <div className="bg-white border border-gray-300 rounded-lg p-3 space-y-2">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" name="status" value="present" checked={effectiveStatus==='present'} onChange={()=> setFormData({...formData, status: 'present'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
-                      <span className="text-sm text-gray-800">Podopieczny obecny</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" name="status" value="absent" checked={effectiveStatus==='absent'} onChange={()=> setFormData({...formData, status: 'absent'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
-                      <span className="text-sm text-gray-800">Podopieczny nieobecny</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" name="status" value="cancelled" checked={effectiveStatus==='cancelled'} onChange={()=> setFormData({...formData, status: 'cancelled'})} className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300" disabled={!canEditThis} />
-                      <span className="text-sm text-gray-800">Odwołano</span>
-                    </label>
-                  </div>
-                </div>
-              )}
-              {/* Informational note removed as requested */}
+              {/* status tylko do wyświetlenia */}
             </div>
           </div> {/* end grid of left + right columns */}
 
-          {/* Guest + statuses row and enlarged notes */}
+          {/* Guest + compact status row and enlarged notes */}
           <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-              {/* Guest field half width */}
-              <div className={!isEditingPast ? '' : ''}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
+              {/* Guest field wider (2/3 on md+) */}
+              <div className={!isEditingPast ? 'md:col-span-2' : 'md:col-span-2'}>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Gość (opcjonalnie)</label>
                 <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast} />
               </div>
-              {/* Moved statuses preview (unchanged logic) */}
-              <div>
-                <div className="text-[11px] font-semibold text-gray-600 uppercase mb-1">Statusy wydarzeń (test)</div>
-                <div className="text-[12px] rounded-md border border-gray-200 bg-white p-2 min-h-[36px] max-h-40 overflow-auto">
+              {/* Status compact (1/3) */}
+              <div className="md:col-span-1">
+                <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Status</label>
+                <div className="text-xs">
                   {eventStatusesLoading && <span className="text-gray-500">Ładowanie…</span>}
                   {!eventStatusesLoading && eventStatusesError && <span className="text-red-600">{eventStatusesError}</span>}
-                  {!eventStatusesLoading && !eventStatusesError && (
-                    eventStatuses.length ? (
-                      <div className="flex flex-wrap gap-1">
-                        {eventStatuses.map(s => {
-                          const isActive = activeStatusId != null && s.id === activeStatusId;
-                          const base = isActive
-                            ? 'bg-indigo-600 border-indigo-600 text-white'
-                            : 'bg-gray-100 border-gray-200 text-gray-800';
-                          return (
-                            <span
-                              key={s.id}
-                              className={`px-2 py-0.5 text-[11px] rounded-full border ${base}`}
-                              title={isActive ? 'Aktualny status' : ''}
-                            >
-                              {s.name}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <span className="text-gray-500">Brak danych</span>
-                    )
-                  )}
+                  {!eventStatusesLoading && !eventStatusesError && (() => {
+                    const active = activeStatusId != null ? eventStatuses.find(s => s.id === activeStatusId) : undefined;
+                    if (active) {
+                      return (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-600 text-white font-medium tracking-wide">
+                          {active.name}
+                        </span>
+                      );
+                    }
+                    return <span className="text-gray-500">Brak</span>;
+                  })()}
                 </div>
               </div>
             </div>
