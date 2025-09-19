@@ -54,7 +54,7 @@ export async function createPatient(data: CreatePatient, token: string): Promise
 }
 
 // PUT /api/patients/{id}
-export async function updatePatient(id: number, data: UpdatePatient, token: string): Promise<Patient> {
+export async function updatePatient(id: number, data: UpdatePatient, token: string): Promise<Patient | void> {
 	const res = await fetch(`${API_URL}/api/patients/${id}`, {
 		method: 'PUT',
 		headers: {
@@ -65,7 +65,12 @@ export async function updatePatient(id: number, data: UpdatePatient, token: stri
 		body: JSON.stringify(data)
 	});
 	if (!res.ok) throw new Error('Failed to update patient');
-	return await res.json();
+	// Some backends may return 204 No Content for successful update
+	if (res.status === 204) return;
+	// If body is empty (content-length 0) guard json parsing
+	const text = await res.text();
+	if (!text) return; // treat as void
+	return JSON.parse(text) as Patient;
 }
 
 // DELETE /api/patients/{id}

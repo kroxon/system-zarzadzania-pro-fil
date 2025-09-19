@@ -3,14 +3,12 @@ function getPatientStatusLabel(isActive: boolean): 'aktywny' | 'nieaktywny' {
   return isActive ? 'aktywny' : 'nieaktywny';
 }
 import { useState, useEffect, useMemo, useRef } from 'react';
-// Using demo UI shape for patients for now. When backend is ready, map API <-> UI.
-import { fetchPatients } from '../../utils/api/patients';
-import {Patient, User, Meeting} from '../../types/index'
+import { fetchPatients, updatePatient } from '../../utils/api/patients';
+import { fetchEmployees } from '../../utils/api/employees';
+import { assignPatientsToEmployee, unassignPatientsFromEmployee } from '../../utils/api/employees';
+import {Patient, User, Meeting, Employee} from '../../types/index'
 import { Search } from 'lucide-react';
 
-/*
-// Całość przełączona na typ Patient z backendu. Usunięto PatientDemo, mappersy i demo storage.
-*/
 
 interface Visit {
   id: string;
@@ -20,8 +18,6 @@ interface Visit {
   room: string;
   status: 'zrealizowana' | 'odwołana' | 'zaplanowana' | 'nieobecny'; }
 
-// Brak localStorage dla przypisań terapeutów – stan tylko w pamięci
-
 export default function Patients(){
   // Pacjenci z backendu
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -29,24 +25,36 @@ useEffect(() => {
   const token = localStorage.getItem('token');
   if (!token) return;
   fetchPatients(token)
-    .then(data => {
-      console.log('fetchPatients result:', data);
-      setPatients(data);
-    })
+    .then(data => { setPatients(data); })
     .catch((err) => {
       console.error('fetchPatients error:', err);
       setPatients([]);
     });
 }, []);
-
-useEffect(() => {
-  console.log('Patients state:', patients);
-}, [patients]);
   const meetings = useMemo<Meeting[]>(() => [], []);
-  const users = useMemo<User[]>(() => [], []);
+  // Employees (therapists) fetched from backend
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  // derive users (legacy shape expectation for some helper code) from employees
+  const users = useMemo<User[]>(() => {
+    return employees.map(e => ({
+      id: String(e.id),
+      name: e.name,
+      surname: e.surname,
+      role: (e.roles?.includes('admin') ? 'admin' : e.roles?.includes('contact') ? 'contact' : 'employee'),
+      specialization: e.occupationName,
+      notes: e.info || undefined,
+      assignedPatientsIds: e.assignedPatientsIds || []
+    }));
+  }, [employees]);
+  // fetch employees
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if(!token) return;
+    fetchEmployees(token)
+      .then(data => setEmployees(data))
+      .catch(() => setEmployees([]));
+  }, []);
   const rooms = useMemo<{ id: string; name: string }[]>(() => [], []);
-
-  // Brak odczytów lokalnych — te listy będą puste lub zasilone backendem w przyszłości
 
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -57,6 +65,10 @@ useEffect(() => {
     assignedEmployeesIds: [] as number[],
     info: ''
   });
+  // Keep original assigned employees for diffing when saving
+  const [originalAssigned, setOriginalAssigned] = useState<number[]>([]);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [therapistAssignments, setTherapistAssignments] = useState<Record<string,string[]>>({});
   const [patientNotes, setPatientNotes] = useState<Record<string,string>>({});
@@ -152,7 +164,7 @@ useEffect(() => {
   },[meetings]);
 
   const userIdToName = useMemo(()=>{
-    const m: Record<string,string> = {}; users.forEach((u: User)=> { m[u.id]=u.name; }); return m;
+    const m: Record<string,string> = {}; users.forEach((u: User)=> { m[u.id]=`${u.name} ${u.surname}`.trim(); }); return m;
   },[users]);
 
   const getStatusLabel = (v: 'aktywny'|'nieaktywny'|'wszyscy') => v==='aktywny' ? 'Aktywni' : v==='nieaktywny' ? 'Nieaktywni' : 'Wszyscy';
@@ -160,18 +172,16 @@ useEffect(() => {
   // Precompute sorted employees: label "Nazwisko Imię" and sort by last name then first name (case/diacritics insensitive)
   const employeesSorted = useMemo(()=>{
     const strip = (s:string)=> s.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase();
-    return users
-      .filter((u: User)=> u.role==='employee')
-      .map((u: User)=> {
-        const parts = (u.name||'').trim().split(/\s+/).filter(Boolean);
-        const last = parts.length>1 ? parts[parts.length-1] : '';
-        const first = parts.length>1 ? parts.slice(0,-1).join(' ') : (parts[0]||'');
-        const label = last ? `${last} ${first}` : first;
+    return employees
+      .map((e: Employee)=> {
+        const last = e.surname || '';
+        const first = e.name || '';
+        const label = `${last} ${first}`.trim();
         const sortKey = `${strip(last)} ${strip(first)}`;
-        return { id: u.id, label, sortKey };
+        return { id: String(e.id), label, sortKey };
       })
-      .sort((a: {id:string; label:string; sortKey:string},b: {id:string; label:string; sortKey:string})=> a.sortKey.localeCompare(b.sortKey));
-  },[users]);
+      .sort((a,b)=> a.sortKey.localeCompare(b.sortKey));
+  },[employees]);
 
   // Disabled persistence of therapist assignments to localStorage
 
@@ -194,8 +204,6 @@ useEffect(() => {
   const normalize = (s: string) => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
   // Filtered patients list for the left panel
-  // Lista pacjentów zawsze pusta
-  // Przywrócona logika filtrowania pacjentów
   const filtered = useMemo(() => {
     const q = normalize(query);
     const list = patients.slice();
@@ -212,8 +220,8 @@ useEffect(() => {
     });
     const bySpecialist = byStatus.filter(p => {
       if(specialistFilter==='wszyscy') return true;
-      const assigned = therapistAssignments[p.id] || [];
-      return assigned.includes(String(specialistFilter));
+      const assigned = p.assignedEmployeesIds || [];
+      return assigned.map(String).includes(String(specialistFilter));
     });
     // sort by last name, then first name
     return bySpecialist.sort((a,b)=> {
@@ -221,7 +229,7 @@ useEffect(() => {
       if(lnA!==lnB) return lnA.localeCompare(lnB);
       return normalize(a.name).localeCompare(normalize(b.name));
     });
-  }, [patients, query, statusFilter, specialistFilter, therapistAssignments]);
+  }, [patients, query, statusFilter, specialistFilter]);
 
   const statusLabel = (status?: string): JSX.Element => {
     const st = (status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
@@ -233,17 +241,6 @@ useEffect(() => {
       </span>
     );
   };
-
-  // const statusBadge = (isActive?: string): JSX.Element => {
-  //   const st = (isActive as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
-  //   const color = st==='aktywny' ? 'bg-green-500' : 'bg-gray-400';
-  //   return (
-  //     <span className="inline-flex items-center gap-1.5 text-xs text-gray-700">
-  //       <span className={`inline-block h-2 w-2 rounded-full ${color}`} aria-hidden="true" />
-  //       <span className="capitalize">{st}</span>
-  //     </span>
-  //   );
-  // };
 
   const visitStatusLabel = (status: Visit['status']): JSX.Element => {
     const map: Record<Visit['status'], { color: string; text: string }> = {
@@ -304,37 +301,68 @@ useEffect(() => {
       assignedEmployeesIds: Array.isArray(selected.assignedEmployeesIds) ? selected.assignedEmployeesIds.map(Number) : [],
       info: (patientNotes[selected.id] ?? selected.info ?? '')
     });
+    setOriginalAssigned(Array.isArray(selected.assignedEmployeesIds) ? selected.assignedEmployeesIds.map(Number) : []);
     setEditMode(true);
   };
 
-  const saveEdit = () => {
-    if(!selected) return;
-    const updated: Patient = {
-      ...selected,
-      name: editForm.name.trim(),
-      surname: editForm.surname.trim(),
-      birthDate: editForm.birthDate || '',
-      isActive: !!editForm.isActive,
-      assignedEmployeesIds: Array.isArray(editForm.assignedEmployeesIds) ? editForm.assignedEmployeesIds.map(Number) : [],
-      info: editForm.info?.trim() || ''
-    };
-    setPatients(prev => prev.map(p => p.id === selected.id ? updated : p));
-    // Persist therapist assignments
-    setTherapistAssignments(prev => {
-      const next = { ...prev };
-      const unique = Array.from(new Set(editForm.assignedEmployeesIds));
-      if(unique.length) next[selected.id] = unique.map(String); else delete next[selected.id];
-      return next;
-    });
-    // Persist patient notes map
-    setPatientNotes(prev => {
-      const next = { ...prev };
-      const txt = (editForm.info || '').trim();
-      if(txt) next[selected.id] = txt; else delete next[selected.id];
-      return next;
-    });
-    setSelected(updated);
-    setEditMode(false);
+  const saveEdit = async () => {
+    if(!selected || savingEdit) return;
+    setSavingEdit(true);
+    setSaveError(null);
+    const token = localStorage.getItem('token');
+    try {
+      // Diff assignments first
+      const original = new Set(originalAssigned.map(Number));
+      const current = new Set(editForm.assignedEmployeesIds.map(Number));
+      const toAdd: number[] = []; const toRemove: number[] = [];
+      current.forEach(id => { if(!original.has(id)) toAdd.push(id); });
+      original.forEach(id => { if(!current.has(id)) toRemove.push(id); });
+
+      // Determine if core fields changed
+      const coreChanged = (
+        editForm.name.trim() !== (selected.name||'').trim() ||
+        editForm.surname.trim() !== (selected.surname||'').trim() ||
+        (editForm.birthDate || '') !== (selected.birthDate || '') ||
+        !!editForm.isActive !== !!selected.isActive ||
+        (editForm.info?.trim() || '') !== (selected.info?.trim() || '')
+      );
+
+      // 1. Update core patient data only if changed
+      if(coreChanged){
+        await updatePatient(selected.id, {
+          name: editForm.name.trim(),
+          surname: editForm.surname.trim(),
+          birthDate: editForm.birthDate || '',
+          isActive: !!editForm.isActive,
+          info: editForm.info?.trim() || ''
+        } as any, token || '');
+      }
+
+      // 2. Apply assignment changes (patient perspective -> employee endpoints)
+      if(toAdd.length || toRemove.length){
+        await Promise.all([
+          ...toAdd.map(empId => assignPatientsToEmployee(empId, { patientIds: [selected.id] }, token || '', false) as any),
+          ...toRemove.map(empId => unassignPatientsFromEmployee(empId, { patientIds: [selected.id] }, token || '', false) as any)
+        ]);
+      }
+
+      // 3. Refresh patients regardless (ensures consistency)
+      const refreshed = await fetchPatients(token || '');
+      setPatients(refreshed);
+      const newSel = refreshed.find(p => p.id === selected.id);
+
+      // Update local notes map
+      setPatientNotes(prev => {
+        const next = { ...prev }; const txt = (editForm.info || '').trim(); if(txt) next[selected.id] = txt; else delete next[selected.id]; return next;
+      });
+      if(newSel) setSelected(newSel);
+      setEditMode(false);
+    } catch (e: any) {
+      console.error('Błąd zapisu pacjenta', e);
+      setSaveError(e?.message || 'Nie udało się zapisać zmian');
+    } finally {
+      setSavingEdit(false);
+    }
   };
 
   const cancelEdit = () => {
@@ -610,8 +638,12 @@ useEffect(() => {
                       )}
                       {editMode && (
                         <>
-                          <button onClick={saveEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-green-600 text-white hover:bg-green-700">Zapisz</button>
-                          <button onClick={cancelEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300">Anuluj</button>
+                          <button disabled={savingEdit} onClick={saveEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2">
+                            {savingEdit && <span className="inline-block h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />}
+                            {savingEdit ? 'Zapisywanie...' : 'Zapisz'}
+                          </button>
+                          <button disabled={savingEdit} onClick={cancelEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 disabled:opacity-60">Anuluj</button>
+                          {saveError && <span className="ml-2 text-[11px] text-red-600 font-medium">{saveError}</span>}
                         </>
                       )}
                     </div>
@@ -750,14 +782,14 @@ useEffect(() => {
                         <p className="mb-1"><strong className="text-[0.95rem] font-semibold text-gray-800">Terapeuci:</strong></p>
                         {!editMode && (
                           <>
-                            {(therapistAssignments[selected.id]||[]).length===0 ? (
+                            {(selected.assignedEmployeesIds||[]).length===0 ? (
                               <span className="text-xs text-gray-400">Brak przypisanych terapeutów</span>
                             ) : (
                               <ul className="space-y-2">
-                                {(therapistAssignments[selected.id]||[]).map(tId => {
-                                  const name = userIdToName[tId] || tId;
+                                {(selected.assignedEmployeesIds||[]).map(eId => {
+                                  const name = userIdToName[String(eId)] || String(eId);
                                   return (
-                                    <li key={tId} className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2">
+                                    <li key={eId} className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2">
                                       <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white text-[11px] font-semibold">{(name? name.trim().split(/\s+/).slice(0,2).map(p=>p[0]?.toUpperCase()||'').join(''):'?')}</span>
                                       <span className="text-sm font-medium text-blue-900">{name}</span>
                                     </li>
@@ -1014,9 +1046,9 @@ useEffect(() => {
                 <div className="col-span-2">
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Terapeuci</label>
                   <div className="flex flex-wrap gap-2 mb-2 min-h-[34px] p-2 rounded-lg border border-gray-200 bg-gray-50">
-                    {newPatientForm.assignedEmployeesIds.map((tId:number)=>{ const u=users.find((x: User)=>Number(x.id) === Number(tId)); return (
+                    {newPatientForm.assignedEmployeesIds.map((tId:number)=>{ const emp=employees.find((x: Employee)=>Number(x.id) === Number(tId)); return (
                       <span key={tId} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium bg-indigo-100 text-indigo-700 border border-indigo-300">
-                        {u? u.name.split(' ').slice(0,2).join(' '): tId}
+                        {emp? `${emp.surname} ${emp.name}`: tId}
                         <button type="button" onClick={()=> toggleNewTherapist(tId)} className="hover:text-indigo-900">×</button>
                       </span>
                     );})}
@@ -1024,7 +1056,7 @@ useEffect(() => {
                   </div>
                   <select onChange={e=> { const v=e.target.value; if(v){ toggleNewTherapist(Number(v)); e.target.selectedIndex=0; } }} value="" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
                     <option value="">Dodaj terapeutę...</option>
-                    {users.filter((u: User)=>u.role==='employee' && !newPatientForm.assignedEmployeesIds.includes(Number(u.id))).map((u: User)=> <option key={u.id} value={u.id}>{u.name} {u.specialization? '– '+u.specialization:''}</option>)}
+                    {employeesSorted.filter((e: any)=> !newPatientForm.assignedEmployeesIds.includes(Number(e.id))).map((e: any)=> <option key={e.id} value={e.id}>{e.label}</option>)}
                   </select>
                 </div>
                 <div className="col-span-2">
