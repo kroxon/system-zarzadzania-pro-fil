@@ -5,7 +5,7 @@ import { fetchEmployees, fetchEmployee, updateEmployee, deleteEmployee, assignPa
 import { mapBackendRolesToFrontend } from '../../utils/roleMapper';
 import type { Employee as ApiEmployee, Occupation, Patient } from '../../types';
 import { fetchPatients } from '../../utils/api/patients';
-import { getAllOccupations } from '../../utils/api/occupations';
+import { getAllOccupations, updateOccupation, deleteOccupation as deleteOccupationApi } from '../../utils/api/occupations';
 
 interface EmployeesManageProps {
   users: User[];
@@ -136,6 +136,86 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
   const [occupations, setOccupations] = useState<Occupation[]>([]);
   const [occLoading, setOccLoading] = useState(false);
   const [occError, setOccError] = useState<string | null>(null);
+  // Occupations CRUD local UI state
+  const [occActionLoading, setOccActionLoading] = useState(false);
+  const [editingOccId, setEditingOccId] = useState<number | null>(null);
+  const [editingOccName, setEditingOccName] = useState('');
+  const [occCrudError, setOccCrudError] = useState<string | null>(null);
+  // Dynamic table height
+  const tablesLayoutRef = useRef<HTMLDivElement | null>(null);
+  const [tablesMaxHeight, setTablesMaxHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const recompute = () => {
+      if (!tablesLayoutRef.current) return;
+      const rect = tablesLayoutRef.current.getBoundingClientRect();
+      const marginBottom = 32; // odstęp od dołu okna
+      const available = window.innerHeight - rect.top - marginBottom;
+      setTablesMaxHeight(available > 260 ? available : 260); // minimalna sensowna wysokość
+    };
+    recompute();
+    window.addEventListener('resize', recompute);
+    return () => window.removeEventListener('resize', recompute);
+  }, []);
+
+  const refreshOccupations = async () => {
+    try {
+      setOccLoading(true);
+      setOccError(null);
+      const list = await getAllOccupations();
+      setOccupations(list);
+    } catch {
+      setOccError('Nie udało się odświeżyć listy specjalizacji');
+    } finally {
+      setOccLoading(false);
+    }
+  };
+
+  const startEditOccupation = (id: number, name: string) => {
+    setEditingOccId(id);
+    setEditingOccName(name);
+    setOccCrudError(null);
+  };
+
+  const cancelEditOccupation = () => {
+    setEditingOccId(null);
+    setEditingOccName('');
+  };
+
+  const saveEditOccupation = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (editingOccId == null) return;
+    if (!editingOccName.trim()) { setOccCrudError('Nazwa nie może być pusta'); return; }
+    const token = getAuthToken();
+    if (!token) { setOccCrudError('Brak tokenu'); return; }
+    try {
+      setOccActionLoading(true); setOccCrudError(null);
+      await updateOccupation(token, editingOccId, { name: editingOccName.trim() });
+      await refreshOccupations();
+      cancelEditOccupation();
+    } catch {
+      setOccCrudError('Nie udało się zapisać zmian');
+    } finally {
+      setOccActionLoading(false);
+    }
+  };
+
+  const handleDeleteOccupation = async (id: number) => {
+    if (!confirm('Usunąć tę specjalizację?')) return;
+    const token = getAuthToken();
+    if (!token) { setOccCrudError('Brak tokenu'); return; }
+    try {
+      setOccActionLoading(true); setOccCrudError(null);
+      await deleteOccupationApi(token, id);
+      // Optimistic removal
+      setOccupations(prev => prev.filter(o => o.id !== id));
+      // Optionally refresh for consistency
+      await refreshOccupations();
+    } catch {
+      setOccCrudError('Nie udało się usunąć specjalizacji');
+    } finally {
+      setOccActionLoading(false);
+    }
+  };
 
   // Custom dropdown state/refs for occupation (backend edit + demo form)
   const [showOccMenuBackend, setShowOccMenuBackend] = useState(false);
@@ -414,32 +494,36 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
 
   return (
     <div className="space-y-6">
-
-      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
+      <div ref={tablesLayoutRef} className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-stretch">
+        {/* Employees section */}
+        <div className="xl:col-span-2 flex flex-col space-y-3">
+          <h2 className="text-base font-semibold text-gray-800 px-1">Pracownicy</h2>
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col" style={tablesMaxHeight ? { maxHeight: tablesMaxHeight } : undefined}>
+            <div className="flex-1 overflow-auto">{/* scroll pojawia się gdy zawartość przekroczy maxHeight */}
+              <table className="min-w-full border border-gray-200 border-collapse text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nazwisko i imię</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Specjalizacja</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rola</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Nazwisko i imię</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Specjalizacja</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Rola</th>
               {/* Zatrudnienie column removed */}
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notatki</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Podopieczni</th>
-              <th className="px-4 py-3" />
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Notatki</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Podopieczni</th>
+              <th className="px-4 py-3 border border-gray-200 bg-gray-50" />
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-100">
+          <tbody className="bg-white">
             {demoUsersSorted.map(u => (
               <tr key={u.id} className={`hover:bg-gray-50 ${isInactive(u) ? 'opacity-60 italic' : ''}`}>
-                <td className="px-4 py-3 text-sm text-gray-900">{fullNameSurnameFirst(u)}</td>
-                <td className="px-4 py-3 text-sm text-gray-600">{u.specialization}</td>
-                <td className="px-4 py-3 text-sm text-gray-600">{roleToLabel(u.role)}</td>
+                <td className="px-4 py-3 text-sm text-gray-900 border border-gray-100">{fullNameSurnameFirst(u)}</td>
+                <td className="px-4 py-3 text-sm text-gray-600 border border-gray-100">{u.specialization}</td>
+                <td className="px-4 py-3 text-sm text-gray-600 border border-gray-100">{roleToLabel(u.role)}</td>
                 {/* Employment column removed */}
-                <td className="px-4 py-3 text-xs text-gray-600">
+                <td className="px-4 py-3 text-xs text-gray-600 border border-gray-100">
                   <div className="max-w-xs truncate" title={u.notes}>{u.notes || '—'}</div>
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{Array.isArray(u.assignedPatientsIds) ? u.assignedPatientsIds.length : '—'}</td>
-                <td className="px-4 py-3 text-sm text-right space-x-2">
+                <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap border border-gray-100">{Array.isArray(u.assignedPatientsIds) ? u.assignedPatientsIds.length : '—'}</td>
+                <td className="px-4 py-3 text-sm text-right space-x-2 border border-gray-100">
                   <button onClick={() => openEditModal(u)} className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-xs border border-blue-200">
                     <Pencil className="w-3 h-3 mr-1"/>Edytuj
                   </button>
@@ -454,15 +538,15 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
 
             {backendUsersSorted.map(u => (
               <tr key={u.id} className={`hover:bg-gray-50 ${isInactive(u) ? 'opacity-60 italic' : ''}`}>
-                <td className="px-4 py-3 text-sm text-gray-900">{fullNameSurnameFirst(u)}</td>
-                <td className="px-4 py-3 text-sm text-gray-600">{u.specialization}</td>
-                <td className="px-4 py-3 text-sm text-gray-600">{roleToLabel(u.role)}</td>
+                <td className="px-4 py-3 text-sm text-gray-900 border border-gray-100">{fullNameSurnameFirst(u)}</td>
+                <td className="px-4 py-3 text-sm text-gray-600 border border-gray-100">{u.specialization}</td>
+                <td className="px-4 py-3 text-sm text-gray-600 border border-gray-100">{roleToLabel(u.role)}</td>
                 {/* Employment column removed */}
-                <td className="px-4 py-3 text-xs text-gray-600">
+                <td className="px-4 py-3 text-xs text-gray-600 border border-gray-100">
                   <div className="max-w-xs truncate" title={u.notes}>{u.notes || '—'}</div>
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{Array.isArray(u.assignedPatientsIds) ? u.assignedPatientsIds.length : '—'}</td>
-                <td className="px-4 py-3 text-sm text-right space-x-2">
+                <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap border border-gray-100">{Array.isArray(u.assignedPatientsIds) ? u.assignedPatientsIds.length : '—'}</td>
+                <td className="px-4 py-3 text-sm text-right space-x-2 border border-gray-100">
                   <button onClick={() => openEditModal(u)} className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-xs border border-blue-200">
                     <Pencil className="w-3 h-3 mr-1"/>Edytuj
                   </button>
@@ -479,7 +563,67 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
               </tr>
             )}
           </tbody>
-        </table>
+              </table>
+            </div>
+          </div>
+        </div>
+        {/* Occupations section simplified */}
+        <div className="flex flex-col space-y-3">
+          <h2 className="text-base font-semibold text-gray-800 px-1">Specjalizacje</h2>
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col" style={tablesMaxHeight ? { maxHeight: tablesMaxHeight } : undefined}>
+            {occCrudError && <div className="px-4 py-2 text-xs text-red-600 border-b border-red-100 bg-red-50">{occCrudError}</div>}
+            {occError && !occCrudError && <div className="px-4 py-2 text-xs text-red-600 border-b border-red-100 bg-red-50">{occError}</div>}
+            <div className="flex-1 overflow-auto">
+              <table className="min-w-full border border-gray-200 border-collapse text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Nazwa</th>
+                    <th className="px-3 py-2 border border-gray-200 bg-gray-50" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {occLoading && (
+                    <tr><td colSpan={2} className="px-3 py-4 text-center text-xs text-gray-500">Ładowanie...</td></tr>
+                  )}
+                  {!occLoading && occupations.map(o => {
+                    const isEditing = o.id === editingOccId;
+                    return (
+                      <tr key={o.id} className="hover:bg-gray-50">
+                        <td className="px-3 py-2 text-sm text-gray-800 border border-gray-100">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editingOccName}
+                              onChange={e => setEditingOccName(e.target.value)}
+                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                              autoFocus
+                            />
+                          ) : o.name}
+                        </td>
+                        <td className="px-3 py-2 text-right space-x-2 whitespace-nowrap border border-gray-100">
+                          {isEditing ? (
+                            <>
+                              <button onClick={() => saveEditOccupation()} disabled={occActionLoading} className="inline-flex items-center px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-[11px] border border-blue-700 disabled:opacity-50">Zapisz</button>
+                              <button onClick={cancelEditOccupation} disabled={occActionLoading} className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-[11px] border border-gray-300 disabled:opacity-50">Anuluj</button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={() => startEditOccupation(o.id, o.name)} className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-[11px] border border-blue-200"><Pencil className="w-3 h-3 mr-1"/>Edytuj</button>
+                              <button onClick={() => handleDeleteOccupation(o.id)} disabled={occActionLoading} className="inline-flex items-center px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 text-[11px] border border-red-200 disabled:opacity-50"><Trash2 className="w-3 h-3 mr-1"/>Usuń</button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!occLoading && occupations.length===0 && (
+                    <tr><td colSpan={2} className="px-3 py-4 text-center text-xs text-gray-500">Brak specjalizacji</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
 
       {showForm && (
