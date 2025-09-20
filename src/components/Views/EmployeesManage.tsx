@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
+import Notification from '../common/Notification';
 import { User } from '../../types';
-import { X, Pencil, Trash2, ChevronDown } from 'lucide-react';
+import { X, Pencil, Trash2, ChevronDown, Plus } from 'lucide-react';
 import { fetchEmployees, fetchEmployee, updateEmployee, deleteEmployee, assignPatientsToEmployee, unassignPatientsFromEmployee } from '../../utils/api/employees';
 import { mapBackendRolesToFrontend } from '../../utils/roleMapper';
 import type { Employee as ApiEmployee, Occupation, Patient } from '../../types';
 import { fetchPatients } from '../../utils/api/patients';
-import { getAllOccupations, updateOccupation, deleteOccupation as deleteOccupationApi } from '../../utils/api/occupations';
+import { getAllOccupations, updateOccupation, deleteOccupation as deleteOccupationApi, addNewOccupation } from '../../utils/api/occupations';
 
 interface EmployeesManageProps {
   users: User[];
@@ -17,6 +18,8 @@ interface EmployeesManageProps {
 }
 
 const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdate, onDelete, onBackendRefresh }) => {
+  // Reusable classes for table header cells (maintain visual consistency)
+  const TH_BASE = 'px-4 text-left text-[11px] font-semibold tracking-wider uppercase text-gray-600 border border-gray-200 bg-gray-50';
   // Start with demo/local users; backend kept separately and shown below
   const [displayUsers, setDisplayUsers] = useState<User[]>(users);
   const [backendUsersState, setBackendUsersState] = useState<User[]>([]);
@@ -137,10 +140,28 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
   const [occLoading, setOccLoading] = useState(false);
   const [occError, setOccError] = useState<string | null>(null);
   // Occupations CRUD local UI state
-  const [occActionLoading, setOccActionLoading] = useState(false);
+  const [occActionLoading] = useState(false); // action loading (legacy placeholder)
+  // (legacy inline edit state replaced by modal approach)
   const [editingOccId, setEditingOccId] = useState<number | null>(null);
   const [editingOccName, setEditingOccName] = useState('');
-  const [occCrudError, setOccCrudError] = useState<string | null>(null);
+  const [occCrudError] = useState<string | null>(null); // legacy error placeholder
+  // Modal for add/edit occupation
+  const [showOccModal, setShowOccModal] = useState(false);
+  const [occModalMode, setOccModalMode] = useState<'add' | 'edit'>('add');
+  const [occModalSaving, setOccModalSaving] = useState(false);
+  const [occModalError, setOccModalError] = useState<string | null>(null);
+  // Delete occupation dialog state
+  const [showOccDeleteDialog, setShowOccDeleteDialog] = useState(false);
+  const [occDeleteTarget, setOccDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [occDeleteChecking, setOccDeleteChecking] = useState(false);
+  const [occDeleteEmployeesUsing, setOccDeleteEmployeesUsing] = useState<string[]>([]);
+  const [occDeleteError, setOccDeleteError] = useState<string | null>(null);
+  const [occDeleteInProgress, setOccDeleteInProgress] = useState(false);
+  // Toast notification state (single lightweight toast)
+  const [toast, setToast] = useState<{ id: number; type: 'success' | 'error' | 'info' | 'warning'; message: string } | null>(null);
+  const showToast = (type: 'success' | 'error' | 'info' | 'warning', message: string) => {
+    setToast({ id: Date.now(), type, message });
+  };
   // Dynamic table height
   const tablesLayoutRef = useRef<HTMLDivElement | null>(null);
   const [tablesMaxHeight, setTablesMaxHeight] = useState<number | null>(null);
@@ -170,50 +191,67 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
     }
   };
 
-  const startEditOccupation = (id: number, name: string) => {
-    setEditingOccId(id);
-    setEditingOccName(name);
-    setOccCrudError(null);
-  };
+  // (inline edit removed – modal handles add/edit)
 
-  const cancelEditOccupation = () => {
-    setEditingOccId(null);
-    setEditingOccName('');
-  };
-
-  const saveEditOccupation = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (editingOccId == null) return;
-    if (!editingOccName.trim()) { setOccCrudError('Nazwa nie może być pusta'); return; }
+  const openDeleteOccupationDialog = async (id: number, name: string) => {
+    setOccDeleteTarget({ id, name });
+    setOccDeleteError(null);
+    setOccDeleteEmployeesUsing([]);
+    setShowOccDeleteDialog(true);
     const token = getAuthToken();
-    if (!token) { setOccCrudError('Brak tokenu'); return; }
+    if (!token) { setOccDeleteError('Brak tokenu'); return; }
     try {
-      setOccActionLoading(true); setOccCrudError(null);
-      await updateOccupation(token, editingOccId, { name: editingOccName.trim() });
-      await refreshOccupations();
-      cancelEditOccupation();
+      setOccDeleteChecking(true);
+      const apiEmployees = await fetchEmployees(token);
+      const inUse = apiEmployees.filter(e => e.occupationId === id);
+      if (inUse.length > 0) {
+        setOccDeleteEmployeesUsing(inUse.slice(0, 8).map(e => `${e.surname} ${e.name}`));
+      }
     } catch {
-      setOccCrudError('Nie udało się zapisać zmian');
+      setOccDeleteError('Nie udało się pobrać powiązań');
     } finally {
-      setOccActionLoading(false);
+      setOccDeleteChecking(false);
     }
   };
 
-  const handleDeleteOccupation = async (id: number) => {
-    if (!confirm('Usunąć tę specjalizację?')) return;
+  const performDeleteOccupation = async () => {
+    if (!occDeleteTarget) return;
     const token = getAuthToken();
-    if (!token) { setOccCrudError('Brak tokenu'); return; }
+    if (!token) { setOccDeleteError('Brak tokenu'); return; }
     try {
-      setOccActionLoading(true); setOccCrudError(null);
-      await deleteOccupationApi(token, id);
-      // Optimistic removal
-      setOccupations(prev => prev.filter(o => o.id !== id));
-      // Optionally refresh for consistency
+      setOccDeleteInProgress(true); setOccDeleteError(null);
+      // Recheck live dependencies right before delete (lista mogła się zmienić)
+      try {
+        const apiEmployees = await fetchEmployees(token);
+        const stillUsing = apiEmployees.filter(e => e.occupationId === occDeleteTarget.id);
+        if (stillUsing.length > 0) {
+          setOccDeleteEmployeesUsing(stillUsing.slice(0,8).map(e => `${e.surname} ${e.name}`));
+          setOccDeleteError('Najpierw zmień specjalizację tym pracownikom.');
+          setOccDeleteInProgress(false);
+          return;
+        }
+      } catch {/* jeśli nie udało się re-check, kontynuujemy ale logujemy */}
+
+      await deleteOccupationApi(token, occDeleteTarget.id);
+      setOccupations(prev => prev.filter(o => o.id !== occDeleteTarget.id));
       await refreshOccupations();
-    } catch {
-      setOccCrudError('Nie udało się usunąć specjalizacji');
+      setShowOccDeleteDialog(false);
+      setOccDeleteTarget(null);
+      showToast('success', 'Specjalizacja usunięta');
+    } catch (e: any) {
+      const msg: string = e?.message || 'Nie udało się usunąć';
+      // Wyłuskaj czy to konflikt (409) lub inne typowe statusy
+      if (/409/.test(msg)) {
+        setOccDeleteError('Nie można usunąć – specjalizacja jest powiązana (409).');
+      } else if (/401|403/.test(msg)) {
+        setOccDeleteError('Brak uprawnień do usunięcia (uwierzytelnienie).');
+      } else if (/404/.test(msg)) {
+        setOccDeleteError('Już nie istnieje (404) – odśwież listę.');
+      } else {
+        setOccDeleteError(msg.replace(/^DELETE\s\d+:\s?/,'') || 'Nie udało się usunąć');
+      }
     } finally {
-      setOccActionLoading(false);
+      setOccDeleteInProgress(false);
     }
   };
 
@@ -497,19 +535,20 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
       <div ref={tablesLayoutRef} className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-stretch">
         {/* Employees section */}
         <div className="xl:col-span-2 flex flex-col space-y-3">
-          <h2 className="text-base font-semibold text-gray-800 px-1">Pracownicy</h2>
-          <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col" style={tablesMaxHeight ? { maxHeight: tablesMaxHeight } : undefined}>
-            <div className="flex-1 overflow-auto">{/* scroll pojawia się gdy zawartość przekroczy maxHeight */}
-              <table className="min-w-full border border-gray-200 border-collapse text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Nazwisko i imię</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Specjalizacja</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Rola</th>
-              {/* Zatrudnienie column removed */}
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Notatki</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Podopieczni</th>
-              <th className="px-4 py-3 border border-gray-200 bg-gray-50" />
+          <div className="flex items-center h-8">
+            <h2 className="text-base font-semibold text-gray-800">Pracownicy</h2>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden" style={tablesMaxHeight ? { height: tablesMaxHeight } : undefined}>
+            <div className="flex-1 overflow-auto">{/* scroll pojawia się gdy zawartość przekroczy wysokość */}
+              <table className="min-w-full border-collapse text-sm">
+          <thead className="bg-gray-50 sticky top-0 z-10 shadow-[0_1px_0_#e5e7eb]">
+            <tr className="h-11">
+              <th className={TH_BASE}>Nazwisko i imię</th>
+              <th className={TH_BASE}>Specjalizacja</th>
+              <th className={TH_BASE}>Rola</th>
+              <th className={TH_BASE}>Notatki</th>
+              <th className={TH_BASE}>Podopieczni</th>
+              <th className={TH_BASE} />
             </tr>
           </thead>
           <tbody className="bg-white">
@@ -523,13 +562,25 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                   <div className="max-w-xs truncate" title={u.notes}>{u.notes || '—'}</div>
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap border border-gray-100">{Array.isArray(u.assignedPatientsIds) ? u.assignedPatientsIds.length : '—'}</td>
-                <td className="px-4 py-3 text-sm text-right space-x-2 border border-gray-100">
-                  <button onClick={() => openEditModal(u)} className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-xs border border-blue-200">
-                    <Pencil className="w-3 h-3 mr-1"/>Edytuj
-                  </button>
-                  <button onClick={() => handleDelete(u.id)} className="inline-flex items-center px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 text-xs border border-red-200">
-                    <Trash2 className="w-3 h-3 mr-1"/>Usuń
-                  </button>
+                <td className="px-4 py-3 text-sm text-right border border-gray-100">
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => openEditModal(u)}
+                      aria-label="Edytuj"
+                      title="Edytuj"
+                      className="p-2 rounded-md border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(u.id)}
+                      aria-label="Usuń"
+                      title="Usuń"
+                      className="p-2 rounded-md border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 transition-colors focus:outline-none focus:ring-2 focus:ring-red-400"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -546,13 +597,25 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                   <div className="max-w-xs truncate" title={u.notes}>{u.notes || '—'}</div>
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap border border-gray-100">{Array.isArray(u.assignedPatientsIds) ? u.assignedPatientsIds.length : '—'}</td>
-                <td className="px-4 py-3 text-sm text-right space-x-2 border border-gray-100">
-                  <button onClick={() => openEditModal(u)} className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-xs border border-blue-200">
-                    <Pencil className="w-3 h-3 mr-1"/>Edytuj
-                  </button>
-                  <button onClick={() => openDeleteDialog(u)} className="inline-flex items-center px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 text-xs border border-red-200">
-                    <Trash2 className="w-3 h-3 mr-1"/>Usuń
-                  </button>
+                <td className="px-4 py-3 text-sm text-right border border-gray-100">
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => openEditModal(u)}
+                      aria-label="Edytuj"
+                      title="Edytuj"
+                      className="p-2 rounded-md border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => openDeleteDialog(u)}
+                      aria-label="Usuń"
+                      title="Usuń"
+                      className="p-2 rounded-md border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 transition-colors focus:outline-none focus:ring-2 focus:ring-red-400"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -569,53 +632,58 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
         </div>
         {/* Occupations section simplified */}
         <div className="flex flex-col space-y-3">
-          <h2 className="text-base font-semibold text-gray-800 px-1">Specjalizacje</h2>
-          <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col" style={tablesMaxHeight ? { maxHeight: tablesMaxHeight } : undefined}>
+          <div className="flex items-center justify-between h-8">
+            <h2 className="text-base font-semibold text-gray-800">Specjalizacje</h2>
+            <button
+              type="button"
+              onClick={() => { setOccModalMode('add'); setEditingOccId(null); setEditingOccName(''); setOccModalError(null); setShowOccModal(true); }}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            >
+              <Plus className="w-4 h-4"/>
+              <span className="hidden sm:inline">Dodaj</span>
+            </button>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden" style={tablesMaxHeight ? { height: tablesMaxHeight } : undefined}>
             {occCrudError && <div className="px-4 py-2 text-xs text-red-600 border-b border-red-100 bg-red-50">{occCrudError}</div>}
             {occError && !occCrudError && <div className="px-4 py-2 text-xs text-red-600 border-b border-red-100 bg-red-50">{occError}</div>}
             <div className="flex-1 overflow-auto">
-              <table className="min-w-full border border-gray-200 border-collapse text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border border-gray-200 bg-gray-50">Nazwa</th>
-                    <th className="px-3 py-2 border border-gray-200 bg-gray-50" />
+              <table className="min-w-full border-collapse text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10 shadow-[0_1px_0_#e5e7eb]">
+                  <tr className="h-11">
+                    <th className={TH_BASE}>Nazwa</th>
+                    <th className={TH_BASE} />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {occLoading && (
                     <tr><td colSpan={2} className="px-3 py-4 text-center text-xs text-gray-500">Ładowanie...</td></tr>
                   )}
-                  {!occLoading && occupations.map(o => {
-                    const isEditing = o.id === editingOccId;
-                    return (
-                      <tr key={o.id} className="hover:bg-gray-50">
-                        <td className="px-3 py-2 text-sm text-gray-800 border border-gray-100">
-                          {isEditing ? (
-                            <input
-                              type="text"
-                              value={editingOccName}
-                              onChange={e => setEditingOccName(e.target.value)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-                              autoFocus
-                            />
-                          ) : o.name}
-                        </td>
-                        <td className="px-3 py-2 text-right space-x-2 whitespace-nowrap border border-gray-100">
-                          {isEditing ? (
-                            <>
-                              <button onClick={() => saveEditOccupation()} disabled={occActionLoading} className="inline-flex items-center px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-[11px] border border-blue-700 disabled:opacity-50">Zapisz</button>
-                              <button onClick={cancelEditOccupation} disabled={occActionLoading} className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-[11px] border border-gray-300 disabled:opacity-50">Anuluj</button>
-                            </>
-                          ) : (
-                            <>
-                              <button onClick={() => startEditOccupation(o.id, o.name)} className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-[11px] border border-blue-200"><Pencil className="w-3 h-3 mr-1"/>Edytuj</button>
-                              <button onClick={() => handleDeleteOccupation(o.id)} disabled={occActionLoading} className="inline-flex items-center px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 text-[11px] border border-red-200 disabled:opacity-50"><Trash2 className="w-3 h-3 mr-1"/>Usuń</button>
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {!occLoading && occupations.map(o => (
+                    <tr key={o.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 text-sm text-gray-800 border border-gray-100">{o.name}</td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap border border-gray-100">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => { setOccModalMode('edit'); setEditingOccId(o.id); setEditingOccName(o.name); setShowOccModal(true); }}
+                            aria-label="Edytuj"
+                            title="Edytuj"
+                            className="p-2 rounded-md border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => openDeleteOccupationDialog(o.id, o.name)}
+                            disabled={occActionLoading}
+                            aria-label="Usuń"
+                            title="Usuń"
+                            className="p-2 rounded-md border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 transition-colors focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                   {!occLoading && occupations.length===0 && (
                     <tr><td colSpan={2} className="px-3 py-4 text-center text-xs text-gray-500">Brak specjalizacji</td></tr>
                   )}
@@ -625,6 +693,120 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
           </div>
         </div>
       </div>
+
+      {/* Occupation add/edit modal */}
+      {showOccModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fadeIn" onClick={() => !occModalSaving && setShowOccModal(false)} />
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-xl border border-gray-200 animate-scaleIn overflow-hidden">
+            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-white to-gray-50">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                {occModalMode === 'add' ? 'Nowa specjalizacja' : 'Edytuj specjalizację'}
+              </h3>
+              <button onClick={() => !occModalSaving && setShowOccModal(false)} className="p-2 rounded-lg hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <form onSubmit={async e => {
+              e.preventDefault();
+              if (!editingOccName.trim()) { setOccModalError('Podaj nazwę'); return; }
+              const token = getAuthToken();
+              if (!token) { setOccModalError('Brak tokenu'); return; }
+              try {
+                setOccModalSaving(true); setOccModalError(null);
+                const newName = editingOccName.trim();
+                let previousName: string | null = null;
+                if (occModalMode === 'edit' && editingOccId != null) {
+                  const prevOcc = occupations.find(o => o.id === editingOccId);
+                  if (prevOcc) previousName = prevOcc.name;
+                }
+                if (occModalMode === 'add') {
+                  await addNewOccupation(token, { name: newName });
+                } else if (occModalMode === 'edit' && editingOccId != null) {
+                  await updateOccupation(token, editingOccId, { name: newName });
+                  // Natychmiastowa (optymistyczna) aktualizacja nazw specjalizacji w tabelach pracowników (lokalni + backend)
+                  if (previousName) {
+                    setBackendUsersState(prev => prev.map(u => u.specialization === previousName ? { ...u, specialization: newName } : u));
+                    setDisplayUsers(prev => prev.map(u => u.specialization === previousName ? { ...u, specialization: newName } : u));
+                    setEditDraft(d => (d && d.occupationId === editingOccId) ? { ...d, occupationName: newName } : d);
+                    setFormData(fd => (fd.occupationId && Number(fd.occupationId) === editingOccId) ? { ...fd, occupationName: newName } : fd);
+                  }
+                }
+                await refreshOccupations();
+                // Cichy refresh pracowników z backendu w tle dla spójności danych (bez psucia UX)
+                // Nie blokujemy zamknięcia modala – ewentualne korekty nazw pojawią się po chwili.
+                refreshBackendUsers();
+                setShowOccModal(false);
+                setEditingOccId(null); setEditingOccName('');
+              } catch {
+                setOccModalError('Operacja nie powiodła się');
+              } finally {
+                setOccModalSaving(false);
+              }
+            }} className="px-6 py-5 space-y-5">
+              <div>
+                <label className="block text-xs font-semibold tracking-wide text-gray-700 mb-2 uppercase">Nazwa</label>
+                <input
+                  type="text"
+                  value={editingOccName}
+                  onChange={e => setEditingOccName(e.target.value)}
+                  placeholder="Np. Psycholog"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm shadow-sm"
+                  autoFocus
+                />
+              </div>
+              {occModalError && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{occModalError}</div>}
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" disabled={occModalSaving} onClick={() => setShowOccModal(false)} className="px-4 py-2.5 text-sm font-medium rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 disabled:opacity-50">Anuluj</button>
+                <button type="submit" disabled={occModalSaving || !editingOccName.trim()} className="px-5 py-2.5 text-sm font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-2 shadow-sm">
+                  {occModalSaving && <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+                  <span>Zapisz</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showOccDeleteDialog && occDeleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => !occDeleteInProgress && setShowOccDeleteDialog(false)} />
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-xl border border-red-200 overflow-hidden animate-scaleIn">
+            <div className="px-6 py-5 border-b border-red-100 flex items-center justify-between bg-gradient-to-r from-white to-red-50">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">Usuń specjalizację</h3>
+              <button onClick={() => !occDeleteInProgress && setShowOccDeleteDialog(false)} className="p-2 rounded-lg hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-5">
+              <p className="text-sm text-gray-700 leading-relaxed">Czy na pewno chcesz usunąć specjalizację <span className="font-semibold text-gray-900">{occDeleteTarget.name}</span>? Tej operacji nie można cofnąć.</p>
+              {occDeleteChecking && (
+                <div className="flex items-center gap-2 text-xs text-gray-600">
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+                  Sprawdzanie powiązań…
+                </div>
+              )}
+              {!occDeleteChecking && occDeleteEmployeesUsing.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="text-xs font-medium text-amber-800 mb-1">Najpierw usuń powiązania:</div>
+                  <ul className="text-xs text-amber-800 list-disc list-inside space-y-0.5 max-h-28 overflow-auto">
+                    {occDeleteEmployeesUsing.map((n,i) => <li key={i}>{n}</li>)}
+                  </ul>
+                  <div className="text-[10px] text-amber-600 mt-1">Pracownicy korzystają z tej specjalizacji – usuń lub zmień im specjalizację przed usunięciem.</div>
+                </div>
+              )}
+              {occDeleteError && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{occDeleteError}</div>}
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" disabled={occDeleteInProgress} onClick={() => setShowOccDeleteDialog(false)} className="px-4 py-2.5 text-sm font-medium rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 disabled:opacity-50">Anuluj</button>
+                <button type="button" onClick={performDeleteOccupation} disabled={occDeleteInProgress || occDeleteEmployeesUsing.length>0} className="px-5 py-2.5 text-sm font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 inline-flex items-center gap-2">
+                  {occDeleteInProgress && <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+                  {occDeleteInProgress ? 'Usuwanie…' : 'Usuń'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
@@ -975,6 +1157,11 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
               </div>
             </div>
           </div>
+        </div>
+      )}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-3">
+          <Notification type={toast.type} message={toast.message} onClose={() => setToast(null)} />
         </div>
       )}
     </div>

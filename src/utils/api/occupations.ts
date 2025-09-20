@@ -50,20 +50,35 @@ const getOccupation = async (token : string, id: number): Promise<Occupation>=> 
 }
 
 // DELETE /api/occupations/{id}
-
-const deleteOccupation = async (token : string, id: number): Promise<Occupation>=> {
+// Returns void (204) or occupation payload depending on backend; we normalize to void.
+// On error throws enriched Error with status & backend message.
+const deleteOccupation = async (token : string, id: number): Promise<void>=> {
     const res = await fetch(`${API_URL}/api/occupations/${id}`, {
         method: 'DELETE',
         headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
         }
-    })
-    if(!res.ok)
-    {
-        throw new Error("Failed to delete occupation")
+    });
+    if (!res.ok) {
+        let backendMsg: string | undefined;
+        try {
+            const contentType = res.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                const data = await res.json().catch(() => undefined);
+                backendMsg = (data?.message || data?.error || (typeof data === 'string' ? data : undefined));
+            } else {
+                const text = await res.text();
+                backendMsg = text || undefined;
+            }
+        } catch { /* ignore parsing errors */ }
+        const err = new Error(backendMsg ? `DELETE ${res.status}: ${backendMsg}` : `Failed to delete occupation (status ${res.status})`);
+        // @ts-ignore
+        err.status = res.status;
+        throw err;
     }
-    return await res.json();
+    // Some APIs return JSON, some 204 no-content; we safely ignore body.
+    return;
 }
 
 // PUT /api/occupations/{id}
