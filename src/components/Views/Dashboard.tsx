@@ -11,48 +11,40 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients = [] }) => {
-  // --- Funkcje pomocnicze dat bez użycia toISOString (unikamy przesunięć UTC) ---
+  // === Date helpers (local timezone, avoid UTC shifts) ===
   const toYMD = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const todayDate = new Date();
-  const isoToday = toYMD(todayDate); // lokalna data
+  const isoToday = toYMD(todayDate);
   const tomorrowDate = new Date(todayDate.getTime());
-  tomorrowDate.setDate(todayDate.getDate() + 1);
-  const isoTomorrow = toYMD(tomorrowDate);
-  // Początek tygodnia (poniedziałek)
+  tomorrowDate.setDate(todayDate.getDate() + 1); // used for "tomorrow" stat tile
   const dayOfWeek = todayDate.getDay();
   const diffToMonday = (dayOfWeek + 6) % 7;
   const startOfWeek = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate() - diffToMonday);
   const endOfWeek = new Date(startOfWeek.getFullYear(), startOfWeek.getMonth(), startOfWeek.getDate() + 6, 23,59,59,999);
   const startOfMonth = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
-  // endOfMonth no longer used after backend stats refactor
-  // const startOfYear = new Date(todayDate.getFullYear(), 0, 1); // usunięte (nieużywane po czyszczeniu statystyk)
-  // Filtr: tylko spotkania z przypisaną salą (roomId niepuste) – brak sali traktujemy jako nieobecność i NIE liczymy w statystykach
-  const validMeetings = meetings.filter(m => m.roomId && m.roomId.trim().length > 0);
-
-  // Usunięto filtrowanie po specjaliście (prostota widoku)
-  // Wszystkie statystyki oparte są teraz na pełnym zbiorze validMeetings
-
-  // Użyj pacjentów z backendu przekazanych jako props
+  // === Patients list & active count ===
   const patientsList = patients;
   const activePatientsCount = React.useMemo(()=> patientsList.filter((p: any) => (p as any).isActive !== false).length, [patientsList]);
 
-  // Przygotowanie danych dla dzisiejszych spotkań (podział na kolumny przy większej liczbie)
-  const todayMeetings = validMeetings.filter(m => m.date === isoToday);
-  const sortedTodayMeetings = [...todayMeetings].sort((a,b)=>a.startTime.localeCompare(b.startTime));
-  const splitThreshold = 10; // powyżej / równo tej liczby przechodzimy na 2 kolumny
+  // === Today's on-site meetings (only with an assigned room) ===
+  const todayMeetings = meetings.filter(m => m.date === isoToday && m.roomId != null);
+  const sortedTodayMeetings = React.useMemo(()=>[
+    ...todayMeetings
+  ].sort((a,b)=> a.startTime.localeCompare(b.startTime)), [todayMeetings]);
+  const splitThreshold = 10; // switch to two-column layout at this threshold
   const useTwoColumns = sortedTodayMeetings.length >= splitThreshold;
   const midIndex = useTwoColumns ? Math.ceil(sortedTodayMeetings.length / 2) : sortedTodayMeetings.length;
   const firstColumn = sortedTodayMeetings.slice(0, midIndex);
   const secondColumn = useTwoColumns ? sortedTodayMeetings.slice(midIndex) : [];
 
-  // Załaduj pacjentów do mapy dla poprawnego wyświetlania (patientId -> full name)
+  // === Patient id -> full name map ===
   const patientsMap = React.useMemo(()=>{
     const map: Record<string,string> = {};
     patientsList.forEach((p:any)=>{ map[String(p.id)] = `${p.name ?? ''} ${p.surname ?? ''}`.trim(); });
     return map;
   }, [patientsList]);
 
-  // Pomocnicza funkcja: zamienia ID pacjenta (pXX) na pełne imię i nazwisko jeśli dostępne
+  // Resolve patient token (pXX -> full name if available)
   const resolvePatientToken = (token: string) => {
     if (/^p\d+$/i.test(token)) {
       return patientsMap[token] || token; // jeśli nie znamy, zostaw ID (ostatnia linia funkcji zamieni na '—')
@@ -60,45 +52,56 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
     return token;
   };
 
-  // Funkcja do wyświetlania nazwy pacjenta / gościa.
-  // Priorytety:
-  // 1. Jeśli jest guestName -> gość
-  // 2. Jeśli patientNamesList zawiera wpisy: mapujemy każdy token (ID -> pełna nazwa) i bierzemy pierwszy do tabeli (lub wszystkie połączone jeśli potrzeba)
-  // 3. Jeśli patientName jest już pełnym opisem (nie wygląda jak pXX)
-  // 4. Jeśli mamy patientId -> mapa
-  // 5. Inaczej '—'
-  const getPatientDisplayName = (meeting: Meeting) => {
-    if (meeting.guestName) return meeting.guestName;
-    if (meeting.patientNamesList && meeting.patientNamesList.length > 0) {
-      const mapped = meeting.patientNamesList.map(resolvePatientToken).filter(Boolean);
-      // jeśli po mapowaniu pierwszy element nadal wygląda jak pXX i brak w mapie, pokaż '—'
-      const first = mapped[0];
-      if (first && !/^p\d+$/i.test(first)) return first;
-      // jeśli wszystkie były nieznane ID i brak w mapie
-      return mapped.find(n => !/^p\d+$/i.test(n)) || '—';
+  // === Status mapping (statusId -> label & colors) ===
+  // 1 Zaplanowane, 2 W Trakcie, 3 Ukończone, 4 Nieobecny, 5 Anulowane
+  const statusIdMeta: Record<number, { label: string; color: string }> = {
+    1: { label: 'Zaplanowane', color: 'bg-blue-100 text-blue-800' },
+    2: { label: 'W Trakcie', color: 'bg-yellow-100 text-yellow-800' },
+    3: { label: 'Ukończone', color: 'bg-green-100 text-green-800' },
+    4: { label: 'Nieobecny', color: 'bg-orange-100 text-orange-800' },
+    5: { label: 'Anulowane', color: 'bg-red-100 text-red-800' },
+  };
+  const getStatusBadge = (statusId?: number) => {
+    if (!statusId) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">—</span>;
+    const meta = statusIdMeta[statusId] || { label: `#${statusId}`, color: 'bg-gray-100 text-gray-700' };
+    return <span className={`px-2 py-1 text-xs font-medium rounded-full ${meta.color}`}>{meta.label}</span>;
+  };
+
+  // Build specialists display (multi)
+  const getSpecialistsDisplay = (meeting: Meeting) => {
+    const ids = meeting.specialistIds && meeting.specialistIds.length > 0 ? meeting.specialistIds : [meeting.specialistId];
+    const names = ids.map(id => {
+      const u = users.find(us => us.id === id);
+      return u ? `${u.name}${u.surname ? ' ' + u.surname : ''}` : `#${id}`;
+    }).filter(Boolean);
+    if (names.length > 3) {
+      const remaining = names.length - 2;
+      return { short: `${names[0]}, ${names[1]} (+${remaining})`, full: names.join(', ') };
     }
-    if (meeting.patientName && !/^p\d+$/i.test(meeting.patientName)) return meeting.patientName;
-    if (meeting.patientId && patientsMap[meeting.patientId]) return patientsMap[meeting.patientId];
-    return '—';
+    return { short: names.join(', '), full: names.join(', ') };
   };
 
-  const getStatusBadge = (status: string) => {
-    const colors = {
-      'present': 'bg-green-100 text-green-800',
-      'in-progress': 'bg-yellow-100 text-yellow-800',
-      'cancelled': 'bg-red-100 text-red-800'
-    };
-    const labels = {
-      'present': 'Obecny',
-      'in-progress': 'W toku',
-      'cancelled': 'Odwołany'
-    };
-    return (
-      <span className={`px-2 py-1 text-xs font-medium rounded-full ${colors[status as keyof typeof colors]}`}>{labels[status as keyof typeof labels]}</span>
-    );
+  // Build patients / guests display (multi)
+  const getPatientsDisplay = (meeting: Meeting) => {
+    const parts: string[] = [];
+    if (meeting.guestName) parts.push(meeting.guestName);
+    if (meeting.patientNamesList && meeting.patientNamesList.length > 0) {
+      parts.push(...meeting.patientNamesList.map(resolvePatientToken));
+    } else if (meeting.patientName) {
+      parts.push(resolvePatientToken(meeting.patientName));
+    } else if (meeting.patientId) {
+      parts.push(resolvePatientToken(meeting.patientId));
+    }
+    const cleaned = parts.filter(p => p && p !== '—');
+    if (cleaned.length === 0) return { short: '—', full: '—' };
+    if (cleaned.length > 3) {
+      const remaining = cleaned.length - 2;
+      return { short: `${cleaned[0]}, ${cleaned[1]} (+${remaining})`, full: cleaned.join(', ') };
+    }
+    return { short: cleaned.join(', '), full: cleaned.join(', ') };
   };
 
-  // --- Backend statistics integration ---
+  // === Main panel statistics (backend) ===
   const [mainStats, setMainStats] = React.useState<MainPanelStatistics | null>(null);
   const [statsLoading, setStatsLoading] = React.useState(false);
   const [statsError, setStatsError] = React.useState<string | null>(null);
@@ -108,7 +111,7 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
     const load = async () => {
       setStatsLoading(true); setStatsError(null);
       try {
-        // token strategy consistent with other components
+  // token resolution
         const storedUserRaw = localStorage.getItem('schedule_current_user');
         let token: string | undefined;
         if (storedUserRaw) {
@@ -137,7 +140,7 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
     { key: 'patients', count: mainStats?.activePatients ?? activePatientsCount, label: 'AKTYWNI PODOPIECZNI', dateRange: 'Łączna liczba', icon: Users, gradient: 'from-purple-500/80 via-violet-400/70 to-indigo-400/80', disabled: !mainStats }
   ];
 
-  // ================= Nowa sekcja statystyk (rok / miesiąc + filtr pracownika) =================
+  // === Period statistics (year/month with employee filter) ===
   const currentUserScoped = React.useMemo(() => { try { return JSON.parse(localStorage.getItem('schedule_current_user') || 'null'); } catch { return null; } }, []);
   const isAdminScoped = currentUserScoped?.role === 'admin';
   const [statsMode, setStatsMode] = React.useState<'year' | 'month'>('year');
@@ -152,7 +155,7 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
   const [selectedSpecialist, setSelectedSpecialist] = React.useState<string>(isAdminScoped ? 'all' : (currentUserScoped?.id || 'all'));
   React.useEffect(() => { if (!isAdminScoped && currentUserScoped?.id) setSelectedSpecialist(currentUserScoped.id); }, [isAdminScoped, currentUserScoped]);
   const periodLabel = statsMode === 'year' ? periodYear.toString() : `${monthNames[periodMonth]} ${periodYear}`;
-  // ================= Backend month/year statistics (per employee / all) =================
+  // === Backend monthly / yearly per-employee stats ===
   interface AggregatedEmployeeStats { employeeId: number; totalEvents: number; completedEvents: number; cancelledEvents: number; absentPatients: number; }
   const [periodStatsLoading, setPeriodStatsLoading] = React.useState(false);
   const [periodStatsError, setPeriodStatsError] = React.useState<string | null>(null);
@@ -232,7 +235,7 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
     return () => { active = false; };
   }, [statsMode, periodYear, periodMonth, selectedSpecialist, isAdminScoped]);
 
-  // Derive counts for UI
+  // Aggregate counts for status tiles
   const deriveCounts = () => {
     const list = statsMode === 'month' ? monthEmployeesStats : yearEmployeesStats;
     if (!list || list.length === 0) return { total:0, completed:0, cancelled:0, absent:0 };
@@ -263,12 +266,11 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
     { label: 'Nieobecny podopieczny', value: absentCount, gradient: 'from-amber-500/80 via-orange-400/70 to-red-400/80', showPct: true }
   ];
 
-  // Animacja słupków zestawienia – rosną od 0 po każdej zmianie zakresu/statystyk
-  // Removed animatedPercents (animation dropped after backend integration)
+  // (Bar animation removed after backend integration)
 
   return (
     <div className="space-y-6">
-      {/* Sekcja statystyk spotkań na miejscu */}
+  {/* Main high-level stats tiles */}
       <div className="space-y-3">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
@@ -327,7 +329,7 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
         </div>
       </div>
 
-      {/* Dzisiejsze spotkania */}
+  {/* Today's meetings list */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="p-6 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
@@ -335,25 +337,25 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
           </h2>
         </div>
         <div className="p-0">
-          {todayMeetings.length === 0 ? (
+          {sortedTodayMeetings.length === 0 ? (
             <p className="text-gray-500 text-center py-8">Brak spotkań na dziś</p>
           ) : (
-            <div className={`relative w-full`}>{/* pełna szerokość bez max-w */}
+            <div className={`relative w-full`}>
               <div className="pointer-events-none absolute top-0 right-0 h-full w-px bg-gradient-to-b from-gray-200 via-gray-300 to-gray-200" />
               {!useTwoColumns && (
                 <>
-                  <div className="hidden md:grid grid-cols-[110px_1fr_1fr_1fr_120px] gap-4 px-6 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-600 bg-gray-50/80 border-b border-gray-200 rounded-t-xl">
+                  <div className="hidden md:grid grid-cols-[110px_1fr_1fr_1fr_120px] gap-4 px-6 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-600 bg-gray-50/80 border-b border-gray-200 rounded-t-xl sticky top-0 z-10 backdrop-blur supports-[backdrop-filter]:bg-gray-50/70">
                     <span>Godzina</span>
                     <span>Specjalista</span>
                     <span>Pacjent / Gość</span>
                     <span>Sala</span>
                     <span>Status</span>
                   </div>
-                  <div className="divide-y divide-gray-200">
+                  <div className="divide-y divide-gray-200 max-h-[520px] overflow-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
                     {firstColumn.map(meeting => {
-                      const specialist = users.find(u => u.id === meeting.specialistId);
+                      const specialistNames = getSpecialistsDisplay(meeting);
                       const room = rooms.find(r => r.id === meeting.roomId);
-                      const patientDisplay = getPatientDisplayName(meeting);
+                      const patientsDisplay = getPatientsDisplay(meeting);
                       return (
                         <div
                           className="group px-4 md:px-6 py-4 flex flex-col gap-3 md:grid md:grid-cols-[110px_1fr_1fr_1fr_120px] md:items-center bg-white hover:bg-gray-50 transition-colors"
@@ -367,11 +369,11 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
                           </div>
                           {/* Specjalista */}
                           <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">{specialist?.name}</p>
+                            <p className="text-sm font-medium text-gray-900 truncate" title={specialistNames.full}>{specialistNames.short}</p>
                           </div>
                           {/* Pacjent / Gość */}
                           <div className="min-w-0">
-                            <p className="text-sm font-semibold text-gray-800 truncate">{patientDisplay}</p>
+                            <p className="text-sm font-semibold text-gray-800 truncate" title={patientsDisplay.full}>{patientsDisplay.short}</p>
                           </div>
                           {/* Sala */}
                           <div className="min-w-0 flex items-center gap-2">
@@ -383,17 +385,17 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
                             <p className="text-sm text-gray-700 font-medium truncate">{room?.name}</p>
                           </div>
                           {/* Status */}
-                          <div className="flex items-center md:justify-start"><div className="scale-110 md:scale-100">{getStatusBadge(meeting.status)}</div></div>
+                          <div className="flex items-center md:justify-start"><div className="scale-110 md:scale-100">{getStatusBadge(meeting.statusId)}</div></div>
                           {/* Widok mobile */}
                           <div className="md:hidden">
                             <div className="flex flex-col gap-1">
                               <div className="flex items-center gap-2">
-                                <span className="text-xs font-semibold text-gray-500 uppercase">Specjalista:</span>
-                                <span className="text-sm font-medium text-gray-900">{specialist?.name}</span>
+                                <span className="text-xs font-semibold text-gray-500 uppercase">Specjaliści:</span>
+                                <span className="text-sm font-medium text-gray-900">{specialistNames.full}</span>
                               </div>
                               <div className="flex items-center gap-2">
-                                <span className="text-xs font-semibold text-gray-500 uppercase">Pacjent / Gość:</span>
-                                <span className="text-sm font-medium text-gray-900">{patientDisplay}</span>
+                                <span className="text-xs font-semibold text-gray-500 uppercase">Podopieczni / Goście:</span>
+                                <span className="text-sm font-medium text-gray-900">{patientsDisplay.full}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-xs font-semibold text-gray-500 uppercase">Sala:</span>
@@ -408,7 +410,7 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-xs font-semibold text-gray-500 uppercase">Status:</span>
-                                <span className="text-sm font-medium text-gray-900">{getStatusBadge(meeting.status)}</span>
+                                <span className="text-sm font-medium text-gray-900">{getStatusBadge(meeting.statusId)}</span>
                               </div>
                             </div>
                           </div>
@@ -419,22 +421,22 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
                 </>
               )}
               {useTwoColumns && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pr-px">{/* pr-px żeby linia stykała się ładnie */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pr-px">
                   {[firstColumn, secondColumn].map((col, idx) => (
-                    <div key={idx} className="relative bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <div key={idx} className="relative bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col max-h-[520px]">
                       {idx === 1 && <div className="pointer-events-none absolute top-0 -right-4 h-full w-px bg-gradient-to-b from-gray-200 via-gray-300 to-gray-200" />}
-                      <div className="hidden md:grid grid-cols-[105px_1fr_1fr_1fr_110px] gap-3 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600 bg-gray-50/80 border-b border-gray-200">
+                      <div className="hidden md:grid grid-cols-[105px_1fr_1fr_1fr_110px] gap-3 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600 bg-gray-50/80 border-b border-gray-200 sticky top-0 z-10 backdrop-blur supports-[backdrop-filter]:bg-gray-50/70">
                         <span>Godzina</span>
                         <span>Specjalista</span>
                         <span>Pacjent / Gość</span>
                         <span>Sala</span>
                         <span>Status</span>
                       </div>
-                      <div className="divide-y divide-gray-100">
+                      <div className="divide-y divide-gray-100 overflow-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
                         {col.map(meeting => {
-                          const specialist = users.find(u => u.id === meeting.specialistId);
+                          const specialistNames = getSpecialistsDisplay(meeting);
                           const room = rooms.find(r => r.id === meeting.roomId);
-                          const patientDisplay = getPatientDisplayName(meeting);
+                          const patientsDisplay = getPatientsDisplay(meeting);
                           return (
                             <div key={meeting.id} className="group px-4 py-3 flex flex-col gap-2 md:grid md:grid-cols-[105px_1fr_1fr_1fr_110px] md:items-center bg-white hover:bg-gray-50 transition-colors">
                               {/* Godzina */}
@@ -445,11 +447,11 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
                               </div>
                               {/* Specjalista */}
                               <div className="min-w-0">
-                                <p className="text-[13px] font-medium text-gray-900 truncate">{specialist?.name}</p>
+                                <p className="text-[13px] font-medium text-gray-900 truncate" title={specialistNames.full}>{specialistNames.short}</p>
                               </div>
                               {/* Pacjent / Gość */}
                               <div className="min-w-0">
-                                <p className="text-[13px] font-semibold text-gray-800 truncate">{patientDisplay}</p>
+                                <p className="text-[13px] font-semibold text-gray-800 truncate" title={patientsDisplay.full}>{patientsDisplay.short}</p>
                               </div>
                               {/* Sala */}
                               <div className="min-w-0 flex items-center gap-2">
@@ -461,17 +463,17 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
                                 <p className="text-[12px] font-medium text-gray-700 truncate">{room?.name}</p>
                               </div>
                               {/* Status */}
-                              <div className="flex items-center">{getStatusBadge(meeting.status)}</div>
+                              <div className="flex items-center">{getStatusBadge(meeting.statusId)}</div>
                               {/* Mobile extra */}
                               <div className="md:hidden">
                                 <div className="flex flex-col gap-1">
                                   <div className="flex items-center gap-2">
-                                    <span className="text-xs font-semibold text-gray-500 uppercase">Specjalista:</span>
-                                    <span className="text-sm font-medium text-gray-900">{specialist?.name}</span>
+                                    <span className="text-xs font-semibold text-gray-500 uppercase">Specjaliści:</span>
+                                    <span className="text-sm font-medium text-gray-900">{specialistNames.full}</span>
                                   </div>
                                   <div className="flex items-center gap-2">
-                                    <span className="text-xs font-semibold text-gray-500 uppercase">Pacjent / Gość:</span>
-                                    <span className="text-sm font-medium text-gray-900">{patientDisplay}</span>
+                                    <span className="text-xs font-semibold text-gray-500 uppercase">Podopieczni / Goście:</span>
+                                    <span className="text-sm font-medium text-gray-900">{patientsDisplay.full}</span>
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <span className="text-xs font-semibold text-gray-500 uppercase">Sala:</span>
@@ -486,7 +488,7 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <span className="text-xs font-semibold text-gray-500 uppercase">Status:</span>
-                                    <span className="text-sm font-medium text-gray-900">{getStatusBadge(meeting.status)}</span>
+                                    <span className="text-sm font-medium text-gray-900">{getStatusBadge(meeting.statusId)}</span>
                                   </div>
                                 </div>
                               </div>
@@ -503,12 +505,10 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
         </div>
       </div>
 
-      {/* Statystyki spotkań (globalne / per pracownik) */}
+  {/* Period statistics (global / per employee) */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="p-6 border-b border-gray-200 flex flex-col gap-4">
-          {/** Dynamic heading text based on role */}
-          {/** Admin: "Statystyki spotkań wybranych pracowników" | Others: "Moje statystyki spotkań" */}
-          {/** isAdminScoped already computed above */}
+          {/* Dynamic heading text based on role */}
           <div className="flex items-center justify-between flex-wrap gap-4">
             <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
               <BarChart3 className="h-5 w-5 text-indigo-600" /> {isAdminScoped ? 'Statystyki spotkań wybranych pracowników' : 'Moje statystyki spotkań'}
@@ -570,7 +570,7 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
           )}
           <div className="grid grid-cols-1 gap-6">
             <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-              {/* Heading moved above tiles */}
+              {/* Breakdown bars */}
               <div className="space-y-3">
                 {[{id:'present',label:'Odbyło się', value:presentCount, color:'bg-green-500'}, {id:'cancelled',label:'Odwołane', value:cancelledCount, color:'bg-rose-500'}, {id:'absent',label:'Nieobecny podopieczny', value:absentCount, color:'bg-amber-500'}].map(row => (
                   <div key={row.id} className="flex items-center gap-3">
