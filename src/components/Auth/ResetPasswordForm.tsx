@@ -15,26 +15,41 @@ const ResetPasswordForm: React.FC<ResetPasswordFormProps> = ({ onResetSuccess, o
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Dummy handlers for demonstration
-  const handleForgot = (e: React.FormEvent) => {
+  // Obsługa backendu
+  const handleForgot = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    setError(null);
+    setInfo(null);
+    try {
+      await forgotPassword({ email });
       setStep(2);
       setInfo('Kod został wysłany na email.');
-      setError(null);
-    }, 1000);
+    } catch (err: any) {
+      if (err?.message?.toLowerCase().includes('email') || err?.message?.toLowerCase().includes('not found')) {
+        setError('Podany email nie istnieje w bazie.');
+      } else {
+        setError('Nie udało się wysłać kodu resetującego.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
-  const handleReset = (e: React.FormEvent) => {
+
+  const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    setError(null);
+    setInfo(null);
+    try {
+      await resetPassword({ email, token, newPassword });
       setInfo('Hasło zostało zmienione.');
-      setError(null);
       onResetSuccess();
-    }, 1000);
+    } catch (err: any) {
+      setError('Nie udało się zresetować hasła.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
