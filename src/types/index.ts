@@ -313,3 +313,26 @@ export interface UpdateEmployeeTask {
   dueDate: string;
   assignedEmployeesIds: number[];
 }
+
+// statistics
+// /api/statistics/main-panel
+export interface MainPanelStatistics {
+  today: number;          // liczba wydarzeń dziś
+  tomorrow: number;       // liczba wydarzeń jutro
+  thisWeek: number;       // liczba wydarzeń w bieżącym tygodniu
+  thisMonth: number;      // liczba wydarzeń w bieżącym miesiącu
+  activePatients: number; // liczba aktywnych pacjentów
+}
+
+// element tablicy z /api/statistics oraz /api/statistics/me
+export interface EmployeeMonthlyStatistic {
+  employeeId: number;
+  totalEvents: number;
+  completedEvents: number;
+  cancelledEvents: number;
+  absentPatients: number;
+}
+
+// aliasy ułatwiające semantykę w komponentach
+export type EmployeesMonthlyStatistics = EmployeeMonthlyStatistic[]; // /api/statistics?year=YYYY&month=M
+export type MyMonthlyStatistics = EmployeeMonthlyStatistic[];        // /api/statistics/me?year=YYYY&month=M
