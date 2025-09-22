@@ -1,6 +1,7 @@
 import React from 'react';
 import { Calendar, BarChart3, Users, ChevronLeft, ChevronRight } from 'lucide-react';
-import { User, Room, Meeting, Patient } from '../../types';
+import { User, Room, Meeting, Patient, MainPanelStatistics } from '../../types';
+import { fetchMainPanelStatistics, fetchMyMonthlyStatistics, fetchEmployeesMonthlyStatistics } from '../../utils/api/statistics';
 
 interface DashboardProps {
   users: User[];
@@ -17,14 +18,13 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
   const tomorrowDate = new Date(todayDate.getTime());
   tomorrowDate.setDate(todayDate.getDate() + 1);
   const isoTomorrow = toYMD(tomorrowDate);
-  const parseISO = (s: string) => { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); };
   // Początek tygodnia (poniedziałek)
   const dayOfWeek = todayDate.getDay();
   const diffToMonday = (dayOfWeek + 6) % 7;
   const startOfWeek = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate() - diffToMonday);
   const endOfWeek = new Date(startOfWeek.getFullYear(), startOfWeek.getMonth(), startOfWeek.getDate() + 6, 23,59,59,999);
   const startOfMonth = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
-  const endOfMonth = new Date(todayDate.getFullYear(), todayDate.getMonth()+1, 0, 23,59,59,999);
+  // endOfMonth no longer used after backend stats refactor
   // const startOfYear = new Date(todayDate.getFullYear(), 0, 1); // usunięte (nieużywane po czyszczeniu statystyk)
   // Filtr: tylko spotkania z przypisaną salą (roomId niepuste) – brak sali traktujemy jako nieobecność i NIE liczymy w statystykach
   const validMeetings = meetings.filter(m => m.roomId && m.roomId.trim().length > 0);
@@ -32,17 +32,12 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
   // Usunięto filtrowanie po specjaliście (prostota widoku)
   // Wszystkie statystyki oparte są teraz na pełnym zbiorze validMeetings
 
-  // Filtry na podstawie validMeetings -> teraz używamy filteredValidMeetings
-  const todayMeetings = validMeetings.filter(m => m.date === isoToday);
-  const tomorrowMeetings = validMeetings.filter(m => m.date === isoTomorrow);
-  const weekMeetings = validMeetings.filter(m => { const d = parseISO(m.date); return d >= startOfWeek && d <= endOfWeek; });
-  const monthMeetings = validMeetings.filter(m => { const d = parseISO(m.date); return d >= startOfMonth && d <= endOfMonth; });
-
   // Użyj pacjentów z backendu przekazanych jako props
   const patientsList = patients;
   const activePatientsCount = React.useMemo(()=> patientsList.filter((p: any) => (p as any).isActive !== false).length, [patientsList]);
 
   // Przygotowanie danych dla dzisiejszych spotkań (podział na kolumny przy większej liczbie)
+  const todayMeetings = validMeetings.filter(m => m.date === isoToday);
   const sortedTodayMeetings = [...todayMeetings].sort((a,b)=>a.startTime.localeCompare(b.startTime));
   const splitThreshold = 10; // powyżej / równo tej liczby przechodzimy na 2 kolumny
   const useTwoColumns = sortedTodayMeetings.length >= splitThreshold;
@@ -103,13 +98,43 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
     );
   };
 
-  interface StatTile { key:string; count:number; label:string; dateRange:string; icon:any; gradient:string; }
-  const stats: StatTile[] = [
-    { key: 'today', count: todayMeetings.length, label: 'DZIŚ', dateRange: todayDate.toLocaleDateString('pl-PL'), icon: Calendar, gradient: 'from-blue-500/80 via-sky-400/70 to-cyan-400/80' },
-    { key: 'tomorrow', count: tomorrowMeetings.length, label: 'JUTRO', dateRange: tomorrowDate.toLocaleDateString('pl-PL'), icon: Calendar, gradient: 'from-fuchsia-500/80 via-pink-400/70 to-rose-400/80' },
-    { key: 'week', count: weekMeetings.length, label: 'W TYM TYGODNIU', dateRange: `${startOfWeek.toLocaleDateString('pl-PL')} – ${endOfWeek.toLocaleDateString('pl-PL')}`, icon: Calendar, gradient: 'from-emerald-500/80 via-green-400/70 to-lime-400/80' },
-    { key: 'month', count: monthMeetings.length, label: 'W TYM MIESIĄCU', dateRange: startOfMonth.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' }).toUpperCase(), icon: Calendar, gradient: 'from-amber-400/80 via-orange-400/70 to-red-400/80' },
-    { key: 'patients', count: activePatientsCount, label: 'AKTYWNI PODOPIECZNI', dateRange: 'Łączna liczba', icon: Users, gradient: 'from-purple-500/80 via-violet-400/70 to-indigo-400/80' }
+  // --- Backend statistics integration ---
+  const [mainStats, setMainStats] = React.useState<MainPanelStatistics | null>(null);
+  const [statsLoading, setStatsLoading] = React.useState(false);
+  const [statsError, setStatsError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setStatsLoading(true); setStatsError(null);
+      try {
+        // token strategy consistent with other components
+        const storedUserRaw = localStorage.getItem('schedule_current_user');
+        let token: string | undefined;
+        if (storedUserRaw) {
+          try { token = JSON.parse(storedUserRaw)?.token; } catch { /* ignore */ }
+        }
+        token = token || localStorage.getItem('token') || undefined;
+        if (!token) throw new Error('Brak tokenu autoryzacji');
+        const data = await fetchMainPanelStatistics(token);
+        if (mounted) setMainStats(data);
+      } catch (e:any) {
+        if (mounted) setStatsError(e.message || 'Nie udało się pobrać statystyk');
+      } finally {
+        if (mounted) setStatsLoading(false);
+      }
+    };
+    load();
+    return () => { mounted = false; };
+  }, []);
+
+  interface StatTile { key:string; count:number; label:string; dateRange:string; icon:any; gradient:string; disabled?: boolean; }
+  const stats: (StatTile & { weekStart?: string; weekEnd?: string })[] = [
+    { key: 'today', count: mainStats?.today ?? 0, label: 'DZIŚ', dateRange: todayDate.toLocaleDateString('pl-PL'), icon: Calendar, gradient: 'from-blue-500/80 via-sky-400/70 to-cyan-400/80', disabled: !mainStats },
+    { key: 'tomorrow', count: mainStats?.tomorrow ?? 0, label: 'JUTRO', dateRange: tomorrowDate.toLocaleDateString('pl-PL'), icon: Calendar, gradient: 'from-fuchsia-500/80 via-pink-400/70 to-rose-400/80', disabled: !mainStats },
+    { key: 'week', count: mainStats?.thisWeek ?? 0, label: 'W TYM TYGODNIU', dateRange: `${startOfWeek.toLocaleDateString('pl-PL')} – ${endOfWeek.toLocaleDateString('pl-PL')}`, weekStart: startOfWeek.toLocaleDateString('pl-PL'), weekEnd: endOfWeek.toLocaleDateString('pl-PL'), icon: Calendar, gradient: 'from-emerald-500/80 via-green-400/70 to-lime-400/80', disabled: !mainStats },
+    { key: 'month', count: mainStats?.thisMonth ?? 0, label: 'W TYM MIESIĄCU', dateRange: startOfMonth.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' }).toUpperCase(), icon: Calendar, gradient: 'from-amber-400/80 via-orange-400/70 to-red-400/80', disabled: !mainStats },
+    { key: 'patients', count: mainStats?.activePatients ?? activePatientsCount, label: 'AKTYWNI PODOPIECZNI', dateRange: 'Łączna liczba', icon: Users, gradient: 'from-purple-500/80 via-violet-400/70 to-indigo-400/80', disabled: !mainStats }
   ];
 
   // ================= Nowa sekcja statystyk (rok / miesiąc + filtr pracownika) =================
@@ -127,16 +152,109 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
   const [selectedSpecialist, setSelectedSpecialist] = React.useState<string>(isAdminScoped ? 'all' : (currentUserScoped?.id || 'all'));
   React.useEffect(() => { if (!isAdminScoped && currentUserScoped?.id) setSelectedSpecialist(currentUserScoped.id); }, [isAdminScoped, currentUserScoped]);
   const periodLabel = statsMode === 'year' ? periodYear.toString() : `${monthNames[periodMonth]} ${periodYear}`;
-  const periodMeetings = React.useMemo(() => validMeetings.filter(m => {
-    const d = parseISO(m.date);
-    return statsMode === 'year' ? d.getFullYear() === periodYear : (d.getFullYear() === periodYear && d.getMonth() === periodMonth);
-  }), [validMeetings, statsMode, periodYear, periodMonth]);
-  const isMeetingForSpecialist = (m: Meeting, spec: string) => m.specialistId === spec || m.specialistIds?.includes(spec);
-  const scopedMeetings = React.useMemo(() => selectedSpecialist === 'all' ? periodMeetings : periodMeetings.filter(m => isMeetingForSpecialist(m, selectedSpecialist)), [periodMeetings, selectedSpecialist]);
-  const totalCount = scopedMeetings.length;
-  const presentCount = scopedMeetings.filter(m => m.status === 'present').length;
-  const cancelledCount = scopedMeetings.filter(m => m.status === 'cancelled').length;
-  const absentCount = scopedMeetings.filter(m => m.status === 'absent').length;
+  // ================= Backend month/year statistics (per employee / all) =================
+  interface AggregatedEmployeeStats { employeeId: number; totalEvents: number; completedEvents: number; cancelledEvents: number; absentPatients: number; }
+  const [periodStatsLoading, setPeriodStatsLoading] = React.useState(false);
+  const [periodStatsError, setPeriodStatsError] = React.useState<string | null>(null);
+  const [yearEmployeesStats, setYearEmployeesStats] = React.useState<AggregatedEmployeeStats[] | null>(null); // for year mode (all employees aggregated across months)
+  const [monthEmployeesStats, setMonthEmployeesStats] = React.useState<AggregatedEmployeeStats[] | null>(null); // for month mode
+
+  React.useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setPeriodStatsLoading(true); setPeriodStatsError(null);
+      try {
+        // token retrieval
+        const storedUserRaw = localStorage.getItem('schedule_current_user');
+        let token: string | undefined;
+        if (storedUserRaw) { try { token = JSON.parse(storedUserRaw)?.token; } catch { /* ignore */ } }
+        token = token || localStorage.getItem('token') || undefined;
+        if (!token) throw new Error('Brak tokenu autoryzacji');
+
+        if (statsMode === 'month') {
+          // Single month fetch
+            if (isAdminScoped) {
+              const all = await fetchEmployeesMonthlyStatistics(periodYear, periodMonth + 1, token);
+              if (!active) return;
+              setMonthEmployeesStats(all.map(e => ({...e})));
+              setYearEmployeesStats(null);
+            } else {
+              const mine = await fetchMyMonthlyStatistics(periodYear, periodMonth + 1, token);
+              if (!active) return;
+              setMonthEmployeesStats(mine.map(e => ({...e})));
+              setYearEmployeesStats(null);
+            }
+        } else { // year mode
+          // Need to aggregate 12 months (or up to current month). We'll fetch 12 for completeness.
+          const months = Array.from({length:12}, (_,i)=>i+1);
+          if (isAdminScoped) {
+            const perMonthArrays = await Promise.all(months.map(m => fetchEmployeesMonthlyStatistics(periodYear, m, token).catch(()=>[])));
+            if (!active) return;
+            // Aggregate per employeeId
+            const map = new Map<number, AggregatedEmployeeStats>();
+            for (const arr of perMonthArrays) {
+              for (const rec of arr as AggregatedEmployeeStats[]) {
+                const existing = map.get(rec.employeeId) || { employeeId: rec.employeeId, totalEvents:0, completedEvents:0, cancelledEvents:0, absentPatients:0 };
+                existing.totalEvents += rec.totalEvents;
+                existing.completedEvents += rec.completedEvents;
+                existing.cancelledEvents += rec.cancelledEvents;
+                existing.absentPatients += rec.absentPatients;
+                map.set(rec.employeeId, existing);
+              }
+            }
+            setYearEmployeesStats(Array.from(map.values()));
+            setMonthEmployeesStats(null);
+          } else {
+            const perMonthArrays = await Promise.all(months.map(m => fetchMyMonthlyStatistics(periodYear, m, token).catch(()=>[])));
+            if (!active) return;
+            // Each array should contain a single record for the logged user
+            const agg = { employeeId: -1, totalEvents:0, completedEvents:0, cancelledEvents:0, absentPatients:0 } as AggregatedEmployeeStats;
+            for (const arr of perMonthArrays) {
+              for (const rec of arr as AggregatedEmployeeStats[]) {
+                agg.employeeId = rec.employeeId;
+                agg.totalEvents += rec.totalEvents;
+                agg.completedEvents += rec.completedEvents;
+                agg.cancelledEvents += rec.cancelledEvents;
+                agg.absentPatients += rec.absentPatients;
+              }
+            }
+            setYearEmployeesStats([agg]);
+            setMonthEmployeesStats(null);
+          }
+        }
+      } catch (e:any) {
+        if (active) setPeriodStatsError(e.message || 'Nie udało się pobrać statystyk okresu');
+      } finally {
+        if (active) setPeriodStatsLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [statsMode, periodYear, periodMonth, selectedSpecialist, isAdminScoped]);
+
+  // Derive counts for UI
+  const deriveCounts = () => {
+    const list = statsMode === 'month' ? monthEmployeesStats : yearEmployeesStats;
+    if (!list || list.length === 0) return { total:0, completed:0, cancelled:0, absent:0 };
+    if (isAdminScoped) {
+      if (selectedSpecialist === 'all') {
+        return list.reduce((acc, r) => ({
+          total: acc.total + r.totalEvents,
+          completed: acc.completed + r.completedEvents,
+          cancelled: acc.cancelled + r.cancelledEvents,
+            absent: acc.absent + r.absentPatients
+        }), { total:0, completed:0, cancelled:0, absent:0 });
+      } else {
+        const numericId = parseInt(String(selectedSpecialist),10);
+        const rec = list.find(r => r.employeeId === numericId);
+        return rec ? { total: rec.totalEvents, completed: rec.completedEvents, cancelled: rec.cancelledEvents, absent: rec.absentPatients } : { total:0, completed:0, cancelled:0, absent:0 };
+      }
+    } else {
+      const rec = list[0];
+      return { total: rec.totalEvents, completed: rec.completedEvents, cancelled: rec.cancelledEvents, absent: rec.absentPatients };
+    }
+  };
+  const { total: totalCount, completed: presentCount, cancelled: cancelledCount, absent: absentCount } = deriveCounts();
   const percent = (part: number) => totalCount ? Math.round((part / totalCount) * 100) : 0;
   const statusTiles = [
     { label: 'Łącznie', value: totalCount, gradient: 'from-slate-500/80 via-slate-400/70 to-slate-300/80', showPct: false },
@@ -146,19 +264,7 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
   ];
 
   // Animacja słupków zestawienia – rosną od 0 po każdej zmianie zakresu/statystyk
-  const [animatedPercents, setAnimatedPercents] = React.useState({present:0, cancelled:0, absent:0});
-  React.useEffect(() => {
-    // reset do 0 (force reflow + anim)
-    setAnimatedPercents({present:0, cancelled:0, absent:0});
-    const id = requestAnimationFrame(() => {
-      setAnimatedPercents({
-        present: percent(presentCount),
-        cancelled: percent(cancelledCount),
-        absent: percent(absentCount)
-      });
-    });
-    return () => cancelAnimationFrame(id);
-  }, [statsMode, periodYear, periodMonth, selectedSpecialist, presentCount, cancelledCount, absentCount, totalCount]);
+  // Removed animatedPercents (animation dropped after backend integration)
 
   return (
     <div className="space-y-6">
@@ -171,29 +277,50 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
           {stats.map(stat => {
+            const isLoading = statsLoading && !mainStats;
             return (
               <div
                 key={stat.key}
-                className="relative overflow-hidden rounded-3xl shadow-[0_8px_30px_-6px_rgba(0,0,0,0.12)] border border-white/30 bg-white/60 backdrop-blur-xl p-5 transition-all duration-500 hover:shadow-[0_12px_40px_-4px_rgba(0,0,0,0.18)] group"
+                className={`relative overflow-hidden rounded-3xl shadow-[0_8px_30px_-6px_rgba(0,0,0,0.12)] border border-white/30 bg-white/60 backdrop-blur-xl p-4 md:p-5 transition-all duration-500 group ${stat.disabled ? 'opacity-70' : ''} min-w-[150px]`}
               >
                 <div className={`pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-700 bg-gradient-to-br ${stat.gradient} mix-blend-overlay`} />
                 <div className="pointer-events-none absolute inset-0 [mask-image:radial-gradient(circle_at_30%_30%,white,transparent_70%)] opacity-40" style={{backgroundImage:'repeating-linear-gradient(135deg,rgba(255,255,255,0.18)_0_10px,transparent_10px_20px)'}} />
-                <div className="relative grid items-center gap-3 grid-cols-[auto_1fr_auto]">
-                  <div className="flex flex-col items-start">
-                    <span className="text-5xl leading-none font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent drop-shadow-sm">
-                      {stat.count}
-                    </span>
+                <div className="relative flex md:grid items-center gap-3 md:grid-cols-[auto_1fr_auto] min-h-[78px] w-full">
+                  <div className="flex flex-col items-start shrink-0">
+                    {isLoading ? (
+                      <span className="w-10 h-8 rounded-md bg-gray-200 animate-pulse" />
+                    ) : (
+                      <span className="text-4xl md:text-5xl leading-none font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent drop-shadow-sm">
+                        {stat.count}
+                      </span>
+                    )}
                   </div>
-                  <div className="flex flex-col items-center justify-center text-center px-1">
-                    <p className="text-[12px] font-semibold tracking-wide text-gray-500 uppercase">{stat.label}</p>
-                    <p className={`mt-1 text-sm font-medium text-gray-700 leading-snug break-words ${stat.key==='week' ? 'whitespace-nowrap' : ''}`}>{stat.dateRange}</p>
+                  <div className="flex flex-col items-center justify-center text-center px-0 md:px-1 flex-1">
+                    <p className="text-[11px] md:text-[12px] font-semibold tracking-wide text-gray-500 uppercase leading-tight">{stat.label}</p>
+                    <div className={`mt-1 text-xs md:text-sm font-medium text-gray-700 leading-snug break-words text-center ${stat.key==='week' ? 'space-y-0.5' : ''}`}>
+                      {isLoading ? (
+                        <span className="inline-block h-3 w-16 md:w-20 rounded bg-gray-200 animate-pulse" />
+                      ) : stat.key === 'week' && stat.weekStart && stat.weekEnd ? (
+                        <>
+                          <span>{stat.weekStart} –</span><br />
+                          <span>{stat.weekEnd}</span>
+                        </>
+                      ) : (
+                        stat.dateRange
+                      )}
+                    </div>
                   </div>
-                  <div className="flex justify-end items-start">
-                    <div className={`p-3 rounded-2xl bg-gradient-to-br ${stat.gradient} text-white shadow-md ring-1 ring-white/40 transition-transform duration-500 group-hover:scale-110 group-hover:rotate-3`}>
-                      <stat.icon className="h-6 w-6 drop-shadow" />
+                  <div className="flex justify-end items-start shrink-0 self-start md:self-auto ml-auto">
+                    <div className={`p-2.5 md:p-3 rounded-2xl bg-gradient-to-br ${stat.gradient} text-white shadow-md ring-1 ring-white/40 transition-transform duration-500 group-hover:scale-110 group-hover:rotate-3`}> 
+                      <stat.icon className="h-5 w-5 md:h-6 md:w-6 drop-shadow" />
                     </div>
                   </div>
                 </div>
+                {statsError && stat.key === 'today' && (
+                  <div className="absolute inset-x-0 bottom-0 px-3 py-1 bg-red-50 text-[11px] text-red-600 font-medium border-t border-red-200">
+                    {statsError}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -379,9 +506,12 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
       {/* Statystyki spotkań (globalne / per pracownik) */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="p-6 border-b border-gray-200 flex flex-col gap-4">
+          {/** Dynamic heading text based on role */}
+          {/** Admin: "Statystyki spotkań wybranych pracowników" | Others: "Moje statystyki spotkań" */}
+          {/** isAdminScoped already computed above */}
           <div className="flex items-center justify-between flex-wrap gap-4">
             <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-indigo-600" /> Statystyki spotkań
+              <BarChart3 className="h-5 w-5 text-indigo-600" /> {isAdminScoped ? 'Statystyki spotkań wybranych pracowników' : 'Moje statystyki spotkań'}
             </h2>
             <div className="flex items-center gap-3 flex-wrap justify-end">
               <div className="inline-flex rounded-lg overflow-hidden border border-gray-200 bg-gray-50">
@@ -397,18 +527,35 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
           </div>
           {isAdminScoped && (
             <div className="flex flex-wrap gap-2 justify-center pt-1">
-              <button onClick={()=>setSelectedSpecialist('all')} className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${selectedSpecialist==='all' ? 'bg-indigo-600 text-white border-indigo-600 shadow' : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-200'}`}>Wszyscy</button>
-              {users.map(u=> (
-                <button key={u.id} onClick={()=>setSelectedSpecialist(u.id)} className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${selectedSpecialist===u.id ? 'bg-indigo-600 text-white border-indigo-600 shadow' : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-200'}`}>{u.name}</button>
-              ))}
+              <button
+                onClick={()=>setSelectedSpecialist('all')}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${selectedSpecialist==='all' ? 'bg-indigo-600 text-white border-indigo-600 shadow' : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-200'}`}
+              >Wszyscy</button>
+              {users.map(u=> {
+                const fullName = `${u.name || ''} ${u.surname || ''}`.trim();
+                return (
+                  <button
+                    key={u.id}
+                    onClick={()=>setSelectedSpecialist(u.id)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${selectedSpecialist===u.id ? 'bg-indigo-600 text-white border-indigo-600 shadow' : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-200'}`}
+                    title={fullName}
+                  >{fullName}</button>
+                );
+              })}
             </div>
           )}
         </div>
         <div className="p-6 space-y-8">
+          <h3 className="text-sm font-semibold text-gray-800 tracking-wide uppercase mb-2">Zestawienie spotkań w siedzibie fundacji</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {statusTiles.map(tile => (
-              <div key={tile.label} className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur p-4 border border-gray-200 group shadow-sm hover:shadow transition">
+              <div key={tile.label} className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur p-4 border border-gray-200 group shadow-sm hover:shadow transition min-h-[92px]">
                 <div className={`pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-700 bg-gradient-to-br ${tile.gradient} mix-blend-overlay`} />
+                {periodStatsLoading && (
+                  <div className="absolute inset-0 bg-white/60 flex items-center justify-center">
+                    <div className="h-5 w-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" aria-label="Ładowanie" />
+                  </div>
+                )}
                 <div className="relative flex flex-col">
                   <span className="text-3xl font-bold text-gray-900">{tile.value}</span>
                   <span className="mt-1 text-[11px] font-semibold tracking-wide text-gray-600 uppercase leading-tight">{tile.label}</span>
@@ -416,9 +563,14 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
               </div>
             ))}
           </div>
+          {periodStatsError && (
+            <div className="text-sm text-red-600 font-medium bg-red-50 border border-red-200 rounded-lg px-4 py-2">
+              {periodStatsError}
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-6">
             <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-800 tracking-wide uppercase mb-3">Zestawienie spotkań w siedzibie fundacji</h3>
+              {/* Heading moved above tiles */}
               <div className="space-y-3">
                 {[{id:'present',label:'Odbyło się', value:presentCount, color:'bg-green-500'}, {id:'cancelled',label:'Odwołane', value:cancelledCount, color:'bg-rose-500'}, {id:'absent',label:'Nieobecny podopieczny', value:absentCount, color:'bg-amber-500'}].map(row => (
                   <div key={row.id} className="flex items-center gap-3">
@@ -431,9 +583,9 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
                       <div className="h-2 mt-1 w-full rounded-full bg-gray-200 overflow-hidden">
                         <div
                           className={`${row.color} h-full transition-all duration-700 ease-out`}
-                          style={{width: `${animatedPercents[row.id as 'present'|'cancelled'|'absent']}%`}}
-                          aria-label={`${row.label} ${animatedPercents[row.id as 'present'|'cancelled'|'absent']}%`}
-                          aria-valuenow={animatedPercents[row.id as 'present'|'cancelled'|'absent']}
+                          style={{width: `${periodStatsLoading ? 0 : percent(row.value)}%`}}
+                          aria-label={`${row.label} ${percent(row.value)}%`}
+                          aria-valuenow={percent(row.value)}
                           aria-valuemin={0}
                           aria-valuemax={100}
                           role="progressbar"
