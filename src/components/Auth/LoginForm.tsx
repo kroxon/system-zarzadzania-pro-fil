@@ -1,4 +1,7 @@
 import React, { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { loginUser } from '../../utils/api/auth';
+import { fetchUserById } from '../../utils/api/user';
 import { User as UserIcon } from 'lucide-react';
 import RegisterForm from './RegisterForm';
 import ResetPasswordForm from './ResetPasswordForm';
@@ -9,6 +12,8 @@ interface LoginFormProps {
 }
 
 const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
+  const navigate = useNavigate();
+  // ...existing code...
   // Flip tylko login <-> register, reset fade
   const [isRegistering, setIsRegistering] = useState(false);
   const [resetFlip, setResetFlip] = useState<'none' | 'in' | 'out'>('none');
@@ -31,7 +36,32 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
 
   const [loginData, setLoginData] = useState({ username: '', password: '' });
   const [loginSuccess, setLoginSuccess] = useState(false);
-  // ...pozostałe hooki i logika
+
+  // Obsługa logowania z backendem
+  const handleFormLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const response = await loginUser({
+        email: loginData.username,
+        password: loginData.password
+      });
+      localStorage.setItem('token', response.token);
+
+      // Pobierz dane użytkownika po employeeId
+      if (response.employeeId && onLogin) {
+        try {
+          const userData = await fetchUserById(response.employeeId, response.token);
+          onLogin(userData, response.token);
+        } catch (err) {
+          alert('Nie udało się pobrać danych użytkownika');
+        }
+      }
+  setLoginSuccess(true);
+  navigate('/dashboard');
+    } catch (error) {
+      alert('Nieprawidłowy login lub hasło');
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-transparent">
@@ -87,7 +117,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                   <h2 className="text-2xl font-bold text-gray-900">Logowanie</h2>
                   <p className="text-gray-600 mt-2">Zaloguj się lub zarejestruj nowe konto</p>
                 </div>
-                <form className="space-y-4" onSubmit={e => { e.preventDefault(); /* handleFormLogin */ }}>
+                <form className="space-y-4" onSubmit={handleFormLogin}>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Login</label>
                     <input
