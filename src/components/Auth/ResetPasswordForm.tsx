@@ -54,7 +54,7 @@ const ResetPasswordForm: React.FC<ResetPasswordFormProps> = ({ onResetSuccess, o
 
   return (
     <div className="w-full flex flex-col justify-center items-center">
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow p-6 flex flex-col justify-center items-center">
+  <div className="w-full max-w-sm bg-white p-4 flex flex-col justify-center items-center">
         {step === 1 && (
           <form className="space-y-4 w-full" onSubmit={handleForgot}>
             <div>
