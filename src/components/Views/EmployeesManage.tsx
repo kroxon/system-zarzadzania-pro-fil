@@ -3,6 +3,7 @@ import Notification from '../common/Notification';
 import { User } from '../../types';
 import { X, Pencil, Trash2, ChevronDown, Plus } from 'lucide-react';
 import { fetchEmployees, fetchEmployee, updateEmployee, deleteEmployee, assignPatientsToEmployee, unassignPatientsFromEmployee } from '../../utils/api/employees';
+import { FileText } from 'lucide-react';
 import { mapBackendRolesToFrontend } from '../../utils/roleMapper';
 import type { Employee as ApiEmployee, Occupation, Patient } from '../../types';
 import { fetchPatients } from '../../utils/api/patients';
@@ -18,6 +19,30 @@ interface EmployeesManageProps {
 }
 
 const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdate, onDelete, onBackendRefresh }) => {
+  // Funkcja generująca raport PDF dla pracownika
+  const handleGenerateEmployeeReport = async (user: User) => {
+    // Możesz dodać wybór miesiąca/roku, na razie bieżący miesiąc/rok
+    const now = new Date();
+    const month = now.getMonth() + 1; // JS: 0-based
+    const year = now.getFullYear();
+    const token = localStorage.getItem('token') || '';
+    try {
+      // Import funkcji pobierającej raport
+      const { fetchEmployeeReport } = await import('../../utils/api/employees');
+      const blob = await fetchEmployeeReport(Number(user.id), month, year, token);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `raport_pracownika_${user.surname}_${user.name}_${month}_${year}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // Możesz dodać powiadomienie o błędzie
+      console.error('Błąd pobierania raportu pracownika:', err);
+    }
+  };
   // Reusable classes for table header cells (maintain visual consistency)
   const TH_BASE = 'px-4 text-left text-[11px] font-semibold tracking-wider uppercase text-gray-600 border border-gray-200 bg-gray-50';
   // Start with demo/local users; backend kept separately and shown below
@@ -606,6 +631,14 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                       className="p-2 rounded-md border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400"
                     >
                       <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleGenerateEmployeeReport(u)}
+                      aria-label="Generuj raport"
+                      title="Generuj raport PDF"
+                      className="p-2 rounded-md border border-green-200 bg-green-50 text-green-600 hover:bg-green-100 hover:border-green-300 transition-colors focus:outline-none focus:ring-2 focus:ring-green-400"
+                    >
+                      <FileText className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => openDeleteDialog(u)}
