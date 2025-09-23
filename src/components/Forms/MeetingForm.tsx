@@ -295,6 +295,10 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     }
     const newErrors: string[] = [];
     if (!formData.specialistIds.length) newErrors.push('Wybierz co najmniej jednego specjalistę');
+    // Wymuś udział zalogowanego pracownika w spotkaniu które tworzy
+    if (currentUser.role === 'employee' && !formData.specialistIds.includes(currentUser.id)) {
+      newErrors.push('Jako pracownik musisz być uczestnikiem spotkania');
+    }
     // patient optional – no error
     if (!formData.roomId) newErrors.push('Wybierz salę');
     if (!formData.startTime || !formData.endTime) newErrors.push('Określ godziny spotkania');
@@ -310,10 +314,13 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     formData.specialistIds.forEach(id => {
       const u = users.find(u=>u.id===id);
       const fullName = u ? `${u.surname} ${u.name}` : id;
-      if (!isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime)) {
-        newErrors.push(`Specjalista (${fullName}) jest niedostępny`);
-      } else if (specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) {
-        newErrors.push(`Specjalista (${fullName}) jest zajęty`);
+      // Dostępność sprawdzamy tylko dla pracowników
+      if (u?.role === 'employee') {
+        if (!isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime)) {
+          newErrors.push(`Specjalista (${fullName}) jest niedostępny`);
+        } else if (specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) {
+          newErrors.push(`Specjalista (${fullName}) jest zajęty`);
+        }
       }
     });
     if (roomHasConflict(formData.roomId, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) newErrors.push('Sala jest zajęta w tym przedziale czasu');
@@ -897,58 +904,56 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                       <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto text-[15px]">
                         <ul className="py-1">
                           {users
-                            .filter(u=>u.role==='employee')
                             .filter(u=> { const q = specSearch.trim().toLowerCase(); if(!q) return true; return (u.surname||'').toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q); })
+                            .sort((a,b)=> (a.surname+a.name).localeCompare(b.surname+b.name,'pl'))
                             .map(u=> {
-                            const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
-                            const workLoaded = Object.prototype.hasOwnProperty.call(workhoursByEmployee, u.id);
-                            const unavailable = !!(formData.startTime && formData.endTime && workLoaded && !isSpecialistAvailable(u.id, effectiveDate, formData.startTime, formData.endTime));
-                            const already = formData.specialistIds.includes(u.id);
-                            const isAvailable = workLoaded && !busy && !unavailable;
-                            const disabledOpt = (workLoaded && (busy || unavailable)) || already;
-
-                            // Less intense backgrounds; selected (already) highlighted in blue
-                            const baseBg = already ? 'bg-indigo-50' : (!workLoaded ? 'bg-white' : unavailable ? 'bg-red-50' : busy ? 'bg-amber-50' : 'bg-emerald-50');
-                            const hoverBg = already ? 'hover:bg-indigo-100' : (!workLoaded ? 'hover:bg-gray-50' : unavailable ? 'hover:bg-red-100' : busy ? 'hover:bg-amber-100' : 'hover:bg-emerald-100');
-                            const leftBorder = already ? 'border-l-4 border-indigo-300' : (!workLoaded ? 'border-l border-gray-200' : unavailable ? 'border-l-4 border-red-300' : busy ? 'border-l-4 border-amber-300' : 'border-l-4 border-emerald-300');
-                            const nameColor = already ? 'text-indigo-900' : (!workLoaded ? 'text-gray-700' : unavailable ? 'text-red-900' : busy ? 'text-amber-900' : 'text-emerald-900');
-                            const disabledClass = 'cursor-not-allowed';
-                            return (
-                              <li key={u.id}>
-                                <button
-                                  type="button"
-                                  disabled={disabledOpt}
-                                  onClick={() => { if (disabledOpt) return; setFormData(fd=> fd.specialistIds.includes(u.id)? fd : {...fd, specialistIds:[...fd.specialistIds, u.id]}); setSpecOpen(false); setSpecSearch(''); }}
-                                  className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left ${baseBg} ${hoverBg} ${leftBorder} ${disabledOpt? disabledClass:''}`}
-                                >
-                                  <div className="min-w-0 flex items-center gap-2">
-                                    <div className="min-w-0">
-                                      <div className={`font-semibold truncate ${nameColor}`}>{`${u.surname} ${u.name}`}</div>
+                              const isEmployee = u.role === 'employee';
+                              // Dla nie-employee traktujemy jak "załadowany" i dostępny jeśli brak konfliktu
+                              const workLoaded = isEmployee ? Object.prototype.hasOwnProperty.call(workhoursByEmployee, u.id) : true;
+                              const unavailable = isEmployee ? !!(formData.startTime && formData.endTime && workLoaded && !isSpecialistAvailable(u.id, effectiveDate, formData.startTime, formData.endTime)) : false;
+                              const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(u.id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
+                              const already = formData.specialistIds.includes(u.id);
+                              const isAvailable = workLoaded && !busy && !unavailable;
+                              const disabledOpt = (workLoaded && (busy || unavailable)) || already;
+                              let baseBg: string; let hoverBg: string; let leftBorder: string; let nameColor: string;
+                              if (already) { baseBg='bg-indigo-50'; hoverBg='hover:bg-indigo-100'; leftBorder='border-l-4 border-indigo-300'; nameColor='text-indigo-900'; }
+                              else if (!workLoaded) { baseBg='bg-slate-50'; hoverBg='hover:bg-slate-100'; leftBorder='border-l-4 border-slate-200'; nameColor='text-slate-600'; }
+                              else if (unavailable) { baseBg='bg-red-50'; hoverBg='hover:bg-red-100'; leftBorder='border-l-4 border-red-300'; nameColor='text-red-900'; }
+                              else if (busy) { baseBg='bg-amber-50'; hoverBg='hover:bg-amber-100'; leftBorder='border-l-4 border-amber-300'; nameColor='text-amber-900'; }
+                              else { baseBg='bg-emerald-50'; hoverBg='hover:bg-emerald-100'; leftBorder='border-l-4 border-emerald-300'; nameColor='text-emerald-900'; }
+                              return (
+                                <li key={u.id}>
+                                  <button
+                                    type="button"
+                                    disabled={disabledOpt}
+                                    onClick={() => { if (disabledOpt) return; setFormData(fd=> fd.specialistIds.includes(u.id)? fd : {...fd, specialistIds:[...fd.specialistIds, u.id]}); setSpecOpen(false); setSpecSearch(''); }}
+                                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left ${baseBg} ${hoverBg} ${leftBorder} ${disabledOpt? 'cursor-not-allowed':''}`}
+                                  >
+                                    <div className="min-w-0 flex items-center gap-2">
+                                      <div className="min-w-0">
+                                        <div className={`font-semibold truncate ${nameColor}`}>{`${u.surname} ${u.name}`}</div>
+                                      </div>
                                     </div>
-                                  </div>
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    {/* before load show neutral styling, no badge */}
-                                    {workLoaded && isAvailable && !already && (
-                                      <span className="text-[10px] text-emerald-900 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300">dostępny</span>
-                                    )}
-                                    {workLoaded && busy && !unavailable && (
-                                      <span className="text-[10px] text-amber-900 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300">zajęty</span>
-                                    )}
-                                    {workLoaded && unavailable && (
-                                      <span className="text-[10px] text-red-900 px-2 py-0.5 rounded-full bg-red-100 border border-red-300">niedostępny</span>
-                                    )}
-                                    {already && (
-                                      <span className="text-[10px] text-indigo-700 px-2 py-0.5 rounded-full bg-indigo-100 border border-indigo-300">wybrany</span>
-                                    )}
-                                  </div>
-                                </button>
-                              </li>
-                            );
-                          })}
-                          {users.filter(u=>u.role==='employee').length===0 && (
-                            <li className="px-3 py-2 text-xs text-gray-400">Brak pracowników</li>
-                          )}
-                          {users.filter(u=>u.role==='employee').filter(u=> { const q = specSearch.trim().toLowerCase(); if(!q) return true; return (u.surname||'').toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q); }).length===0 && users.filter(u=>u.role==='employee').length>0 && (
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      {!workLoaded && <span className="text-[10px] text-slate-600 px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">...</span>}
+                                      {workLoaded && isAvailable && !already && (
+                                        <span className="text-[10px] text-emerald-900 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300">dostępny</span>
+                                      )}
+                                      {workLoaded && busy && !unavailable && (
+                                        <span className="text-[10px] text-amber-900 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300">zajęty</span>
+                                      )}
+                                      {workLoaded && unavailable && (
+                                        <span className="text-[10px] text-red-900 px-2 py-0.5 rounded-full bg-red-100 border border-red-300">niedostępny</span>
+                                      )}
+                                      {already && (
+                                        <span className="text-[10px] text-indigo-700 px-2 py-0.5 rounded-full bg-indigo-100 border border-indigo-300">wybrany</span>
+                                      )}
+                                    </div>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          {users.filter(u=> { const q = specSearch.trim().toLowerCase(); if(!q) return true; return (u.surname||'').toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q); }).length===0 && (
                             <li className="px-3 py-2 text-xs text-gray-400">Brak wyników</li>
                           )}
                         </ul>
@@ -964,25 +969,34 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                       {formData.specialistIds.map(id=> {
                         const u = users.find(us=>us.id===id);
                         if(!u) return null;
-                        const workLoaded = Object.prototype.hasOwnProperty.call(workhoursByEmployee, id);
-                        const unavailable = !!(formData.startTime && formData.endTime && workLoaded && !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime));
-                        const busy = !!(formData.startTime && formData.endTime && specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id));
-                        let bg = 'bg-indigo-50 hover:bg-indigo-100';
-                        let text = 'text-gray-900';
-                        if (!workLoaded) { bg = 'bg-gray-50'; text = 'text-gray-500'; }
-                        else if (unavailable) { bg = 'bg-gray-100'; text = 'text-gray-400'; }
-                        else if (busy) { bg = 'bg-yellow-50 hover:bg-yellow-100'; text = 'text-yellow-800'; }
-                        else { bg = 'bg-emerald-50 hover:bg-emerald-100'; text = 'text-emerald-800'; }
+                        const isEmployee = u.role === 'employee';
+                        const workLoaded = isEmployee ? Object.prototype.hasOwnProperty.call(workhoursByEmployee, id) : true; // traktuj innych jak załadowanych
+                        const hasTime = !!(formData.startTime && formData.endTime);
+                        const conflict = hasTime && specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id);
+                        const unavailable = isEmployee && hasTime && workLoaded && !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime);
+                        let bg: string; let text: string; let badge: React.ReactNode = null;
+                        if (!workLoaded) { bg='bg-slate-50'; text='text-slate-600'; badge=<span className="text-[11px] text-slate-600 px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">...</span>; }
+                        else if (unavailable) { bg='bg-red-50 hover:bg-red-100'; text='text-red-900'; badge=<span className="text-[11px] text-red-900 px-2 py-0.5 rounded-full bg-red-100 border border-red-200">niedostępny</span>; }
+                        else if (conflict) { bg='bg-amber-50 hover:bg-amber-100'; text='text-amber-900'; badge=<span className="text-[11px] text-amber-900 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-200">zajęty</span>; }
+                        else { bg='bg-emerald-50 hover:bg-emerald-100'; text='text-emerald-900'; if (hasTime) badge=<span className="text-[11px] text-emerald-900 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-200">dostępny</span>; }
+                        const isCurrentEmployeeSelf = currentUser.role === 'employee' && id === currentUser.id;
                         return (
                           <li key={id} className={`flex items-center justify-between p-2 transition-colors ${bg}`}>
                             <div className="min-w-0 pr-3">
                               <div className={`text-sm font-semibold leading-5 truncate ${text}`}>{`${u.surname} ${u.name}`}</div>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
-                              {/* before load show neutral styling, no badge */}
-                              {workLoaded && busy && !unavailable && <span className="text-[11px] text-yellow-800 px-2 py-0.5 rounded-full bg-yellow-50 border border-yellow-200">zajęty</span>}
-                              {workLoaded && unavailable && <span className="text-[11px] text-gray-500 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200">niedostępny</span>}
-                              <button type="button" onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed" aria-label="Usuń specjalistę" title="Usuń" disabled={isEditingPast}>×</button>
+                              {badge}
+                              <button
+                                type="button"
+                                onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                                aria-label="Usuń specjalistę"
+                                title={isCurrentEmployeeSelf ? 'Pracownik musi brać udział w swoim spotkaniu' : 'Usuń'}
+                                disabled={isEditingPast || isCurrentEmployeeSelf}
+                              >
+                                ×
+                              </button>
                             </div>
                           </li>
                         );
