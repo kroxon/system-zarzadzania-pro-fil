@@ -1,4 +1,4 @@
-import { MoreHorizontal, Plus, CheckCircle2, Circle } from 'lucide-react';
+import { MoreHorizontal, Plus, CheckCircle2, Circle, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { EmployeeTask } from '../../types/index'
 import { Employee } from '../../types/index';
@@ -26,7 +26,16 @@ const StatusBadge = ({ isCompleted }: { isCompleted: boolean }) => {
 };
 
 
-export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee' | 'contact' }) {
+interface TasksPageProps { userRole: 'admin' | 'employee' | 'contact'; currentUserId: string | number; }
+export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
+  // Fallback: if currentUserId not provided (legacy usage), try to load from persisted user
+  let effectiveCurrentUserId = currentUserId;
+  if(!effectiveCurrentUserId){
+    try {
+      const raw = localStorage.getItem('schedule_current_user');
+      if(raw){ const parsed = JSON.parse(raw); if(parsed?.id) effectiveCurrentUserId = parsed.id; }
+    } catch {}
+  }
   const [employeesLoading, setEmployeesLoading] = useState(true);
   // Fetch tasks from backend on mount/login
   // Fetch tasks only when entering this page (mount)
@@ -35,10 +44,18 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
     if (!token) return;
     import('../../utils/api/tasks').then(api => {
       api.fetchEmployeeTasks(token)
-        .then(setTaskList)
+        .then(all => {
+          if (userRole === 'admin') {
+            setTaskList(all);
+          } else {
+            // filter tasks where current user is assigned
+            const uidNum = Number(currentUserId);
+            setTaskList(all.filter(t => t.assignedEmployeesIds.some(id => Number(id) === uidNum)));
+          }
+        })
         .catch(() => setTaskList([]));
     });
-  }, []);
+  }, [userRole, effectiveCurrentUserId]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [taskList, setTaskList] = useState<EmployeeTask[]>([]);
   const [editingTask, setEditingTask] = useState<EmployeeTask | null>(null);
@@ -52,7 +69,75 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
     isCompleted: false,
   });
 
+  // Sort state
+  type SortField = 'assigned' | 'dueDate' | 'status' | null;
+  // Domyślne (ukryte) sortowanie: po dacie rosnąco (najwcześniejsze na górze), ale bez zaznaczenia aktywnej kolumny
+  const [sortField, setSortField] = useState<SortField>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const toggleSort = (field: Exclude<SortField, null>) => {
+    if (sortField !== field) {
+      setSortField(field);
+      setSortDir('asc');
+    } else {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    }
+  };
+
+  const getAssignedNames = (task: EmployeeTask) => {
+    return task.assignedEmployeesIds
+      .map(id => {
+        const emp = employees.find(e => Number(e.id) === Number(id));
+        return emp ? `${emp.name} ${emp.surname}`.trim() : String(id);
+      })
+      .join(', ');
+  };
+
+  const displayedTasks = (() => {
+    if (!sortField) {
+      // Bazowe sortowanie po dueDate ASC (YYYY-MM-DD). Puste daty na dół.
+      return [...taskList].sort((a, b) => {
+        const ad = a.dueDate || '';
+        const bd = b.dueDate || '';
+        if (!ad && !bd) return 0;
+        if (!ad) return 1; // brak daty na dół
+        if (!bd) return -1;
+        return ad.localeCompare(bd);
+      });
+    }
+    const list = [...taskList];
+    list.sort((a, b) => {
+      let va = '';
+      let vb = '';
+      if (sortField === 'assigned') { va = getAssignedNames(a); vb = getAssignedNames(b); }
+      else if (sortField === 'dueDate') { va = a.dueDate || ''; vb = b.dueDate || ''; }
+      else if (sortField === 'status') { // status: not completed (0) vs completed (1) + tie-break po dueDate
+        const aVal = a.isCompleted ? 1 : 0;
+        const bVal = b.isCompleted ? 1 : 0;
+        if (aVal !== bVal) return sortDir === 'asc' ? aVal - bVal : bVal - aVal;
+        // tie-break: wcześniejsza data wyżej (puste daty na dole)
+        const ad = a.dueDate || '';
+        const bd = b.dueDate || '';
+        if (!ad && !bd) return 0;
+        if (!ad) return 1; // brak daty na dół
+        if (!bd) return -1;
+        return sortDir === 'asc' ? ad.localeCompare(bd) : bd.localeCompare(ad);
+      }
+      if (sortField === 'dueDate') {
+        // YYYY-MM-DD lexical compare works, fallback empty strings last
+        if (!va && !vb) return 0;
+        if (!va) return 1;
+        if (!vb) return -1;
+        return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+      }
+      const cmp = va.toLowerCase().localeCompare(vb.toLowerCase(), 'pl');
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return list;
+  })();
+
   const handleOpenCreateModal = () => {
+    if (userRole !== 'admin') return; // guard
     setNewTask({ id: 0, name: '', assignedEmployeesIds: [], dueDate: '', isCompleted: false });
     setShowCreateModal(true);
   };
@@ -75,6 +160,7 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
   };
 
   const handleSaveCreateTask = () => {
+    if (userRole !== 'admin') return;
     if (!newTask.name.trim() || newTask.assignedEmployeesIds.length === 0 || !newTask.dueDate.trim()) return;
     const token = localStorage.getItem('token');
     if (!token) return;
@@ -92,6 +178,7 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
   };
 
   const handleEditTask = (task: EmployeeTask) => {
+    if (userRole !== 'admin') return;
     setEditingTask(task);
   };
 
@@ -121,6 +208,9 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
     const token = localStorage.getItem('token');
     const task = taskList.find(t => t.id === taskId);
     if (!token || !task) return;
+    // Only admin or assigned user can toggle
+  const uidNum = Number(effectiveCurrentUserId);
+    if (!(userRole === 'admin' || task.assignedEmployeesIds.some(id => Number(id) === uidNum))) return;
     import('../../utils/api/tasks').then(api => {
       api.updateEmployeeTask(taskId, { ...task, isCompleted: false }, token)
         .then(() => {
@@ -133,6 +223,8 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
     const token = localStorage.getItem('token');
     const task = taskList.find(t => t.id === taskId);
     if (!token || !task) return;
+  const uidNum = Number(effectiveCurrentUserId);
+    if (!(userRole === 'admin' || task.assignedEmployeesIds.some(id => Number(id) === uidNum))) return;
     import('../../utils/api/tasks').then(api => {
       api.updateEmployeeTask(taskId, { ...task, isCompleted: true }, token)
         .then(() => {
@@ -143,17 +235,14 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
   };
 
   const handleSaveEdit = () => {
+    if (userRole !== 'admin') return;
     if (!formData) return;
-    setTaskList(taskList.map(task => {
-      if (task.id === formData.id) {
-        return formData;
-      }
-      return task;
-    }));
+    setTaskList(taskList.map(task => task.id === formData.id ? formData : task));
     setEditingTask(null);
   };
 
   const handleDeleteTask = (taskId: number) => {
+    if (userRole !== 'admin') return;
     if (!window.confirm('Czy na pewno chcesz usunąć to zadanie?')) return;
     const token = localStorage.getItem('token');
     if (!token) return;
@@ -177,20 +266,45 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
             <h2 className="text-3xl font-bold tracking-tight font-headline">Zadania</h2>
             <p className="text-muted-foreground"> {headerDescription} </p>
           </div>
-          <div className="flex items-center space-x-2">
-            <button className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={handleOpenCreateModal}>
-              <Plus className="mr-2 h-4 w-4" /> Dodaj zadanie
-            </button>
-          </div>
+          {userRole==='admin' && (
+            <div className="flex items-center space-x-2">
+              <button className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={handleOpenCreateModal}>
+                <Plus className="mr-2 h-4 w-4" /> Dodaj zadanie
+              </button>
+            </div>
+          )}
         </div>
         <div className="rounded-lg border shadow-sm overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                {/* Zadanie (bez sortowania) */}
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Zadanie</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Przypisane do</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Termin</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                {[
+                  { label: 'Przypisane do', field: 'assigned' as const },
+                  { label: 'Termin', field: 'dueDate' as const },
+                  { label: 'Status', field: 'status' as const },
+                ].map(col => {
+                  const active = sortField === col.field;
+                  const dir = active ? sortDir : undefined;
+                  const Icon = !active ? ArrowUpDown : (dir === 'asc' ? ChevronUp : ChevronDown);
+                  return (
+                    <th key={col.field} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <div className="flex items-center gap-1">
+                        <span>{col.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(col.field)}
+                          aria-label={`Sortuj kolumnę ${col.label}`}
+                          aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          className={`p-1 rounded hover:bg-gray-200 transition-colors ${active ? 'text-blue-600' : 'text-gray-500'}`}
+                        >
+                          <Icon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </th>
+                  );
+                })}
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"><span className="sr-only">Akcje</span></th>
               </tr>
             </thead>
@@ -199,31 +313,30 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
                 <tr>
                   <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Ładowanie pracowników...</td>
                 </tr>
-              ) : taskList.length === 0 ? (
+              ) : displayedTasks.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Brak zadań do wyświetlenia.</td>
                 </tr>
               ) : (
-                taskList.map((task) => (
+                displayedTasks.map((task) => (
                   <tr key={task.id}>
                     <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{task.name}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {task.assignedEmployeesIds
-                        .map(id => {
-                          const emp = employees.find(e => Number(e.id) === Number(id));
-                          return emp ? `${emp.name} ${emp.surname}` : id;
-                        })
-                        .join(', ')}
+                      {getAssignedNames(task)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">{task.dueDate}</td>
                     <td className="px-6 py-4 whitespace-nowrap"><StatusBadge isCompleted={task.isCompleted} /></td>
                     <td className="px-6 py-4 whitespace-nowrap text-right">
-                      <button className="p-2 rounded hover:bg-gray-100" aria-label="Edytuj zadanie" onClick={() => handleEditTask(task)}>
-                        <MoreHorizontal className="h-4 w-4" />
-                      </button>
-                      <button className="ml-2 p-2 rounded hover:bg-gray-100" aria-label="Usuń zadanie" onClick={() => handleDeleteTask(task.id)}>
-                        <span className="sr-only">Usuń</span>🗑️
-                      </button>
+                      {userRole==='admin' && (
+                        <>
+                          <button className="p-2 rounded hover:bg-gray-100" aria-label="Edytuj zadanie" onClick={() => handleEditTask(task)}>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </button>
+                          <button className="ml-2 p-2 rounded hover:bg-gray-100" aria-label="Usuń zadanie" onClick={() => handleDeleteTask(task.id)}>
+                            <span className="sr-only">Usuń</span>🗑️
+                          </button>
+                        </>
+                      )}
                       {task.isCompleted ? (
                         <button className="ml-2 p-2 rounded hover:bg-gray-100" aria-label="Cofnij ukończenie" onClick={() => handleUndoCompleteTask(task.id)}>
                           <span className="sr-only">Cofnij</span>↩️
@@ -243,7 +356,7 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
       </div>
 
       {/* Modal dodawania nowego zadania */}
-      {showCreateModal && (
+  {userRole==='admin' && showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
           <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
             <form onSubmit={e => { e.preventDefault(); handleSaveCreateTask(); }}>
@@ -282,7 +395,7 @@ export default function TasksPage({ userRole }: { userRole: 'admin' | 'employee'
       )}
 
       {/* Modal edycji zadania */}
-      {editingTask && (
+  {userRole==='admin' && editingTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
           <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
             <div className="mb-4">

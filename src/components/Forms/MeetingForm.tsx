@@ -4,7 +4,7 @@ import { Meeting, User, Room, Patient, EventStatus } from '../../types';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { fetchEmployeeWorkHours } from '../../utils/api/employees';
 import type { WorkHours } from '../../types';
-import { getAllEventStasuses } from '../../utils/api/eventStatuses';
+import { getAllEventStatuses } from '../../utils/api/eventStatuses';
 
 // Availability will be validated against backend workhours
 
@@ -116,7 +116,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       setEventStatusesLoading(true);
       setEventStatusesError(null);
       try {
-        const list = await getAllEventStasuses(token);
+  const list = await getAllEventStatuses(token);
         if (!cancelled) setEventStatuses(list);
       } catch (e: any) {
         if (!cancelled) setEventStatusesError(e?.message || 'Nie udało się pobrać statusów');
@@ -246,7 +246,17 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     onClose();
   };
 
-  const assignedPatientIds = React.useMemo(()=> new Set<string>(), []);
+  // Zbiór pacjentów przypisanych do co najmniej jednego wybranego specjalisty
+  const assignedPatientIds = React.useMemo(() => {
+    if (!formData.specialistIds.length) return new Set<string>();
+    const set = new Set<string>();
+    effectivePatients.forEach(p => {
+      if (p.assignedEmployeesIds && p.assignedEmployeesIds.some(empId => formData.specialistIds.includes(String(empId)))) {
+        set.add(String(p.id));
+      }
+    });
+    return set;
+  }, [formData.specialistIds, effectivePatients]);
 
   const filteredPatients = React.useMemo(()=> {
     if(patientAssignmentFilter === 'przypisani') {
@@ -352,7 +362,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       if (!p) return String(id);
       return `${p.name} ${p.surname}`;
     });
-    onSubmit({
+    const submitData: Omit<Meeting, 'id'> = {
       specialistId: primarySpec,
       patientName: patientNamesList[0] || formData.patientName,
       patientId: primaryPatientId,
@@ -367,8 +377,10 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       specialistIds: formData.specialistIds,
       patientIds: formData.patientIds,
       patientNamesList,
-      name: formData.meetingName
-    } as any);
+      name: formData.meetingName,
+      // statusId pozostaje pominięty jeśli nie ustalony – backend może zmapować po status
+    };
+    onSubmit(submitData);
     onClose();
   };
 
@@ -425,19 +437,6 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return endLocal.getTime() < Date.now();
   };
 
-  const canCurrentUserDelete = (m: Meeting | undefined) => {
-    if (!m) return false;
-    if (currentUser.role === 'admin' || currentUser.role === 'contact') return true;
-    if (currentUser.role === 'employee') {
-      // Employee can delete only if they are the sole specialist participant (after normalization)
-      const ids = (m.specialistIds && m.specialistIds.length ? m.specialistIds : [m.specialistId]).filter(Boolean);
-      const isParticipant = ids.includes(currentUser.id) || m.specialistId === currentUser.id;
-      if (!isParticipant) return false;
-      return ids.length <= 1; // only one specialist -> allow
-    }
-    return false;
-  };
-
   // Determine if current user can edit this meeting (broader than delete)
   const canCurrentUserEdit = (m: Meeting | undefined) => {
     if (!m) return false;
@@ -448,7 +447,6 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return false;
   };
 
-  const canShowDelete = !!editingMeeting && isMeetingInFuture(editingMeeting) && canCurrentUserDelete(editingMeeting) && !!onDelete;
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isEditingPast = !!editingMeeting && isMeetingInPastByEnd(editingMeeting);
   // (Manual status editing removed – statuses are now display-only)
