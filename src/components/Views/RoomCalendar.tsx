@@ -350,7 +350,25 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
   useEffect(()=>{ const onUp=(e:MouseEvent)=>{ if(pointerDownMeeting && !resizingMeetingId && !movingMeetingId){ const dt=Date.now()-pointerDownMeeting.t; const dy=Math.abs(e.clientY-pointerDownMeeting.y); if(dt < 250 && dy < 6){ const meeting=meetings.find(m=>m.id===pointerDownMeeting.id); if(meeting){ handleTimeSlotClick(pointerDownMeeting.dateStr, meeting.startTime, meeting, meeting.roomId); } } } setPointerDownMeeting(null); }; window.addEventListener('mouseup', onUp); return ()=>window.removeEventListener('mouseup', onUp); },[pointerDownMeeting, resizingMeetingId, movingMeetingId, meetings]);
 
   // Click handlers
-  const handleTimeSlotClick = (date:string, time:string, meeting?:Meeting, roomId?:string) => { if(isSelecting || resizingMeetingId || movingMeetingId) return; if(currentUser.role==='employee' && meeting && meeting.specialistId!==currentUser.id) return; if(meeting){ setEditingMeeting(meeting); setSelectedTime(meeting.startTime); setFormRoomId(meeting.roomId);} else { setEditingMeeting(undefined); setSelectedTime(time); setFormRoomId(roomId);} setCurrentDate(new Date(date)); setShowMeetingForm(true); };
+  const handleTimeSlotClick = (date:string, time:string, meeting?:Meeting, roomId?:string) => {
+    if(isSelecting || resizingMeetingId || movingMeetingId) return;
+    // Allow employee to open meeting form if they are the primary specialist OR included in multi specialistIds
+    if(currentUser.role==='employee' && meeting){
+      const isParticipant = meeting.specialistId === currentUser.id || (meeting.specialistIds?.includes(currentUser.id));
+      if(!isParticipant) return; // block only if employee is not part of the meeting
+    }
+    if(meeting){
+      setEditingMeeting(meeting);
+      setSelectedTime(meeting.startTime);
+      setFormRoomId(meeting.roomId);
+    } else {
+      setEditingMeeting(undefined);
+      setSelectedTime(time);
+      setFormRoomId(roomId);
+    }
+    setCurrentDate(new Date(date));
+    setShowMeetingForm(true);
+  };
   const handleMeetingFormSubmit = (meetingData: Omit<Meeting,'id'>) => { if(editingMeeting){ onMeetingUpdate(editingMeeting.id, meetingData);} else { onMeetingCreate(meetingData);} setShowMeetingForm(false); setEditingMeeting(undefined); };
 
   // Week view (day columns, time grid like day view, meetings overlay)

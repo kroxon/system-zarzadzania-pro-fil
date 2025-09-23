@@ -428,7 +428,13 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const canCurrentUserDelete = (m: Meeting | undefined) => {
     if (!m) return false;
     if (currentUser.role === 'admin' || currentUser.role === 'contact') return true;
-    if (currentUser.role === 'employee') return m.specialistId === currentUser.id || (m.specialistIds?.includes(currentUser.id) ?? false);
+    if (currentUser.role === 'employee') {
+      // Employee can delete only if they are the sole specialist participant (after normalization)
+      const ids = (m.specialistIds && m.specialistIds.length ? m.specialistIds : [m.specialistId]).filter(Boolean);
+      const isParticipant = ids.includes(currentUser.id) || m.specialistId === currentUser.id;
+      if (!isParticipant) return false;
+      return ids.length <= 1; // only one specialist -> allow
+    }
     return false;
   };
 
@@ -601,6 +607,31 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     if (!formData.roomId || !formData.startTime || !formData.endTime) return false;
     return roomHasConflict(formData.roomId, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id);
   }, [formData.roomId, formData.startTime, formData.endTime, effectiveDate, editingMeeting?.id, meetings]);
+
+  // Restriction dialog (employees attempting forbidden actions on multi-specialist meetings)
+  const [restrictionDialog, setRestrictionDialog] = useState<null | { type: 'removeSpecialist' | 'deleteMeeting' }>(null);
+  const participantIdsNormalized = editingMeeting ? (editingMeeting.specialistIds && editingMeeting.specialistIds.length ? editingMeeting.specialistIds : [editingMeeting.specialistId]) : [];
+  const showDeleteActionButton = !!editingMeeting && isMeetingInFuture(editingMeeting) && participantIdsNormalized.includes(currentUser.id) && !!onDelete; // show button even if employee not allowed, to show restriction dialog
+
+  const attemptRemoveSpecialist = (id: string) => {
+    // Block employee from removing other specialists in existing multi-specialist meeting
+    if (currentUser.role === 'employee' && editingMeeting && formData.specialistIds.length > 1 && id !== currentUser.id) {
+      setRestrictionDialog({ type: 'removeSpecialist' });
+      return;
+    }
+    // Prevent employee from removing themselves entirely (already enforced by disabled) – fallback guard
+    if (currentUser.role === 'employee' && id === currentUser.id) return;
+    setFormData(fd => ({ ...fd, specialistIds: fd.specialistIds.filter(x => x !== id) }));
+  };
+
+  const handleDeleteClick = () => {
+    if (!editingMeeting) return;
+    if (currentUser.role === 'employee' && participantIdsNormalized.length > 1) {
+      setRestrictionDialog({ type: 'deleteMeeting' });
+      return;
+    }
+    setShowDeleteConfirm(true);
+  };
 
   // Live check: creating in the past (date+start)
   const isCreatePastSelection = React.useMemo(() => {
@@ -1023,10 +1054,10 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                               {badge}
                               <button
                                 type="button"
-                                onClick={()=> setFormData(fd=> ({...fd, specialistIds: fd.specialistIds.filter(x=> x!==id)}))}
+                                onClick={()=> attemptRemoveSpecialist(id)}
                                 className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed"
                                 aria-label="Usuń specjalistę"
-                                title={isCurrentEmployeeSelf ? 'Pracownik musi brać udział w swoim spotkaniu' : 'Usuń'}
+                                title={currentUser.role==='employee' && editingMeeting && formData.specialistIds.length>1 && id!==currentUser.id ? 'Tę operację może wykonać administrator lub pierwszy kontakt' : (isCurrentEmployeeSelf ? 'Pracownik musi brać udział w swoim spotkaniu' : 'Usuń')}
                                 disabled={isEditingPast || isCurrentEmployeeSelf}
                               >
                                 ×
@@ -1229,10 +1260,10 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
           <div className="flex justify-between items-center gap-3 pt-2">
             {/* Delete button on the left when allowed */}
             <div>
-              {canShowDelete && (
+              {showDeleteActionButton && (
                 <button
                   type="button"
-                  onClick={() => setShowDeleteConfirm(true)}
+                  onClick={handleDeleteClick}
                   className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -1275,6 +1306,35 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                   className="px-4 py-2.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400"
                 >
                   Usuń
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Restriction info dialog */}
+      {restrictionDialog && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/50" onClick={()=> setRestrictionDialog(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in">
+            <div className="p-6">
+              <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-indigo-100 flex items-center justify-center">
+                <AlertCircle className="h-6 w-6 text-indigo-600" />
+              </div>
+              <h3 className="text-base font-semibold text-gray-900 mb-2 text-center">Operacja niedostępna</h3>
+              <p className="text-sm text-gray-600 mb-6 leading-relaxed text-center">
+                {restrictionDialog.type === 'removeSpecialist' && 'Usuwanie specjalistów ze spotkania wieloosobowego jest możliwe tylko dla użytkownika z rolą administratora lub pierwszego kontaktu.'}
+                {restrictionDialog.type === 'deleteMeeting' && 'Tylko administrator lub użytkownik pierwszego kontaktu może usunąć spotkanie z wieloma specjalistami.'}
+              </p>
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={()=> setRestrictionDialog(null)}
+                  className="px-6 py-2.5 text-sm font-medium rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:from-indigo-500 hover:to-blue-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                >
+                  Zamknij
                 </button>
               </div>
             </div>
