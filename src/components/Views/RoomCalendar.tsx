@@ -72,7 +72,8 @@ interface RoomCalendarProps { users: User[]; rooms: Room[]; meetings: Meeting[];
 
 const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, patients, currentUser, onMeetingCreate, onMeetingUpdate, onMeetingDelete, showWeekends, startHour, endHour }) => {
   // Multi-select employee filter
-  const employees = users.filter(u => u.role === 'employee');
+  // Pokaż wszystkich użytkowników (admin, contact, employee) w filtrze
+  const employees = users; // zachowujemy nazwę zmiennej, żeby mniej zmieniać dalej w kodzie
   const sortedEmployees = React.useMemo(() => [...employees].sort((a, b) => a.name.localeCompare(b.name, 'pl')), [employees]);
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [showEmployeeFilter, setShowEmployeeFilter] = useState(false);
@@ -1017,7 +1018,7 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                 );
               })}
               {sortedEmployees.length === 0 && (
-                <span className="text-xs text-gray-400 italic">Brak pracowników</span>
+                <span className="text-xs text-gray-400 italic">Brak użytkowników</span>
               )}
             </div>
             <button

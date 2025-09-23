@@ -103,15 +103,22 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
 
   // Employees list
   const timeSlots = generateTimeSlots(startHour, endHour);
-  const employees = users.filter(u=> u.role==='employee');
-  const sortedEmployees = React.useMemo(()=> [...employees].sort((a,b)=> a.name.localeCompare(b.name,'pl')), [employees]);
+  // Previously only employees were shown; now show all users (admin, contact, employee) and display full name
+  const allDisplayUsers = React.useMemo(()=> {
+    return [...users].sort((a,b)=> {
+      const surCmp = (a.surname || '').localeCompare(b.surname || '', 'pl');
+      if (surCmp !== 0) return surCmp;
+      return a.name.localeCompare(b.name, 'pl');
+    });
+  }, [users]);
 
   // Week helpers
   const getWeekDays = (date: Date) => { const week: Date[]=[]; const start=new Date(date); start.setDate(date.getDate() - date.getDay() + 1); for(let i=0;i<7;i++){ const day=new Date(start); day.setDate(start.getDate()+i); if(!showWeekends){ const dow=day.getDay(); if(dow===0|| dow===6) continue; } week.push(day);} return week; };
   const formatDateForComparison = (date: Date)=> formatLocalDate(date);
   // const getEmployeeMeetings = ()=> selectedEmployee? meetings.filter(m=> m.specialistId===selectedEmployee): [];
 
-  React.useEffect(()=> { if(currentUser.role==='admin' && !selectedEmployee && sortedEmployees.length){ setSelectedEmployee(sortedEmployees[0].id);} }, [currentUser.role, selectedEmployee, sortedEmployees]);
+  // Auto-select first user (including admins / contacts) if current user is not a regular employee and none selected yet
+  React.useEffect(()=> { if(currentUser.role!=='employee' && !selectedEmployee && allDisplayUsers.length){ setSelectedEmployee(allDisplayUsers[0].id);} }, [currentUser.role, selectedEmployee, allDisplayUsers]);
 
   // Close copy dropdown on outside click
   React.useEffect(()=> { const handler=(e:MouseEvent)=> { const target=e.target as Element; if(showCopyDropdown && !target.closest('.copy-dropdown')) setShowCopyDropdown(false); }; document.addEventListener('mousedown', handler); return ()=> document.removeEventListener('mousedown', handler); }, [showCopyDropdown]);
@@ -479,7 +486,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
                 </div>
                 <div className="absolute inset-0 z-40 pointer-events-none">
                   {/* Day-offs full-day red blocks */}
-                  {dayOffs.filter(o=> o.date===dayStr).map(o=> { const meta = o.groupId? dayOffGroupMeta[o.groupId]: dayOffGroupMeta[o.id]; const note=meta?.note; const rangeLabel = meta? (meta.start===meta.end? formatDayDisplayFull(meta.start): `${formatDayDisplayFull(meta.start)}-${formatDayDisplayFull(meta.end)}`): ''; const employeeNames = (meta?.employees||[]).map(id=> sortedEmployees.find(e=> e.id===id)?.name || id).join(', '); return (
+                  {dayOffs.filter(o=> o.date===dayStr).map(o=> { const meta = o.groupId? dayOffGroupMeta[o.groupId]: dayOffGroupMeta[o.id]; const note=meta?.note; const rangeLabel = meta? (meta.start===meta.end? formatDayDisplayFull(meta.start): `${formatDayDisplayFull(meta.start)}-${formatDayDisplayFull(meta.end)}`): ''; const employeeNames = (meta?.employees||[]).map(id=> allDisplayUsers.find(e=> e.id===id)?.name || id).join(', '); return (
                     <div key={o.id} className="absolute left-2 right-2 rounded-md bg-red-200/95 text-red-900 shadow-md flex flex-col pointer-events-none z-30 border border-red-300 px-3 py-2 overflow-hidden" style={{ top:'0%', height:'100%' }}>
                       <div className="font-bold leading-tight tracking-tight text-[13px] md:text-[14px] mb-1 truncate">{rangeLabel}</div>
                       {employeeNames && <div className="text-[12px] md:text-[13px] font-medium mb-2 truncate">{employeeNames}</div>}
@@ -538,9 +545,9 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
     <div className="flex-1 flex flex-col pb-6">
       <div className="mb-4">
         <div className="flex flex-wrap gap-2">
-          {sortedEmployees.map(emp=> { const active=emp.id===selectedEmployee; const disabled=currentUser.role==='employee' && emp.id!==currentUser.id; return (
+          {allDisplayUsers.map(emp=> { const active=emp.id===selectedEmployee; const disabled=currentUser.role==='employee' && emp.id!==currentUser.id; const fullName = `${emp.surname || ''} ${emp.name}`.trim(); return (
             <button key={emp.id} type="button" aria-pressed={active} disabled={disabled} onClick={()=> { if(disabled) return; setSelectedEmployee(emp.id); }}
-              className={`px-4 py-1.5 text-xs md:text-sm rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${active? 'bg-blue-600 text-white border-blue-600':'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} ${disabled && !active? 'opacity-50 cursor-not-allowed hover:bg-white':''}`}>{emp.name}</button>
+              className={`px-4 py-1.5 text-xs md:text-sm rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${active? 'bg-blue-600 text-white border-blue-600':'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} ${disabled && !active? 'opacity-50 cursor-not-allowed hover:bg-white':''}`}>{fullName}</button>
           ); })}
         </div>
       </div>
@@ -576,7 +583,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
           </div>
           <div className="flex-1 min-h-0">
             {viewType==='week' && renderWeekView()}
-            {viewType==='month' && (<MonthCalendar currentDate={currentDate} dayOffs={dayOffs} buildDateRange={buildDateRange} formatLocalDate={formatLocalDate} employees={sortedEmployees.map(e=> ({ id:e.id, name:e.name }))} defaultEmployeeId={selectedEmployee || undefined} onPendingStateChange={(has, actions)=> { setMonthPending(has); monthActionsRef.current = actions; }} onBaselineChange={handleMonthBaselineChange} />)}
+            {viewType==='month' && (<MonthCalendar currentDate={currentDate} dayOffs={dayOffs} buildDateRange={buildDateRange} formatLocalDate={formatLocalDate} employees={allDisplayUsers.map(u=> ({ id:u.id, name:`${u.surname || ''} ${u.name}`.trim() }))} defaultEmployeeId={selectedEmployee || undefined} onPendingStateChange={(has, actions)=> { setMonthPending(has); monthActionsRef.current = actions; }} onBaselineChange={handleMonthBaselineChange} />)}
           </div>
         </div>
       ) : (
