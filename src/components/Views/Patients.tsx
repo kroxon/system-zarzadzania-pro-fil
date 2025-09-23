@@ -5,10 +5,9 @@ function getPatientStatusLabel(isActive: boolean): 'aktywny' | 'nieaktywny' {
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { FileText } from 'lucide-react';
 // Using demo UI shape for patients for now. When backend is ready, map API <-> UI.
-import { fetchPatients } from '../../utils/api/patients';
+import { fetchPatients, fetchPatientReport  } from '../../utils/api/patients';
 import {Patient, User, Meeting} from '../../types/index'
 import { Search } from 'lucide-react';
-
 /*
 // Całość przełączona na typ Patient z backendu. Usunięto PatientDemo, mappersy i demo storage.
 */
@@ -309,7 +308,23 @@ useEffect(() => {
   };
 
   const handleGenerate = () => {
-
+    if(!selected) return;
+  const token = localStorage.getItem('token') || '';
+    fetchPatientReport(selected.id, token)
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `raport_pacjenta_${selected.id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      })
+      .catch(err => {
+        // Możesz dodać powiadomienie o błędzie
+        console.error('Błąd pobierania raportu:', err);
+      });
   }
 
   const saveEdit = () => {
