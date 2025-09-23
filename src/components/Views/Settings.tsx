@@ -3,11 +3,13 @@ import { fetchPendingUsers, approveUser, rejectUser } from '../../utils/api/admi
 import { PendingUser, Role } from '../../types';
 
 type SettingsProps = {
-  currentUser?: { role: string };
-  token?: string;
+	currentUser?: { role: string };
+	token?: string;
+	// Callback do globalnego odświeżenia pracowników (App -> refreshBackendUsersGlobal)
+	onUsersRefresh?: () => Promise<void> | void;
 };
 
-const Settings: React.FC<SettingsProps> = ({ currentUser, token }) => {
+const Settings: React.FC<SettingsProps> = ({ currentUser, token, onUsersRefresh }) => {
 	// Pending users state
 	const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
 	const [loadingPending, setLoadingPending] = useState(false);
@@ -31,7 +33,12 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, token }) => {
 		if (!token) return;
 		try {
 			await approveUser(userId, role, token);
+			// Usuń z listy oczekujących
 			setPendingUsers(prev => prev.filter(u => u.id !== userId));
+			// Spróbuj odświeżyć globalną listę pracowników aby nowy był natychmiast widoczny
+			if (onUsersRefresh) {
+				try { await onUsersRefresh(); } catch { /* ciche pominięcie */ }
+			}
 		} catch (e: any) {
 			alert('Error approving user: ' + e.message);
 		}

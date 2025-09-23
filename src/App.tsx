@@ -451,7 +451,7 @@ function App() {
           <Route path="/reservation/menage" element={<RoomsManage rooms={roomsState} onRoomsChange={setRoomsState} userRole={currentUser?.role || 'employee'} onBackendRoomsRefresh={refreshBackendRoomsGlobal} />} />
           <Route path="/patients" element={<Patients />} />
           <Route path="/tasks" element={<TasksPage userRole={currentUser?.role || 'employee'} />} />
-          <Route path="/options" element={<Settings currentUser={currentUser!} token={currentUser?.token || localStorage.getItem('token') || undefined} />} />
+          <Route path="/options" element={<Settings currentUser={currentUser!} token={currentUser?.token || localStorage.getItem('token') || undefined} onUsersRefresh={refreshBackendUsersGlobal} />} />
         </Route>
 
         {/* Redirect root to dashboard if authenticated, else to login */}
