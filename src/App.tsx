@@ -112,12 +112,11 @@ function App() {
         return { date: `${y}-${m}-${dd}`, time: `${hh}:${mm}` };
       };
 
-      // Build lookup set for employees (specialists)
-      const employeeIdSet = new Set<number>();
+      // Build lookup set for ALL users (admin/contact/employee) as potential specialists.
+      // POPRAWKA: wcześniej filtrowaliśmy tylko role==='employee', przez co admin/contact byli traceni po odświeżeniu (ich ID nie wracało w specialistIds).
+      const specialistIdSet = new Set<number>();
       try {
-        usersState
-          .filter(u => u.role === 'employee')
-          .forEach(u => { const n = Number(u.id); if (!Number.isNaN(n)) employeeIdSet.add(n); });
+        usersState.forEach(u => { const n = Number(u.id); if (!Number.isNaN(n)) specialistIdSet.add(n); });
       } catch {}
       const patientNameMap = new Map<number, string>();
       const patientIdSet = new Set<number>();
@@ -140,15 +139,15 @@ function App() {
         const specNumIds: number[] = [];
         const patientNumIds: number[] = [];
         (ev.participantIds || []).forEach((pid: number) => {
-          // Reguła: jeżeli ID należy do pracowników -> specjalista; jeżeli należy do pacjentów -> pacjent; inaczej ignorujemy do czasu pełnej synchronizacji
-          if (employeeIdSet.has(pid)) {
-            specNumIds.push(pid);
-          } else if (patientIdSet.has(pid)) {
-            patientNumIds.push(pid);
-          } else {
-            // unknown id -> do not classify as patient to avoid fake entries
-          }
-        });
+          // Jeśli ID jest w zbiorze użytkowników -> traktujemy jako specjalistę.
+            if (specialistIdSet.has(pid)) {
+              specNumIds.push(pid);
+            } else if (patientIdSet.has(pid)) {
+              patientNumIds.push(pid);
+            } else {
+              // unknown id -> ignorujemy (może to być typ uczestnika którego jeszcze nie obsługujemy)
+            }
+          });
         const specIds = specNumIds.map(n => String(n));
         const patientIds = patientNumIds.map(n => String(n));
         const primarySpec = specIds[0] || '';
