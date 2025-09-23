@@ -204,6 +204,7 @@ export interface UpdateEvent {
   roomId?: number | null;
   info?: string | null;
   guest?: string;
+  statusId?: number;
 }
 
 export interface PatchEventPersons {
@@ -317,11 +318,11 @@ export interface UpdateEmployeeTask {
 // statistics
 // /api/statistics/main-panel
 export interface MainPanelStatistics {
-  today: number;          // liczba wydarzeń dziś
-  tomorrow: number;       // liczba wydarzeń jutro
-  thisWeek: number;       // liczba wydarzeń w bieżącym tygodniu
-  thisMonth: number;      // liczba wydarzeń w bieżącym miesiącu
-  activePatients: number; // liczba aktywnych pacjentów
+  today: number;         
+  tomorrow: number;       
+  thisWeek: number;       
+  thisMonth: number;
+  activePatients: number;
 }
 
 // element tablicy z /api/statistics oraz /api/statistics/me

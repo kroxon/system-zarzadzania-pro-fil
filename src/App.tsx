@@ -18,7 +18,7 @@ import { mapBackendRolesToFrontend } from './utils/roleMapper';
 import { fetchEmployees } from './utils/api/employees';
 import { getRooms as fetchRooms } from './utils/api/rooms';
 import { fetchEvents, createEvent, updateEvent, deleteEvent } from './utils/api/events';
-import { getAllEventStasuses } from './utils/api/eventStatuses';
+import { getAllEventStatuses } from './utils/api/eventStatuses';
 import { fetchPatients } from './utils/api/patients';
 
 // Minimal local helpers for persisting current user only (storage module removed)
@@ -85,7 +85,7 @@ function App() {
       const [apiEvents, statuses, apiPatients] = await Promise.all([
         fetchEvents(token),
         // Statuses are optional; if it fails, continue with defaults
-        getAllEventStasuses(token).catch(() => []),
+  getAllEventStatuses(token).catch(() => []),
         // Patients are optional for mapping; if it fails, we still fall back to employees-only participants
         fetchPatients(token).catch(() => [])
       ]);
@@ -112,12 +112,11 @@ function App() {
         return { date: `${y}-${m}-${dd}`, time: `${hh}:${mm}` };
       };
 
-      // Build lookup set for employees (specialists)
-      const employeeIdSet = new Set<number>();
+      // Build lookup set for ALL users (admin/contact/employee) as potential specialists.
+      // POPRAWKA: wcześniej filtrowaliśmy tylko role==='employee', przez co admin/contact byli traceni po odświeżeniu (ich ID nie wracało w specialistIds).
+      const specialistIdSet = new Set<number>();
       try {
-        usersState
-          .filter(u => u.role === 'employee')
-          .forEach(u => { const n = Number(u.id); if (!Number.isNaN(n)) employeeIdSet.add(n); });
+        usersState.forEach(u => { const n = Number(u.id); if (!Number.isNaN(n)) specialistIdSet.add(n); });
       } catch {}
       const patientNameMap = new Map<number, string>();
       const patientIdSet = new Set<number>();
@@ -140,15 +139,15 @@ function App() {
         const specNumIds: number[] = [];
         const patientNumIds: number[] = [];
         (ev.participantIds || []).forEach((pid: number) => {
-          // Reguła: jeżeli ID należy do pracowników -> specjalista; jeżeli należy do pacjentów -> pacjent; inaczej ignorujemy do czasu pełnej synchronizacji
-          if (employeeIdSet.has(pid)) {
-            specNumIds.push(pid);
-          } else if (patientIdSet.has(pid)) {
-            patientNumIds.push(pid);
-          } else {
-            // unknown id -> do not classify as patient to avoid fake entries
-          }
-        });
+          // Jeśli ID jest w zbiorze użytkowników -> traktujemy jako specjalistę.
+            if (specialistIdSet.has(pid)) {
+              specNumIds.push(pid);
+            } else if (patientIdSet.has(pid)) {
+              patientNumIds.push(pid);
+            } else {
+              // unknown id -> ignorujemy (może to być typ uczestnika którego jeszcze nie obsługujemy)
+            }
+          });
         const specIds = specNumIds.map(n => String(n));
         const patientIds = patientNumIds.map(n => String(n));
         const primarySpec = specIds[0] || '';
@@ -450,7 +449,7 @@ function App() {
           <Route path="/reservation/schedule" element={<RoomCalendar users={usersState} rooms={roomsState} meetings={meetings} patients={patientsState} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} />} />
           <Route path="/reservation/menage" element={<RoomsManage rooms={roomsState} onRoomsChange={setRoomsState} userRole={currentUser?.role || 'employee'} onBackendRoomsRefresh={refreshBackendRoomsGlobal} />} />
           <Route path="/patients" element={<Patients />} />
-          <Route path="/tasks" element={<TasksPage userRole={currentUser?.role || 'employee'} />} />
+          <Route path="/tasks" element={<TasksPage userRole={currentUser?.role || 'employee'} currentUserId={currentUser?.id || ''} />} />
           <Route path="/options" element={<Settings currentUser={currentUser!} token={currentUser?.token || localStorage.getItem('token') || undefined} onUsersRefresh={refreshBackendUsersGlobal} />} />
         </Route>
 

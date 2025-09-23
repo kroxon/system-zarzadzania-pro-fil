@@ -2,7 +2,8 @@ import { EventStatus } from "../../types";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
-const getAllEventStasuses = async (token: string): Promise<EventStatus[]> => {
+// NOTE: zachowujemy eksport starej nazwy dla kompatybilności (alias niżej)
+const getAllEventStatuses = async (token: string): Promise<EventStatus[]> => {
     const res = await fetch(`${API_URL}/api/event-statuses`, {
         method: 'GET',
         headers: {
@@ -30,4 +31,6 @@ const getEventStatus = async (id: number, token: string): Promise<EventStatus> =
     return await res.json();
 }
 
-export { getAllEventStasuses, getEventStatus };
+// Legacy alias (stara literówka) – można usunąć po refaktorze wszystkich importów
+const getAllEventStasuses = getAllEventStatuses;
+export { getAllEventStatuses, getAllEventStasuses, getEventStatus };
