@@ -45,7 +45,8 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   // Core state
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewType, setViewType] = useState<'week' | 'month'>('week');
-  const [selectedEmployee, setSelectedEmployee] = useState(currentUser.role === 'employee' ? currentUser.id : '');
+  // selectedEmployee: for 'employee' and 'contact' restrict to own ID; admin can switch
+  const [selectedEmployee, setSelectedEmployee] = useState((currentUser.role === 'employee' || currentUser.role === 'contact') ? currentUser.id : '');
   const [showCopyDropdown, setShowCopyDropdown] = useState(false);
   const [copyPeriod, setCopyPeriod] = useState<'week' | '4weeks'>('week');
   const [deletedRangeIds, setDeletedRangeIds] = useState<string[]>([]);
@@ -118,7 +119,8 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   // const getEmployeeMeetings = ()=> selectedEmployee? meetings.filter(m=> m.specialistId===selectedEmployee): [];
 
   // Auto-select first user (including admins / contacts) if current user is not a regular employee and none selected yet
-  React.useEffect(()=> { if(currentUser.role!=='employee' && !selectedEmployee && allDisplayUsers.length){ setSelectedEmployee(allDisplayUsers[0].id);} }, [currentUser.role, selectedEmployee, allDisplayUsers]);
+  // Auto-select first only for admin (contact behaves like employee)
+  React.useEffect(()=> { if(currentUser.role!=='employee' && currentUser.role!=='contact' && !selectedEmployee && allDisplayUsers.length){ setSelectedEmployee(allDisplayUsers[0].id);} }, [currentUser.role, selectedEmployee, allDisplayUsers]);
 
   // Close copy dropdown on outside click
   React.useEffect(()=> { const handler=(e:MouseEvent)=> { const target=e.target as Element; if(showCopyDropdown && !target.closest('.copy-dropdown')) setShowCopyDropdown(false); }; document.addEventListener('mousedown', handler); return ()=> document.removeEventListener('mousedown', handler); }, [showCopyDropdown]);
@@ -545,7 +547,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
     <div className="flex-1 flex flex-col pb-6">
       <div className="mb-4">
         <div className="flex flex-wrap gap-2">
-          {allDisplayUsers.map(emp=> { const active=emp.id===selectedEmployee; const disabled=currentUser.role==='employee' && emp.id!==currentUser.id; const fullName = `${emp.surname || ''} ${emp.name}`.trim(); return (
+          {allDisplayUsers.map(emp=> { const active=emp.id===selectedEmployee; const disabled=(currentUser.role==='employee' || currentUser.role==='contact') && emp.id!==currentUser.id; const fullName = `${emp.surname || ''} ${emp.name}`.trim(); return (
             <button key={emp.id} type="button" aria-pressed={active} disabled={disabled} onClick={()=> { if(disabled) return; setSelectedEmployee(emp.id); }}
               className={`px-4 py-1.5 text-xs md:text-sm rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${active? 'bg-blue-600 text-white border-blue-600':'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} ${disabled && !active? 'opacity-50 cursor-not-allowed hover:bg-white':''}`}>{fullName}</button>
           ); })}
