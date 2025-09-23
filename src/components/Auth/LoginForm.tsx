@@ -66,10 +66,10 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-transparent">
       <div className="w-full max-w-xl flex flex-col justify-center items-center" style={{ minHeight: '540px' }}>
-        <div
-          className="bg-white rounded-2xl shadow-xl w-full p-8 flex flex-col justify-center"
-          style={{ width: '480px', height: '540px', overflow: 'visible', perspective: '1200px' }}
-        >
+            <div
+              className="bg-white shadow-md p-8 w-full max-w-sm mx-auto flex flex-col justify-center"
+              style={{ width: '480px', height: '540px', overflow: 'visible', perspective: '1200px' }}
+            >
           {/* FlipX panel: reset */}
           <div
             className="absolute w-full h-full top-0 left-0"
@@ -143,11 +143,6 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                       </button>
                     </div>
                   </div>
-                  {loginSuccess && (
-                    <div className='mb-4 text-green-600 fonr-semibold text-center'>
-                      Zalogowano pomyślnie
-                    </div>
-                  )}
                   <button
                     type="submit"
                     className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
