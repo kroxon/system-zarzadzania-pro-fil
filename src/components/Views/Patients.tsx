@@ -4,13 +4,11 @@ function getPatientStatusLabel(isActive: boolean): 'aktywny' | 'nieaktywny' {
 }
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { FileText } from 'lucide-react';
-// Using demo UI shape for patients for now. When backend is ready, map API <-> UI.
-import { fetchPatients, fetchPatientReport  } from '../../utils/api/patients';
-import {Patient, User, Meeting} from '../../types/index'
+// Backend API functions
+import { fetchPatients, fetchPatientReport, createPatient as apiCreatePatient, updatePatient as apiUpdatePatient } from '../../utils/api/patients';
+import { fetchEmployees, assignPatientsToEmployee, unassignPatientsFromEmployee } from '../../utils/api/employees';
+import {Patient, Meeting, Employee} from '../../types/index'
 import { Search } from 'lucide-react';
-/*
-// Całość przełączona na typ Patient z backendu. Usunięto PatientDemo, mappersy i demo storage.
-*/
 
 interface Visit {
   id: string;
@@ -20,11 +18,11 @@ interface Visit {
   room: string;
   status: 'zrealizowana' | 'odwołana' | 'zaplanowana' | 'nieobecny'; }
 
-// Brak localStorage dla przypisań terapeutów – stan tylko w pamięci
 
 export default function Patients(){
   // Pacjenci z backendu
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
 useEffect(() => {
   const token = localStorage.getItem('token');
   if (!token) return;
@@ -37,16 +35,19 @@ useEffect(() => {
       console.error('fetchPatients error:', err);
       setPatients([]);
     });
+  fetchEmployees(token)
+    .then(data => setEmployees(data))
+    .catch(err => {
+      console.error('fetchEmployees error:', err);
+      setEmployees([]);
+    });
 }, []);
 
 useEffect(() => {
   console.log('Patients state:', patients);
 }, [patients]);
   const meetings = useMemo<Meeting[]>(() => [], []);
-  const users = useMemo<User[]>(() => [], []);
   const rooms = useMemo<{ id: string; name: string }[]>(() => [], []);
-
-  // Brak odczytów lokalnych — te listy będą puste lub zasilone backendem w przyszłości
 
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -58,7 +59,6 @@ useEffect(() => {
     info: ''
   });
 
-  const [therapistAssignments, setTherapistAssignments] = useState<Record<string,string[]>>({});
   const [patientNotes, setPatientNotes] = useState<Record<string,string>>({});
   const [sessionNotes, setSessionNotes] = useState<Record<string,string>>({});
   const [openSessionNotes, setOpenSessionNotes] = useState<Set<string>>(new Set());
@@ -69,7 +69,7 @@ useEffect(() => {
   const [selected, setSelected] = useState<Patient | null>(null);
   const [statusFilter, setStatusFilter] = useState<'aktywny'|'nieaktywny'|'wszyscy'>('aktywny');
   // Replace generic assignment filter with a specialist single-select filter
-  const [specialistFilter, setSpecialistFilter] = useState<'wszyscy' | string>('wszyscy');
+  const [specialistFilter, setSpecialistFilter] = useState<'wszyscy' | number>('wszyscy');
   // Custom dropdown state/refs for filters
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showSpecialistMenu, setShowSpecialistMenu] = useState(false);
@@ -125,7 +125,7 @@ useEffect(() => {
   }, [showDatePicker]);
 
   const visits: Visit[] = useMemo(()=>{
-    const userMap = new Map<string, string>(users.map((u: User)=> [u.id, u.name]));
+    const employeeMap = new Map<number, string>(employees.map((e: Employee)=> [e.id, `${e.name} ${e.surname}`]));
     const roomMap = new Map<string, string>(rooms.map((r: {id:string; name:string})=> [r.id, r.name]));
     const todayStr = new Date().toISOString().split('T')[0];
     return meetings
@@ -136,12 +136,12 @@ useEffect(() => {
         else if(m.status === 'absent') status = 'nieobecny';
         else if(m.status === 'in-progress') status = 'zaplanowana';
         else status = m.date > todayStr ? 'zaplanowana' : 'zrealizowana';
-        const therapistIds = (m.specialistIds && m.specialistIds.length ? m.specialistIds : (m.specialistId ? [m.specialistId] : []));
-        const therapists = therapistIds.map((id: string) => userMap.get(id) || id).filter(Boolean) as string[];
-        return { id:m.id, patientId:m.patientId!, date:m.date, therapists, room: roomMap.get(m.roomId) || m.roomId, status };
+  const therapistIds = (m.specialistIds && m.specialistIds.length ? m.specialistIds : (m.specialistId ? [m.specialistId] : []));
+  const therapists = therapistIds.map((id) => employeeMap.get(Number(id)) || String(id)).filter(Boolean) as string[];
+        return { id:m.id, patientId:m.patientId!, date:m.date, therapists, room: (roomMap.get(m.roomId) || m.roomId) as string, status };
       })
       .sort((a: Visit,b: Visit)=> a.date.localeCompare(b.date));
-  },[meetings, users, rooms]);
+  },[meetings, employees, rooms]);
 
   useEffect(()=>{
     setSessionNotes(prev => {
@@ -151,30 +151,27 @@ useEffect(() => {
     });
   },[meetings]);
 
-  const userIdToName = useMemo(()=>{
-    const m: Record<string,string> = {}; users.forEach((u: User)=> { m[u.id]=u.name; }); return m;
-  },[users]);
+  const employeeIdToName = useMemo(()=>{
+    const m: Record<number,string> = {};
+    employees.forEach(e => { m[e.id] = `${e.name} ${e.surname}`.trim(); });
+    return m;
+  },[employees]);
 
   const getStatusLabel = (v: 'aktywny'|'nieaktywny'|'wszyscy') => v==='aktywny' ? 'Aktywni' : v==='nieaktywny' ? 'Nieaktywni' : 'Wszyscy';
 
   // Precompute sorted employees: label "Nazwisko Imię" and sort by last name then first name (case/diacritics insensitive)
   const employeesSorted = useMemo(()=>{
     const strip = (s:string)=> s.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase();
-    return users
-      .filter((u: User)=> u.role==='employee')
-      .map((u: User)=> {
-        const parts = (u.name||'').trim().split(/\s+/).filter(Boolean);
-        const last = parts.length>1 ? parts[parts.length-1] : '';
-        const first = parts.length>1 ? parts.slice(0,-1).join(' ') : (parts[0]||'');
+    return employees
+      .map((e: Employee)=> {
+        const first = (e.name||'').trim();
+        const last = (e.surname||'').trim();
         const label = last ? `${last} ${first}` : first;
         const sortKey = `${strip(last)} ${strip(first)}`;
-        return { id: u.id, label, sortKey };
+        return { id: e.id, label, sortKey };
       })
-      .sort((a: {id:string; label:string; sortKey:string},b: {id:string; label:string; sortKey:string})=> a.sortKey.localeCompare(b.sortKey));
-  },[users]);
-
-  // Disabled persistence of therapist assignments to localStorage
-
+      .sort((a, b)=> a.sortKey.localeCompare(b.sortKey));
+  },[employees]);
 
   // Close dropdowns on outside click
   useEffect(()=>{
@@ -194,8 +191,6 @@ useEffect(() => {
   const normalize = (s: string) => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
   // Filtered patients list for the left panel
-  // Lista pacjentów zawsze pusta
-  // Przywrócona logika filtrowania pacjentów
   const filtered = useMemo(() => {
     const q = normalize(query);
     const list = patients.slice();
@@ -212,8 +207,8 @@ useEffect(() => {
     });
     const bySpecialist = byStatus.filter(p => {
       if(specialistFilter==='wszyscy') return true;
-      const assigned = therapistAssignments[p.id] || [];
-      return assigned.includes(String(specialistFilter));
+      const assigned = Array.isArray(p.assignedEmployeesIds) ? p.assignedEmployeesIds.map(Number) : [];
+      return assigned.includes(Number(specialistFilter));
     });
     // sort by last name, then first name
     return bySpecialist.sort((a,b)=> {
@@ -221,7 +216,7 @@ useEffect(() => {
       if(lnA!==lnB) return lnA.localeCompare(lnB);
       return normalize(a.name).localeCompare(normalize(b.name));
     });
-  }, [patients, query, statusFilter, specialistFilter, therapistAssignments]);
+  }, [patients, query, statusFilter, specialistFilter]);
 
   const statusLabel = (status?: string): JSX.Element => {
     const st = (status as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
@@ -233,17 +228,6 @@ useEffect(() => {
       </span>
     );
   };
-
-  // const statusBadge = (isActive?: string): JSX.Element => {
-  //   const st = (isActive as 'aktywny'|'nieaktywny'|undefined) || 'aktywny';
-  //   const color = st==='aktywny' ? 'bg-green-500' : 'bg-gray-400';
-  //   return (
-  //     <span className="inline-flex items-center gap-1.5 text-xs text-gray-700">
-  //       <span className={`inline-block h-2 w-2 rounded-full ${color}`} aria-hidden="true" />
-  //       <span className="capitalize">{st}</span>
-  //     </span>
-  //   );
-  // };
 
   const visitStatusLabel = (status: Visit['status']): JSX.Element => {
     const map: Record<Visit['status'], { color: string; text: string }> = {
@@ -327,33 +311,42 @@ useEffect(() => {
       });
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if(!selected) return;
-    const updated: Patient = {
-      ...selected,
+    const token = localStorage.getItem('token') || '';
+    const nextAssigned = Array.isArray(editForm.assignedEmployeesIds) ? editForm.assignedEmployeesIds.map(Number) : [];
+    const currentAssigned = Array.isArray(selected.assignedEmployeesIds) ? selected.assignedEmployeesIds.map(Number) : [];
+    const toAdd = nextAssigned.filter(id => !currentAssigned.includes(id));
+    const toRemove = currentAssigned.filter(id => !nextAssigned.includes(id));
+
+    // Update patient core fields first
+    await apiUpdatePatient(selected.id, {
       name: editForm.name.trim(),
       surname: editForm.surname.trim(),
       birthDate: editForm.birthDate || '',
       isActive: !!editForm.isActive,
-      assignedEmployeesIds: Array.isArray(editForm.assignedEmployeesIds) ? editForm.assignedEmployeesIds.map(Number) : [],
       info: editForm.info?.trim() || ''
-    };
-    setPatients(prev => prev.map(p => p.id === selected.id ? updated : p));
-    // Persist therapist assignments
-    setTherapistAssignments(prev => {
-      const next = { ...prev };
-      const unique = Array.from(new Set(editForm.assignedEmployeesIds));
-      if(unique.length) next[selected.id] = unique.map(String); else delete next[selected.id];
-      return next;
-    });
-    // Persist patient notes map
+    }, token);
+
+    // Then apply assignments via employees endpoints
+    await Promise.all([
+      ...toAdd.map(empId => assignPatientsToEmployee(empId, { patientIds: [selected.id] }, token)),
+      ...toRemove.map(empId => unassignPatientsFromEmployee(empId, { patientIds: [selected.id] }, token))
+    ]);
+
+    // Optionally update local notes mirror
     setPatientNotes(prev => {
       const next = { ...prev };
       const txt = (editForm.info || '').trim();
       if(txt) next[selected.id] = txt; else delete next[selected.id];
       return next;
     });
-    setSelected(updated);
+
+    // Refetch patients and update selection
+    const refreshed = await fetchPatients(token).catch(()=>patients);
+    setPatients(refreshed);
+    const updatedSel = refreshed.find(p => p.id === selected.id) || null;
+    setSelected(updatedSel);
     setEditMode(false);
   };
 
@@ -366,19 +359,23 @@ useEffect(() => {
   const [deleting, setDeleting] = useState(false);
 
   // Delete selected patient and related data
-  const deleteSelected = () => {
+  const deleteSelected = async () => {
     if(!selected) return;
+    const token = localStorage.getItem('token') || '';
     const id = selected.id;
-    // Remove patient
+    try {
+      // Call backend delete
+      const { deletePatient } = await import('../../utils/api/patients');
+      await deletePatient(id, token);
+    } catch (e) {
+      // even if backend fails, proceed with local removal to keep UI responsive
+      console.error('deletePatient failed, removing locally', e);
+    }
+    // Local cleanup
     setPatients(prev => prev.filter(p => p.id !== id));
-    // Remove therapist assignments
-    setTherapistAssignments(prev => { const n = { ...prev }; delete n[id]; return n; });
-    // Remove patient notes
     setPatientNotes(prev => { const n = { ...prev }; delete n[id]; return n; });
-    // Remove session notes for this patient's visits
-    const vIds = visits.filter(v => Number(v.patientId) === selected.id).map(v => v.id);
+    const vIds = visits.filter(v => Number(v.patientId) === id).map(v => v.id);
     setSessionNotes(prev => { const n = { ...prev }; vIds.forEach(vid => { delete n[vid]; }); return n; });
-    // Reset selection and open notes
     setSelected(null);
     setOpenSessionNotes(new Set());
   };
@@ -417,30 +414,38 @@ useEffect(() => {
   const openAdd = () => { setNewPatientForm(emptyNew); setNewErrors([]); setShowAddModal(true); };
   const cancelAdd = () => { if(creating) return; setShowAddModal(false); };
 
-  const submitAdd = (e:React.FormEvent) => {
+  const submitAdd = async (e:React.FormEvent) => {
     e.preventDefault();
     if(!validateNew()) return;
     setCreating(true);
     const token = localStorage.getItem('token') || '';
-    const payload = {
-      name: newPatientForm.name.trim(),
-      surname: newPatientForm.surname.trim(),
-      birthDate: newPatientForm.birthDate || '',
-      isActive: !!newPatientForm.isActive,
-      assignedEmployeesIds: Array.isArray(newPatientForm.assignedEmployeesIds) ? newPatientForm.assignedEmployeesIds.map(Number) : [],
-      info: newPatientForm.info?.trim() || ''
-    };
-    import('../../utils/api/patients').then(api => {
-      api.createPatient(payload, token)
-        .then(() => {
-          api.fetchPatients(token).then(data => setPatients(data));
-          setShowAddModal(false);
-        })
-        .catch(err => {
-          setNewErrors([err.message || 'Błąd dodawania pacjenta']);
-        })
-        .finally(() => setCreating(false));
-    });
+    try {
+      // Create patient (without assignments)
+      const created = await apiCreatePatient({
+        name: newPatientForm.name.trim(),
+        surname: newPatientForm.surname.trim(),
+        birthDate: newPatientForm.birthDate || '',
+        isActive: !!newPatientForm.isActive,
+        info: newPatientForm.info?.trim() || ''
+      }, token);
+
+      // Assign to selected employees via employees endpoints
+      const ids = Array.isArray(newPatientForm.assignedEmployeesIds) ? newPatientForm.assignedEmployeesIds.map(Number) : [];
+      if(created && ids.length){
+        await Promise.all(ids.map(empId => assignPatientsToEmployee(empId, { patientIds: [created.id] }, token)));
+      }
+
+      // Refresh list and focus new patient
+      const refreshed = await fetchPatients(token);
+      setPatients(refreshed);
+      const sel = created ? refreshed.find(p => p.id === created.id) || null : null;
+      setSelected(sel);
+      setShowAddModal(false);
+    } catch (err: any) {
+      setNewErrors([err?.message || 'Błąd dodawania pacjenta']);
+    } finally {
+      setCreating(false);
+    }
   };
   const toggleNewTherapist = (id:number) => {
     setNewPatientForm(f => f.assignedEmployeesIds.includes(id) ? { ...f, assignedEmployeesIds: f.assignedEmployeesIds.filter(t=>t!==id) } : { ...f, assignedEmployeesIds:[...f.assignedEmployeesIds, id] });
@@ -587,7 +592,7 @@ useEffect(() => {
           <table className="w-full divide-y divide-gray-100">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-3 py-2 text-left text-[11px] font-medium text-gray-500 uppercase tracking-wider">Imię i nazwisko</th>
+                <th className="px-3 py-2 text-left text-[11px] font-medium text-gray-500 uppercase tracking-wider">Nazwisko i imię</th>
                 <th className="px-3 py-2 text-left text-[11px] font-medium text-gray-500 uppercase tracking-wider">Status</th>
               </tr>
             </thead>
@@ -597,7 +602,7 @@ useEffect(() => {
               ) : (
                 filtered.map(p => (
                   <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelected(p)}>
-                    <td className="px-3 py-2 whitespace-nowrap">{p.name} {p.surname}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{p.surname} {p.name}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{statusLabel(getPatientStatusLabel(p.isActive))}</td>
                   </tr>
                 ))
@@ -774,12 +779,12 @@ useEffect(() => {
                         <p className="mb-1"><strong className="text-[0.95rem] font-semibold text-gray-800">Terapeuci:</strong></p>
                         {!editMode && (
                           <>
-                            {(therapistAssignments[selected.id]||[]).length===0 ? (
+                            {(selected.assignedEmployeesIds||[]).length===0 ? (
                               <span className="text-xs text-gray-400">Brak przypisanych terapeutów</span>
                             ) : (
                               <ul className="space-y-2">
-                                {(therapistAssignments[selected.id]||[]).map(tId => {
-                                  const name = userIdToName[tId] || tId;
+                                {selected.assignedEmployeesIds.map(tId => {
+                                  const name = employeeIdToName[Number(tId)] || String(tId);
                                   return (
                                     <li key={tId} className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2">
                                       <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white text-[11px] font-semibold">{(name? name.trim().split(/\s+/).slice(0,2).map(p=>p[0]?.toUpperCase()||'').join(''):'?')}</span>
@@ -795,7 +800,7 @@ useEffect(() => {
                           <div className="space-y-2">
                             <div className="flex flex-wrap gap-2">
                               {editForm.assignedEmployeesIds.map(tId => {
-                                const name = userIdToName[tId] || tId;
+                            const name = employeeIdToName[Number(tId)] || String(tId);
                                 return (
                                   <span key={tId} className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm text-blue-900">
                                     <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-semibold">{(typeof name === 'string' ? name.trim().split(/\s+/).slice(0,2).map(p=>p[0]?.toUpperCase()||'').join('') : '?')}</span>
@@ -1038,9 +1043,9 @@ useEffect(() => {
                 <div className="col-span-2">
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Terapeuci</label>
                   <div className="flex flex-wrap gap-2 mb-2 min-h-[34px] p-2 rounded-lg border border-gray-200 bg-gray-50">
-                    {newPatientForm.assignedEmployeesIds.map((tId:number)=>{ const u=users.find((x: User)=>Number(x.id) === Number(tId)); return (
+                    {newPatientForm.assignedEmployeesIds.map((tId:number)=>{ const u=employees.find((x: Employee)=>Number(x.id) === Number(tId)); const fullName = u? `${u.name} ${u.surname}`.trim() : String(tId); return (
                       <span key={tId} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium bg-indigo-100 text-indigo-700 border border-indigo-300">
-                        {u? u.name.split(' ').slice(0,2).join(' '): tId}
+                        {u? fullName : tId}
                         <button type="button" onClick={()=> toggleNewTherapist(tId)} className="hover:text-indigo-900">×</button>
                       </span>
                     );})}
@@ -1048,7 +1053,9 @@ useEffect(() => {
                   </div>
                   <select onChange={e=> { const v=e.target.value; if(v){ toggleNewTherapist(Number(v)); e.target.selectedIndex=0; } }} value="" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
                     <option value="">Dodaj terapeutę...</option>
-                    {users.filter((u: User)=>u.role==='employee' && !newPatientForm.assignedEmployeesIds.includes(Number(u.id))).map((u: User)=> <option key={u.id} value={u.id}>{u.name} {u.specialization? '– '+u.specialization:''}</option>)}
+                    {employeesSorted.filter((emp: any)=> !newPatientForm.assignedEmployeesIds.includes(Number(emp.id))).map((emp: any)=> (
+                      <option key={emp.id} value={emp.id}>{emp.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="col-span-2">
@@ -1106,7 +1113,7 @@ useEffect(() => {
               <div className="text-sm text-gray-700">
                 <p className="font-medium text-gray-800 mb-1">Dodatkowo zostaną trwale usunięte:</p>
                 <ul className="list-disc list-inside space-y-0.5">
-                  <li>Przypisania terapeutów ({selected ? (therapistAssignments[selected.id]||[]).length : 0})</li>
+                  <li>Przypisania terapeutów ({selected ? (selected.assignedEmployeesIds?.length || 0) : 0})</li>
                   <li>Notatki podopiecznego</li>
                   <li>Notatki z sesji ({selectedVisits.length})</li>
                 </ul>
