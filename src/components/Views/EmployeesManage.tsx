@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+// ...existing imports...
 import Notification from '../common/Notification';
 import { User } from '../../types';
 import { X, Pencil, Trash2, ChevronDown, Plus } from 'lucide-react';
@@ -19,30 +20,40 @@ interface EmployeesManageProps {
 }
 
 const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdate, onDelete, onBackendRefresh }) => {
-  // Funkcja generująca raport PDF dla pracownika
-  const handleGenerateEmployeeReport = async (user: User) => {
-    // Możesz dodać wybór miesiąca/roku, na razie bieżący miesiąc/rok
-    const now = new Date();
-    const month = now.getMonth() + 1; // JS: 0-based
-    const year = now.getFullYear();
+  // --- MODAL RAPORTU PRACOWNIKA ---
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportUser, setReportUser] = useState<User | null>(null);
+  const [reportMonth, setReportMonth] = useState<number>(new Date().getMonth() + 1);
+  const [reportYear, setReportYear] = useState<number>(new Date().getFullYear());
+  const monthNames = ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
+
+  const openReportModal = (user: User) => {
+    setReportUser(user);
+    setReportMonth(new Date().getMonth() + 1);
+    setReportYear(new Date().getFullYear());
+    setShowReportModal(true);
+  };
+
+  const handleReportDownload = async () => {
+    if (!reportUser) return;
     const token = localStorage.getItem('token') || '';
     try {
-      // Import funkcji pobierającej raport
       const { fetchEmployeeReport } = await import('../../utils/api/employees');
-      const blob = await fetchEmployeeReport(Number(user.id), month, year, token);
+      const blob = await fetchEmployeeReport(Number(reportUser.id), reportMonth, reportYear, token);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `raport_pracownika_${user.surname}_${user.name}_${month}_${year}.pdf`;
+      a.download = `raport_pracownika_${reportUser.surname}_${reportUser.name}_${reportMonth}_${reportYear}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      setShowReportModal(false);
     } catch (err) {
-      // Możesz dodać powiadomienie o błędzie
       console.error('Błąd pobierania raportu pracownika:', err);
     }
   };
+  // Removed duplicate function
   // Reusable classes for table header cells (maintain visual consistency)
   const TH_BASE = 'px-4 text-left text-[11px] font-semibold tracking-wider uppercase text-gray-600 border border-gray-200 bg-gray-50';
   // Start with demo/local users; backend kept separately and shown below
@@ -633,13 +644,42 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                       <Pencil className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => handleGenerateEmployeeReport(u)}
+                      onClick={() => openReportModal(u)}
                       aria-label="Generuj raport"
                       title="Generuj raport PDF"
                       className="p-2 rounded-md border border-green-200 bg-green-50 text-green-600 hover:bg-green-100 hover:border-green-300 transition-colors focus:outline-none focus:ring-2 focus:ring-green-400"
                     >
                       <FileText className="w-4 h-4" />
                     </button>
+      {/* Modal wyboru okresu raportu */}
+      {showReportModal && reportUser && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md border border-green-100 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Generuj raport dla: <span className="font-normal">{reportUser.surname} {reportUser.name}</span></h3>
+              <button onClick={() => setShowReportModal(false)} className="p-2 rounded-lg hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
+            </div>
+            <div className="mb-4 flex gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Miesiąc</label>
+                <select value={reportMonth} onChange={e => setReportMonth(Number(e.target.value))} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400">
+                  {monthNames.map((m, idx) => (
+                    <option key={idx+1} value={idx+1}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rok</label>
+                <input type="number" min="2020" max="2100" value={reportYear} onChange={e => setReportYear(Number(e.target.value))} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={() => setShowReportModal(false)} className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-sm">Anuluj</button>
+              <button type="button" onClick={handleReportDownload} className="px-4 py-2 bg-green-600 text-white hover:bg-green-700 rounded-lg transition-colors text-sm">Generuj raport</button>
+            </div>
+          </div>
+        </div>
+      )}
                     <button
                       onClick={() => openDeleteDialog(u)}
                       aria-label="Usuń"
