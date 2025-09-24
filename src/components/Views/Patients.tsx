@@ -7,6 +7,9 @@ import { FileText } from 'lucide-react';
 // Backend API functions
 import { fetchPatients, fetchPatientReport, createPatient as apiCreatePatient, updatePatient as apiUpdatePatient } from '../../utils/api/patients';
 import { fetchEmployees, assignPatientsToEmployee, unassignPatientsFromEmployee } from '../../utils/api/employees';
+import { fetchEvents } from '../../utils/api/events';
+import { getRooms } from '../../utils/api/rooms';
+import { getAllEventStatuses } from '../../utils/api/eventStatuses';
 import {Patient, Meeting, Employee} from '../../types/index'
 import { Search } from 'lucide-react';
 
@@ -46,8 +49,83 @@ useEffect(() => {
 useEffect(() => {
   console.log('Patients state:', patients);
 }, [patients]);
-  const meetings = useMemo<Meeting[]>(() => [], []);
-  const rooms = useMemo<{ id: string; name: string }[]>(() => [], []);
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [rooms, setRooms] = useState<{ id: string; name: string }[]>([]);
+
+  // Fetch events and rooms when employees/patients are available (needed to split participantIds)
+  useEffect(() => {
+    const token = localStorage.getItem('token') || '';
+    if (!token) return;
+    // Need employees and patients to build classification sets
+    if (!employees.length || !patients.length) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [apiEvents, statuses, apiRooms] = await Promise.all([
+          fetchEvents(token),
+          getAllEventStatuses(token).catch(() => [] as any[]),
+          getRooms(token).catch(() => [] as any[])
+        ]);
+        if (cancelled) return;
+        const statusMap: Record<number, string> = {};
+        (statuses as any[]).forEach((s: any) => { if (s && typeof s.id === 'number') statusMap[s.id] = String(s.name || ''); });
+        const normalizeStatus = (statusId?: number): 'present' | 'absent' | 'cancelled' | 'in-progress' => {
+          const name = statusId ? (statusMap[statusId] || '') : '';
+          const s = name.toLowerCase();
+          if (/(cancel|odwo)/.test(s)) return 'cancelled';
+          if (/(absent|nieobec)/.test(s)) return 'absent';
+          if (/(progress|w toku)/.test(s)) return 'in-progress';
+          return 'present';
+        };
+        const toLocalParts = (iso: string) => {
+          const d = new Date(iso);
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const dd = String(d.getDate()).padStart(2, '0');
+          const hh = String(d.getHours()).padStart(2, '0');
+          const mm = String(d.getMinutes()).padStart(2, '0');
+          return { date: `${y}-${m}-${dd}`, time: `${hh}:${mm}` };
+        };
+        const employeeIdSet = new Set<number>(employees.map(e => Number(e.id)).filter(n => Number.isFinite(n)));
+        const patientIdSet = new Set<number>(patients.map(p => Number(p.id)).filter(n => Number.isFinite(n)));
+        const mappedRooms = (apiRooms as any[]).map((r: any) => ({ id: String(r.id), name: String(r.name || '') }));
+        setRooms(mappedRooms);
+        const mappedMeetings: Meeting[] = (apiEvents as any[]).map((ev: any) => {
+          const parts = Array.isArray(ev?.participantIds) ? ev.participantIds as number[] : [];
+          const specNum: number[] = [];
+          const patNum: number[] = [];
+          parts.forEach(pid => {
+            if (employeeIdSet.has(pid)) specNum.push(pid);
+            else if (patientIdSet.has(pid)) patNum.push(pid);
+          });
+          const start = toLocalParts(String(ev.start));
+          const end = toLocalParts(String(ev.end));
+          return {
+            id: `bevt-${ev.id}`,
+            specialistId: specNum[0] != null ? String(specNum[0]) : '',
+            name: String(ev.name || ''),
+            patientName: '',
+            patientId: patNum[0] != null ? String(patNum[0]) : undefined,
+            guestName: ev.guest || undefined,
+            specialistIds: specNum.length ? specNum.map(n => String(n)) : undefined,
+            patientIds: patNum.length ? patNum.map(n => String(n)) : undefined,
+            roomId: ev.roomId != null ? String(ev.roomId) : '',
+            date: start.date,
+            startTime: start.time,
+            endTime: end.time,
+            notes: ev.info || undefined,
+            statusId: typeof ev.statusId === 'number' ? ev.statusId : undefined,
+            status: normalizeStatus(ev.statusId),
+            createdBy: 'backend',
+          } as Meeting;
+        });
+        setMeetings(mappedMeetings);
+      } catch (e) {
+        // silent
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [employees, patients]);
 
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -124,24 +202,8 @@ useEffect(() => {
     }
   }, [showDatePicker]);
 
-  const visits: Visit[] = useMemo(()=>{
-    const employeeMap = new Map<number, string>(employees.map((e: Employee)=> [e.id, `${e.name} ${e.surname}`]));
-    const roomMap = new Map<string, string>(rooms.map((r: {id:string; name:string})=> [r.id, r.name]));
-    const todayStr = new Date().toISOString().split('T')[0];
-    return meetings
-      .filter((m: Meeting)=> !!m.patientId)
-      .map((m: Meeting)=>{
-        let status: Visit['status'];
-        if(m.status === 'cancelled') status = 'odwołana';
-        else if(m.status === 'absent') status = 'nieobecny';
-        else if(m.status === 'in-progress') status = 'zaplanowana';
-        else status = m.date > todayStr ? 'zaplanowana' : 'zrealizowana';
-  const therapistIds = (m.specialistIds && m.specialistIds.length ? m.specialistIds : (m.specialistId ? [m.specialistId] : []));
-  const therapists = therapistIds.map((id) => employeeMap.get(Number(id)) || String(id)).filter(Boolean) as string[];
-        return { id:m.id, patientId:m.patientId!, date:m.date, therapists, room: (roomMap.get(m.roomId) || m.roomId) as string, status };
-      })
-      .sort((a: Visit,b: Visit)=> a.date.localeCompare(b.date));
-  },[meetings, employees, rooms]);
+  // Note syncing: keep sessionNotes prefilled from meeting notes
+  // (independent from selected patient filtering)
 
   useEffect(()=>{
     setSessionNotes(prev => {
@@ -250,25 +312,45 @@ useEffect(() => {
     );
   };
 
-  // Selected patient's visits (newest first)
+  // Selected patient's visits (newest first), include only meetings with a room and where selected patient participates
   const selectedVisits = useMemo(()=>{
     if(!selected) return [] as Visit[];
-    return visits.filter(v => Number(v.patientId) === selected.id).sort((a,b)=> b.date.localeCompare(a.date));
-  }, [visits, selected]);
+    const employeeMap = new Map<number, string>(employees.map((e: Employee)=> [e.id, `${e.name} ${e.surname}`]));
+    const roomMap = new Map<string, string>(rooms.map((r: {id:string; name:string})=> [r.id, r.name]));
+    const todayStr = new Date().toISOString().split('T')[0];
+    const pid = Number(selected.id);
+    return meetings
+      .filter(m => !!m.roomId)
+      .filter(m => {
+        const pids = (m.patientIds || (m.patientId ? [m.patientId] : [])).map(id => Number(id));
+        return pids.includes(pid);
+      })
+      .map((m: Meeting) => {
+        let status: Visit['status'];
+        if(m.status === 'cancelled') status = 'odwołana';
+        else if(m.status === 'absent') status = 'nieobecny';
+        else if(m.status === 'in-progress') status = 'zaplanowana';
+        else status = m.date > todayStr ? 'zaplanowana' : 'zrealizowana';
+        const therapistIds = (m.specialistIds && m.specialistIds.length ? m.specialistIds : (m.specialistId ? [m.specialistId] : []));
+        const therapists = therapistIds.map((id) => employeeMap.get(Number(id)) || String(id)).filter(Boolean) as string[];
+        return { id: m.id, patientId: String(selected.id), date: m.date, therapists, room: (roomMap.get(m.roomId) || m.roomId) as string, status } as Visit;
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [meetings, employees, rooms, selected]);
 
   // Session tiles counts
   const visitCounts = useMemo(()=>{
     if(!selected) return { total: 0, zrealizowana: 0, odwolana: 0, nieobecny: 0, zaplanowana: 0 };
-    const vs = visits.filter(v => Number(v.patientId) === selected.id);
-    const acc = { total: vs.length, zrealizowana: 0, odwolana: 0, nieobecny: 0, zaplanowana: 0 };
+    const vs = selectedVisits;
+    const acc = { total: vs.length, zrealizowana: 0, odwolana: 0, nieobecny: 0, zaplanowana: 0 } as any;
     vs.forEach(v => {
       if(v.status==='zrealizowana') acc.zrealizowana++;
       else if(v.status==='odwołana') acc.odwolana++;
       else if(v.status==='nieobecny') acc.nieobecny++;
       else acc.zaplanowana++;
     });
-    return acc;
-  }, [visits, selected]);
+    return acc as { total: number, zrealizowana: number, odwolana: number, nieobecny: number, zaplanowana: number };
+  }, [selectedVisits, selected]);
 
   const addTherapist = (id: number) => {
     if(!id) return;
@@ -374,7 +456,13 @@ useEffect(() => {
     // Local cleanup
     setPatients(prev => prev.filter(p => p.id !== id));
     setPatientNotes(prev => { const n = { ...prev }; delete n[id]; return n; });
-    const vIds = visits.filter(v => Number(v.patientId) === id).map(v => v.id);
+    const vIds = meetings
+      .filter(m => !!m.roomId)
+      .filter(m => {
+        const pids = (m.patientIds || (m.patientId ? [m.patientId] : [])).map(id => Number(id));
+        return pids.includes(id);
+      })
+      .map(m => m.id);
     setSessionNotes(prev => { const n = { ...prev }; vIds.forEach(vid => { delete n[vid]; }); return n; });
     setSelected(null);
     setOpenSessionNotes(new Set());
