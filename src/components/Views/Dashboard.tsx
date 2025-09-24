@@ -273,8 +273,8 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
   {/* Main high-level stats tiles */}
       <div className="space-y-3">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
-            Spotkania w siedzibie fundacji ogółem
+          <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-indigo-600" /> Spotkania w siedzibie fundacji ogółem
           </h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">

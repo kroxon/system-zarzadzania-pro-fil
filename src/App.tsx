@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import NotFound404 from './components/Views/NotFound404';
 import Sidebar from './components/Layout/Sidebar';
 import TopBar from './components/Layout/TopBar';
@@ -39,17 +39,51 @@ function saveCurrentUser(user: User) {
 
 function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any, onLogout: () => void, children?: React.ReactNode }) {
   if (!currentUser) return <Navigate to="/login" replace />;
+  // Derive current page meta (title + sidebar view) from the route path
+  const { pathname } = useLocation();
+  const getViewInfo = (path: string) => {
+    // default
+    let currentView = 'dashboard';
+    let pageTitle = 'Panel główny';
+    if (path.startsWith('/employees/schedule')) {
+      currentView = 'employee-calendar';
+      pageTitle = 'Grafiki pracowników';
+    } else if (path.startsWith('/employees/menage')) {
+      currentView = 'employees-manage';
+      pageTitle = 'Zarządzaj pracownikami';
+    } else if (path.startsWith('/reservation/schedule')) {
+      currentView = 'room-calendar';
+      pageTitle = 'Grafiki sal';
+    } else if (path.startsWith('/reservation/menage')) {
+      currentView = 'rooms-manage';
+      pageTitle = 'Zarządzanie salami';
+    } else if (path.startsWith('/patients')) {
+      currentView = 'patients';
+      pageTitle = 'Podopieczni';
+    } else if (path.startsWith('/tasks')) {
+      currentView = 'tasks';
+      pageTitle = 'Zadania';
+    } else if (path.startsWith('/options')) {
+      currentView = 'settings';
+      pageTitle = 'Ustawienia';
+    } else if (path.startsWith('/dashboard')) {
+      currentView = 'dashboard';
+      pageTitle = 'Panel główny';
+    }
+    return { currentView, pageTitle };
+  };
+  const { currentView, pageTitle } = getViewInfo(pathname || '/dashboard');
   return (
     <div className="flex h-screen bg-gray-50">
       <Sidebar
-        currentView={''}
+        currentView={currentView}
         userRole={currentUser.role}
       />
       <div className="flex-1 flex flex-col overflow-hidden">
         <TopBar
           currentUser={currentUser}
           onLogout={onLogout}
-          pageTitle={''}
+          pageTitle={pageTitle}
         />
         <main className="flex-1 flex flex-col overflow-hidden">
           <div className="p-6 flex-1 flex flex-col overflow-y-auto">

@@ -260,11 +260,11 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
 
   return (
     <>
-      <div className="flex-1 space-y-8 p-4 md:p-8">
-        <div className="flex items-center justify-between space-y-2">
+  <div className="flex-1 space-y-6">
+  <div className="flex items-center justify-between mb-2">
           <div>
-            <h2 className="text-3xl font-bold tracking-tight font-headline">Zadania</h2>
-            <p className="text-muted-foreground"> {headerDescription} </p>
+            {/* Usunięto wtórny nagłówek "Zadania" – TopBar już go wyświetla */}
+            <p className="text-sm text-gray-600">{headerDescription}</p>
           </div>
           {userRole==='admin' && (
             <div className="flex items-center space-x-2">
