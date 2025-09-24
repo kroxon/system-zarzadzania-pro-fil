@@ -1,3 +1,32 @@
+// Modal do umawiania spotkania: wybór specjalisty, podgląd dostępnych terminów, przejście do MeetingForm
+const ScheduleMeetingModal: React.FC<{
+  open: boolean;
+  onClose: () => void;
+  users: User[];
+  onSelect: (specialistId: string) => void;
+}> = ({ open, onClose, users, onSelect }) => {
+  const [selectedId, setSelectedId] = useState<string>('');
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30">
+      <div className="bg-white rounded-xl shadow-xl p-6 min-w-[320px] max-w-md flex flex-col items-center">
+        <div className="mb-4 text-center text-gray-800 text-lg font-semibold">Wybierz specjalistę</div>
+        <div className="w-full mb-4">
+          <select className="w-full px-3 py-2 rounded border" value={selectedId} onChange={e => setSelectedId(e.target.value)}>
+            <option value="">-- wybierz --</option>
+            {users.map(u => (
+              <option key={u.id} value={u.id}>{u.name} {u.surname}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex gap-4 mt-2">
+          <button className="px-4 py-1 rounded bg-blue-600 text-white font-semibold hover:bg-blue-700" disabled={!selectedId} onClick={() => selectedId && onSelect(selectedId)}>Dalej</button>
+          <button className="px-4 py-1 rounded bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300" onClick={onClose}>Anuluj</button>
+        </div>
+      </div>
+    </div>
+  );
+};
 import React, { useState, useEffect, useRef } from 'react';
 
 // Modal potwierdzający z podglądem nowych godzin
@@ -71,6 +100,92 @@ function getRoomStyle(room: Room | undefined){
 interface RoomCalendarProps { users: User[]; rooms: Room[]; meetings: Meeting[]; patients: Patient[]; currentUser: User; onMeetingCreate: (m: Omit<Meeting,'id'>) => void; onMeetingUpdate: (id:string, u:Partial<Meeting>)=>void; onMeetingDelete: (id:string) => void; showWeekends:boolean; startHour:number; endHour:number; }
 
 const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, patients, currentUser, onMeetingCreate, onMeetingUpdate, onMeetingDelete, showWeekends, startHour, endHour }) => {
+  // Stan wybranego slotu
+  const [selectedSlot, setSelectedSlot] = useState<{date:string;startTime:string;endTime:string}|undefined>(undefined);
+  // Stan modala umawiania spotkania
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [selectedSpecialistId, setSelectedSpecialistId] = useState<string>('');
+  const [specialistWorkHours, setSpecialistWorkHours] = useState<any[]>([]);
+  const [loadingWorkHours, setLoadingWorkHours] = useState(false);
+  const [step, setStep] = useState<'select'|'slots'|'form'>('select');
+  // Pobierz dostępność specjalisty po wyborze
+  useEffect(() => {
+    if (step === 'slots' && selectedSpecialistId) {
+      setLoadingWorkHours(true);
+      const token = currentUser?.token || localStorage.getItem('token') || undefined;
+      if (!token) return;
+      import('../../utils/api/employees').then(api => {
+        api.fetchEmployeeWorkHours(Number(selectedSpecialistId), token)
+          .then(list => { setSpecialistWorkHours(list); setLoadingWorkHours(false); })
+          .catch(() => setLoadingWorkHours(false));
+      });
+    }
+  }, [step, selectedSpecialistId, currentUser]);
+  // Renderuj modal z wyborem specjalisty i slotami
+  const renderScheduleMeetingModal = () => {
+    if (!showScheduleModal) return null;
+    if (step === 'select') {
+      return <ScheduleMeetingModal open={true} onClose={() => { setShowScheduleModal(false); setStep('select'); setSelectedSpecialistId(''); }} users={users} onSelect={id => { setSelectedSpecialistId(id); setStep('slots'); }} />;
+    }
+    if (step === 'slots') {
+      // Filtrowanie tylko przyszłych terminów
+      const nowTs = Date.now();
+      const futureWorkHours = specialistWorkHours.filter(wh => new Date(wh.start).getTime() > nowTs);
+      return (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-xl p-6 min-w-[320px] max-w-md flex flex-col items-center">
+            <div className="mb-4 text-center text-gray-800 text-lg font-semibold">Dostępność specjalisty</div>
+            {loadingWorkHours ? <div className="text-gray-500">Ładowanie dostępności...</div> : (
+              <div className="w-full mb-4 max-h-80 overflow-y-auto styled-scrollbar">
+                {futureWorkHours.length === 0 ? <div className="text-red-500">Brak dostępnych terminów</div> : (
+                  <ul className="space-y-2">
+                    {futureWorkHours.map((wh, idx) => (
+                      <li key={idx} className="border rounded px-3 py-2 flex flex-col">
+                        <span><b>{new Date(wh.start).toLocaleString('pl-PL')}</b> - {new Date(wh.end).toLocaleTimeString('pl-PL')}</span>
+                        <span className="text-xs text-gray-500">Długość: {Math.round((new Date(wh.end).getTime() - new Date(wh.start).getTime())/60000)} min</span>
+                        <button className="mt-2 px-3 py-1 rounded bg-blue-600 text-white text-xs" onClick={() => {
+                          setSelectedSlot({
+                            date: new Date(wh.start).toISOString().slice(0,10),
+                            startTime: new Date(wh.start).toTimeString().slice(0,5),
+                            endTime: new Date(wh.end).toTimeString().slice(0,5)
+                          });
+                          setStep('form');
+                        }}>Wybierz ten termin</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+            <div className="flex gap-4 mt-2">
+              <button className="px-4 py-1 rounded bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300" onClick={() => { setStep('select'); setSelectedSpecialistId(''); }}>Wstecz</button>
+              <button className="px-4 py-1 rounded bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300" onClick={() => { setShowScheduleModal(false); setStep('select'); setSelectedSpecialistId(''); }}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    if (step === 'form') {
+      // Przekazanie wybranego slotu do MeetingForm
+      return (
+        <MeetingForm
+          isOpen={true}
+          onClose={() => { setShowScheduleModal(false); setStep('select'); setSelectedSpecialistId(''); setSelectedSlot(undefined); }}
+          onSubmit={onMeetingCreate}
+          users={users}
+          rooms={rooms}
+          meetings={meetings}
+          selectedDate={selectedSlot?.date || new Date().toISOString().slice(0,10)}
+          selectedTime={selectedSlot?.startTime || ''}
+          selectedEndTime={selectedSlot?.endTime || ''}
+          currentUser={currentUser}
+          patients={patients}
+          initialRoomId={undefined}
+        />
+      );
+    }
+    return null;
+  };
   // Multi-select employee filter
   // Pokaż wszystkich użytkowników (admin, contact, employee) w filtrze
   const employees = users; // zachowujemy nazwę zmiennej, żeby mniej zmieniać dalej w kodzie
@@ -669,7 +784,11 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
     const timeToIdx = (t:string)=>halfHourSlots.indexOf(t);
     const dayColumnTotalHeight = HEADER_OFFSET + (halfHourSlots.length*slotHeight + (halfHourSlots.length-1)*slotGap);
     return (
-      <div className={`bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full overflow-hidden ${(isSelecting||resizingMeetingId||movingMeetingId)?'select-none':''}`} onMouseLeave={cancelSelectionIfActive}>
+      <div
+        className={`bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full overflow-hidden select-none`}
+        style={{ userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}
+        onMouseLeave={cancelSelectionIfActive}
+      >
         <div ref={scrollAreaRef} className="flex-1 min-h-0 overflow-y-auto styled-scrollbar" style={{scrollbarGutter:'stable'}}>
           <div className="grid" style={{gridTemplateColumns:`${TIME_COL_WIDTH}px repeat(${rooms.length},1fr)`}}>
             <div className="relative border-r border-gray-200 bg-gray-50" style={{height:dayColumnTotalHeight}}>
@@ -894,77 +1013,84 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
     const weekdayLabels = ['Pon','Wt','Śr','Cz','Pt','So','Nd'];
 
     return (
-  <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="grid grid-cols-7 border-b border-gray-100 bg-gray-50/70 text-[11px] font-medium text-gray-600">
-          {weekdayLabels.map(l => (
-            <div key={l} className="px-2 py-2 text-center uppercase tracking-wide">{l}</div>
-          ))}
-        </div>
-  <div className="flex-1 grid gap-px bg-gray-200 overflow-y-auto" style={{gridTemplateRows:`repeat(${weeks.length},1fr)`, maxHeight: `${weeks.length * 80}px`}}>
-          {weeks.map((week, wi) => (
-            <div key={wi} className="grid grid-cols-7 gap-px bg-gray-200">
-              {week.map(day => {
-                const dateStr = formatLocalDate(day);
-                const inMonth = day.getMonth() === month;
-                const isToday = dateStr === todayStr;
-                const isWeekend = day.getDay()===0 || day.getDay()===6;
-                const dayMeetings = (dayMeetingsMap[dateStr]||[]).sort((a,b)=> a.startTime.localeCompare(b.startTime));
-                return (
-                  <div key={dateStr} style={{margin: 5}}>
-                    <button
-                      onClick={()=>{ setCurrentDate(day); setViewType('day'); }}
-                      className={`group relative flex flex-col items-stretch overflow-hidden text-left transition focus:outline-none focus:z-10 rounded-md
-                        w-full h-full
-                        ${inMonth? 'bg-white':'bg-gray-50/70 text-gray-400'}
-                        ${isWeekend && inMonth? 'bg-gray-50':''}
-                        ${isToday
-                          ? 'ring-2 ring-blue-500/90 shadow-lg bg-blue-50/80 border border-blue-500'
-                          : 'shadow-sm border border-transparent'}
-                        hover:shadow-md hover:bg-blue-50/40
-                      `}
-                      style={{minHeight: 64, minWidth: 64, padding: 0}}
-                    >
-                      <div className="flex items-center justify-between mb-1 px-2 pt-2">
-                        <span className={`text-[11px] font-medium ${!inMonth?'opacity-60':''}`}>{day.getDate()}</span>
-                        {/* Removed 'D' badge for today, only border remains */}
-                      </div>
-                      <div className="flex-1 px-2 pb-2">
-                        <div className="flex flex-row flex-wrap gap-1 items-start content-start justify-center">
-                          {rooms.slice(0,5).map((room) => {
-                            const rc = getRoomStyle(room);
-                            const roomMeetings = dayMeetings.filter(m => m.roomId === room.id);
-                            const tooltipTxt = `${room.name}\nSpotkań: ${roomMeetings.length}`;
-                            return (
-                              <span
-                                key={room.id+"_dot"}
-                                onMouseEnter={e => scheduleTooltip(tooltipTxt, e.clientX, e.clientY+16)}
-                                onMouseMove={e => updateTooltipPosition(e.clientX, e.clientY+16)}
-                                onMouseLeave={cancelTooltip}
-                                className="w-5 h-5 rounded-full border shadow-sm shrink-0 cursor-pointer hover:brightness-110 transition"
-                                style={{backgroundColor: rc.backgroundColor, borderColor: rc.borderColor}}
-                                title={tooltipTxt}
-                              />
-                            );
-                          })}
-                        </div>
-                        <div className="flex flex-row flex-wrap gap-1 items-center justify-center mt-1 text-[11px] text-gray-600">
-                          {rooms.slice(0,5).map((room) => {
-                            const roomMeetings = dayMeetings.filter(m => m.roomId === room.id);
-                            return (
-                              <span key={room.id+"_count"} className="w-5 text-center">{roomMeetings.length}</span>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      {!inMonth && !isToday && <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] pointer-events-none" />}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
+    <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+      <div className="grid grid-cols-7 border-b border-gray-100 bg-gray-50/70 text-[11px] font-medium text-gray-600">
+        {weekdayLabels.map(l => (
+          <div key={l} className="px-2 py-2 text-center uppercase tracking-wide">{l}</div>
+        ))}
       </div>
+      <div className="flex-1 grid gap-px bg-gray-200" style={{gridTemplateRows:`repeat(${weeks.length}, 1fr)`, height: '100%'}}>
+        {weeks.map((week, wi) => (
+          <div key={wi} className="grid grid-cols-7 gap-px bg-gray-200 h-full">
+            {week.map(day => {
+              const dateStr = formatLocalDate(day);
+              const inMonth = day.getMonth() === month;
+              const isToday = dateStr === todayStr;
+              const isWeekend = day.getDay()===0 || day.getDay()===6;
+              const dayMeetings = (dayMeetingsMap[dateStr]||[]).sort((a,b)=> a.startTime.localeCompare(b.startTime));
+              // Podsumowanie dnia
+              const totalMeetings = dayMeetings.length;
+              const presentEmployees = Array.from(new Set(dayMeetings.map(m => m.specialistId))).length;
+              return (
+                <div key={dateStr} className="h-full" style={{margin: 5}}>
+                  <button
+                    onClick={()=>{ setCurrentDate(day); setViewType('day'); }}
+                    className={`group relative flex flex-col items-stretch overflow-hidden text-left transition focus:outline-none focus:z-10 rounded-md
+                      w-full h-full
+                      ${inMonth? 'bg-white':'bg-gray-50/70 text-gray-400'}
+                      ${isWeekend && inMonth? 'bg-gray-50':''}
+                      ${isToday
+                        ? 'ring-2 ring-blue-500/90 shadow-lg bg-blue-50/80 border border-blue-500'
+                        : 'shadow-sm border border-transparent'}
+                      hover:shadow-md hover:bg-blue-50/40
+                    `}
+                    style={{minHeight: 64, minWidth: 64, padding: 0, height: '100%'}}
+                  >
+                    <div className="flex items-center justify-between mb-1 px-2 pt-2">
+                      <span className={`text-[11px] font-medium ${!inMonth?'opacity-60':''}`}>{day.getDate()}</span>
+                    </div>
+                    <div className="flex-1 px-2 pb-2">
+                      <div className="flex flex-row flex-wrap gap-1 items-start content-start justify-center">
+                        {rooms.slice(0,5).map((room) => {
+                          const rc = getRoomStyle(room);
+                          const roomMeetings = dayMeetings.filter(m => m.roomId === room.id);
+                          const tooltipTxt = `${room.name}\nSpotkań: ${roomMeetings.length}`;
+                          return (
+                            <span
+                              key={room.id+"_dot"}
+                              onMouseEnter={e => scheduleTooltip(tooltipTxt, e.clientX, e.clientY+16)}
+                              onMouseMove={e => updateTooltipPosition(e.clientX, e.clientY+16)}
+                              onMouseLeave={cancelTooltip}
+                              className="w-5 h-5 rounded-full border shadow-sm shrink-0 cursor-pointer hover:brightness-110 transition"
+                              style={{backgroundColor: rc.backgroundColor, borderColor: rc.borderColor}}
+                              title={tooltipTxt}
+                            />
+                          );
+                        })}
+                      </div>
+                      <div className="flex flex-row flex-wrap gap-1 items-center justify-center mt-1 text-[11px] text-gray-600">
+                        {rooms.slice(0,5).map((room) => {
+                          const roomMeetings = dayMeetings.filter(m => m.roomId === room.id);
+                          return (
+                            <span key={room.id+"_count"} className="w-5 text-center">{roomMeetings.length}</span>
+                          );
+                        })}
+                      </div>
+                      {/* Podsumowanie dnia */}
+                      <div className="mt-2 text-[10px] text-gray-500 text-center">
+                        <span className="block">Spotkań: <span className="font-semibold text-gray-700">{totalMeetings}</span></span>
+                        <span className="block">Obecni pracownicy: <span className="font-semibold text-gray-700">{presentEmployees}</span></span>
+                      </div>
+                    </div>
+                    {!inMonth && !isToday && <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] pointer-events-none" />}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
     );
   };
 
@@ -989,67 +1115,81 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
     <div className={`flex flex-col flex-1 h-full min-h-0 overflow-hidden ${viewType==='month'?'space-y-6':'gap-2'} pb-4`}>
       {/* Pasek górny: data, widok i filtr pracowników w jednym wierszu, filtr po prawej */}
       <div className="flex flex-row items-start justify-between w-full mb-2 relative">
-        <CalendarHeader
-          currentDate={currentDate}
-          viewType={viewType}
-          onDateChange={setCurrentDate}
-          onViewTypeChange={setViewType}
-        />
-        <button
-          className="px-4 py-2 rounded-lg border border-blue-500 bg-blue-50 text-blue-700 font-medium text-xs hover:bg-blue-100 transition"
-          type="button"
-          onClick={() => setShowEmployeeFilter(v => !v)}
-          id="employee-filter-btn"
-        >
-          Filtruj pracowników
-        </button>
-        {showEmployeeFilter && (
-          <div
-            className="absolute right-0 top-full z-[1000] mt-2 min-w-[260px] max-w-xs w-[320px] bg-white rounded-xl shadow-xl border border-gray-200 p-4 flex flex-col items-center animate-fade-in"
+        <div className="flex flex-row items-center gap-2">
+          <CalendarHeader
+            currentDate={currentDate}
+            viewType={viewType}
+            onDateChange={setCurrentDate}
+            onViewTypeChange={setViewType}
+          />
+        </div>
+        <div className="flex-1 flex justify-center items-center">
+          <button
+            className="px-4 py-2 rounded-lg border border-green-500 bg-green-50 text-green-700 font-medium text-xs hover:bg-green-100 transition"
+            type="button"
+            onClick={() => { setShowScheduleModal(true); setStep('select'); }}
           >
-            <button
-              className="absolute top-2 right-2 text-gray-400 hover:text-gray-700 text-xl font-bold"
-              onClick={() => setShowEmployeeFilter(false)}
-              aria-label="Zamknij"
-              tabIndex={0}
+            Umów spotkanie
+          </button>
+        </div>
+        <div className="flex flex-row items-center gap-2">
+          <button
+            className="px-4 py-2 rounded-lg border border-blue-500 bg-blue-50 text-blue-700 font-medium text-xs hover:bg-blue-100 transition"
+            type="button"
+            onClick={() => setShowEmployeeFilter(v => !v)}
+            id="employee-filter-btn"
+          >
+            Filtruj pracowników
+          </button>
+          {showEmployeeFilter && (
+            <div
+              className="absolute right-0 top-full z-[1000] mt-2 min-w-[260px] max-w-xs w-[320px] bg-white rounded-xl shadow-xl border border-gray-200 p-4 flex flex-col items-center animate-fade-in"
             >
-              ×
-            </button>
-            <div className="mb-3 text-base font-semibold text-gray-800">Filtruj po pracownikach</div>
-            <div className="flex flex-wrap gap-2 justify-center w-full mb-3 max-h-40 overflow-y-auto">
-              {sortedEmployees.map(emp => {
-                const selected = selectedEmployees.includes(emp.id);
-                return (
-                  <button
-                    key={emp.id}
-                    type="button"
-                    onClick={() => setSelectedEmployees(sel =>
-                      selected ? sel.filter(id => id !== emp.id) : [...sel, emp.id]
-                    )}
-                    className={`px-3 py-1.5 rounded-lg border text-xs font-medium shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1
-                      ${selected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-blue-50'}
-                    `}
-                    style={{ minWidth: 90 }}
-                  >
-                    {emp.name}
-                  </button>
-                );
-              })}
-              {sortedEmployees.length === 0 && (
-                <span className="text-xs text-gray-400 italic">Brak użytkowników</span>
-              )}
+              <button
+                className="absolute top-2 right-2 text-gray-400 hover:text-gray-700 text-xl font-bold"
+                onClick={() => setShowEmployeeFilter(false)}
+                aria-label="Zamknij"
+                tabIndex={0}
+              >
+                ×
+              </button>
+              <div className="mb-3 text-base font-semibold text-gray-800">Filtruj po pracownikach</div>
+              <div className="flex flex-wrap gap-2 justify-center w-full mb-3 max-h-40 overflow-y-auto">
+                {sortedEmployees.map(emp => {
+                  const selected = selectedEmployees.includes(emp.id);
+                  return (
+                    <button
+                      key={emp.id}
+                      type="button"
+                      onClick={() => setSelectedEmployees(sel =>
+                        selected ? sel.filter(id => id !== emp.id) : [...sel, emp.id]
+                      )}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-medium shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1
+                        ${selected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-blue-50'}
+                      `}
+                      style={{ minWidth: 90 }}
+                    >
+                      {emp.name}
+                    </button>
+                  );
+                })}
+                {sortedEmployees.length === 0 && (
+                  <span className="text-xs text-gray-400 italic">Brak użytkowników</span>
+                )}
+              </div>
+              <button
+                className="px-3 py-1.5 text-xs rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 mb-2"
+                onClick={() => setSelectedEmployees([])}
+                type="button"
+              >
+                Wyczyść filtr
+              </button>
             </div>
-            <button
-              className="px-3 py-1.5 text-xs rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 mb-2"
-              onClick={() => setSelectedEmployees([])}
-              type="button"
-            >
-              Wyczyść filtr
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
-      <div className="flex-1 min-h-0">{viewType==='day' && renderDayViewMultiRoom()}{viewType==='week' && renderWeekView()}{viewType==='month' && renderMonthView()}</div>
+  <div className="flex-1 min-h-0">{viewType==='day' && renderDayViewMultiRoom()}{viewType==='week' && renderWeekView()}{viewType==='month' && renderMonthView()}</div>
+  {renderScheduleMeetingModal()}
   <MeetingForm isOpen={showMeetingForm} onClose={()=>{ setShowMeetingForm(false); setEditingMeeting(undefined); setFormRoomId(undefined); }} onSubmit={handleMeetingFormSubmit} onDelete={onMeetingDelete} users={users} rooms={rooms} meetings={meetings} selectedDate={formatDateForComparison(currentDate)} selectedTime={selectedTime} currentUser={currentUser} editingMeeting={editingMeeting} initialRoomId={formRoomId} selectedEndTime={selectedEndTime} patients={patients} />
       {conflictMessage && <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl text-sm z-[100] max-w-sm text-center animate-in fade-in">{conflictMessage}</div>}
       {hoverTooltip && (
