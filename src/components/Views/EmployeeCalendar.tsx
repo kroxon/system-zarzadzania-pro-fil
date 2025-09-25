@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import CalendarHeader from '../Calendar/CalendarHeader';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { User, Room, Meeting, Patient } from '../../types';
-import { ChevronDown, Check, Trash2 } from 'lucide-react';
+import { ChevronDown, Check, Trash2, Loader2 } from 'lucide-react';
 import MonthCalendar from './MonthCalendar';
 import MeetingForm from '../Forms/MeetingForm';
 import { fetchEmployeeWorkHours } from '../../utils/api/employees';
@@ -50,12 +50,40 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   // selectedEmployee: for 'employee' and 'contact' restrict to own ID; admin can switch
   const [selectedEmployee, setSelectedEmployee] = useState((currentUser.role === 'employee' || currentUser.role === 'contact') ? currentUser.id : '');
   const [showCopyDropdown, setShowCopyDropdown] = useState(false);
-  const [copyPeriod, setCopyPeriod] = useState<'week' | '4weeks'>('week');
+  type CopyPreset = 'week' | '2weeks' | '4weeks' | '8weeks' | '12weeks' | 'endOfMonth' | 'endOfNextMonth' | 'endOfQuarter' | 'endOfYear';
+  const [copyPeriod, setCopyPeriod] = useState<CopyPreset>('week');
+  const copyPresetLabel = React.useMemo(() => {
+    const map: Record<CopyPreset, string> = {
+      week: 'kolejny tydzień',
+      '2weeks': 'kolejne 2 tygodnie',
+      '4weeks': 'kolejne 4 tygodnie',
+      '8weeks': 'kolejne 8 tygodni',
+      '12weeks': 'kolejne 12 tygodni',
+      endOfMonth: 'do końca miesiąca',
+      endOfNextMonth: 'do końca następnego miesiąca',
+      endOfQuarter: 'do końca kwartału',
+      endOfYear: 'do końca roku',
+    };
+    return map[copyPeriod];
+  }, [copyPeriod]);
+  const copyPresets = React.useMemo(() => ([
+    { key: 'week' as CopyPreset, label: 'kolejny tydzień' },
+    { key: '2weeks' as CopyPreset, label: 'kolejne 2 tygodnie' },
+    { key: '4weeks' as CopyPreset, label: 'kolejne 4 tygodnie' },
+    { key: '8weeks' as CopyPreset, label: 'kolejne 8 tygodni' },
+    { key: '12weeks' as CopyPreset, label: 'kolejne 12 tygodni' },
+    { key: 'endOfMonth' as CopyPreset, label: 'do końca miesiąca' },
+    { key: 'endOfNextMonth' as CopyPreset, label: 'do końca następnego miesiąca' },
+    { key: 'endOfQuarter' as CopyPreset, label: 'do końca kwartału' },
+    { key: 'endOfYear' as CopyPreset, label: 'do końca roku' },
+  ]), []);
   const [deletedRangeIds, setDeletedRangeIds] = useState<string[]>([]);
   const [showMeetingForm, setShowMeetingForm] = useState(false);
   const [editingMeeting, setEditingMeeting] = useState<Meeting | undefined>();
   // const [selectedTime, setSelectedTime] = useState('');
   const [selectedTime] = useState('');
+  // UI loading for copy action
+  const [isCopying, setIsCopying] = useState(false);
 
   // Availability state
   interface AvailabilityRange { id: string; specialistId: string; start: string; end: string; }
@@ -394,7 +422,96 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
   }, [startHour, endHour, totalSlots]);
 
   // Copy availability handler
-  const handleCopyAvailability = () => { if(!selectedEmployee) return; const working=[...availabilities.filter(r=> r.specialistId===selectedEmployee), ...tempRanges.filter(r=> r.specialistId===selectedEmployee)]; const baseWeekRanges= working.filter(r=> { const startDate=new Date(r.start); return startDate>=weekBounds.start && startDate<=weekBounds.end; }); if(!baseWeekRanges.length){ setShowCopyDropdown(false); return; } const weeksToCopy = copyPeriod==='week'? 1 : 4; const newRanges:AvailabilityRange[]=[]; let counter=0; for(let w=1; w<=weeksToCopy; w++){ const dayOffset=w*7; for(const r of baseWeekRanges){ const startDate=new Date(r.start); startDate.setDate(startDate.getDate()+dayOffset); const endDate=new Date(r.end); endDate.setDate(endDate.getDate()+dayOffset); newRanges.push({ id:`copy-${Date.now()}-${w}-${counter++}`, specialistId:r.specialistId, start:startDate.toISOString(), end:endDate.toISOString() }); } } if(!newRanges.length){ setShowCopyDropdown(false); return; } setTempRanges(prev=> [...prev, ...newRanges]); setShowCopyDropdown(false); };
+  const handleCopyAvailability = async () => {
+    if (!selectedEmployee) return;
+
+    // Zbierz dane bazowe, zanim włączymy spinner
+    const baseMonday = new Date(weekBounds.start);
+    baseMonday.setHours(0, 0, 0, 0);
+    const firstTargetMonday = new Date(baseMonday);
+    firstTargetMonday.setDate(firstTargetMonday.getDate() + 7);
+
+    const working = [
+      ...availabilities.filter(r => r.specialistId === selectedEmployee),
+      ...tempRanges.filter(r => r.specialistId === selectedEmployee),
+    ];
+    const baseWeekRanges = working.filter(r => {
+      const startDate = new Date(r.start);
+      return startDate >= weekBounds.start && startDate <= weekBounds.end;
+    });
+    if (!baseWeekRanges.length) { setShowCopyDropdown(false); return; }
+
+    setIsCopying(true);
+    const t0 = Date.now();
+    try {
+      // Helpers do wyznaczania granic
+      const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+      const endOfNextMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 2, 0, 23, 59, 59, 999);
+      const endOfQuarter = (d: Date) => {
+        const qEndMonth = Math.floor(d.getMonth() / 3) * 3 + 2;
+        return new Date(d.getFullYear(), qEndMonth + 1, 0, 23, 59, 59, 999);
+      };
+      const endOfYear = (d: Date) => new Date(d.getFullYear(), 12, 0, 23, 59, 59, 999); // Dec 31
+
+      // Zbierz docelowe poniedziałki (pełne tygodnie)
+      const targetMondays: Date[] = [];
+      const pushWeeks = (count: number) => {
+        for (let i = 1; i <= count; i++) {
+          const m = new Date(baseMonday);
+          m.setDate(m.getDate() + i * 7);
+          targetMondays.push(m);
+        }
+      };
+      const pushUntil = (endBoundary: Date) => {
+        const capWeeks = 104; // twardy limit bezpieczeństwa
+        let i = 0;
+        for (let m = new Date(firstTargetMonday); m <= endBoundary && i < capWeeks; m.setDate(m.getDate() + 7), i++) {
+          targetMondays.push(new Date(m));
+        }
+      };
+
+      switch (copyPeriod) {
+        case 'week': pushWeeks(1); break;
+        case '2weeks': pushWeeks(2); break;
+        case '4weeks': pushWeeks(4); break;
+        case '8weeks': pushWeeks(8); break;
+        case '12weeks': pushWeeks(12); break;
+        case 'endOfMonth': pushUntil(endOfMonth(currentDate)); break;
+        case 'endOfNextMonth': pushUntil(endOfNextMonth(currentDate)); break;
+        case 'endOfQuarter': pushUntil(endOfQuarter(currentDate)); break;
+        case 'endOfYear': pushUntil(endOfYear(currentDate)); break;
+      }
+
+      if (!targetMondays.length) { setShowCopyDropdown(false); return; }
+
+      const dayMs = 24 * 60 * 60 * 1000;
+      const newRanges: AvailabilityRange[] = [];
+      let counter = 0;
+      for (const targetMonday of targetMondays) {
+        const deltaDays = Math.round((targetMonday.getTime() - baseMonday.getTime()) / dayMs);
+        for (const r of baseWeekRanges) {
+          const startDate = new Date(r.start);
+          const endDate = new Date(r.end);
+          startDate.setDate(startDate.getDate() + deltaDays);
+          endDate.setDate(endDate.getDate() + deltaDays);
+          newRanges.push({
+            id: `copy-${Date.now()}-${deltaDays}-${counter++}`,
+            specialistId: r.specialistId,
+            start: startDate.toISOString(),
+            end: endDate.toISOString(),
+          });
+        }
+      }
+
+      if (!newRanges.length) { setShowCopyDropdown(false); return; }
+      setTempRanges(prev => [...prev, ...newRanges]);
+      setShowCopyDropdown(false);
+    } finally {
+      const elapsed = Date.now() - t0;
+      const remaining = Math.max(0, 500 - elapsed);
+      window.setTimeout(() => setIsCopying(false), remaining);
+    }
+  };
 
   // Saving dialog overlay and helper
   const [showSavingDialog, setShowSavingDialog] = useState(false);
@@ -567,17 +684,27 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
                 {viewType==='week' && canEditAvailability && (<>
                   <span className="text-sm font-medium text-gray-700">Powiel dostępność na:</span>
                   <div className="relative copy-dropdown">
-                    <button onClick={()=> setShowCopyDropdown(!showCopyDropdown)} className="flex items-center justify-between gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors w-44">
-                      <span>{copyPeriod==='week'? 'kolejny tydzień':'kolejne 4 tygodnie'}</span>
+                    <button onClick={()=> setShowCopyDropdown(!showCopyDropdown)} className="flex items-center justify-between gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors w-64">
+                      <span className="truncate">{copyPresetLabel}</span>
                       <ChevronDown className="h-4 w-4 text-gray-500" />
                     </button>
                     {showCopyDropdown && (
-                      <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
-                        <button onClick={()=> { setCopyPeriod('week'); setShowCopyDropdown(false);} } className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2">{copyPeriod==='week' && <Check className="h-4 w-4 text-blue-600" />}<span className={copyPeriod==='week'? 'text-blue-600 font-medium':'text-gray-700'}>kolejny tydzień</span></button>
-                        <button onClick={()=> { setCopyPeriod('4weeks'); setShowCopyDropdown(false);} } className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2">{copyPeriod==='4weeks' && <Check className="h-4 w-4 text-blue-600" />}<span className={copyPeriod==='4weeks'? 'text-blue-600 font-medium':'text-gray-700'}>kolejne 4 tygodnie</span></button>
+                      <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-20 overflow-hidden">
+                        {copyPresets.map(p => (
+                          <button
+                            key={p.key}
+                            onClick={()=> { setCopyPeriod(p.key); setShowCopyDropdown(false);} }
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
+                          >
+                            {copyPeriod===p.key && <Check className="h-4 w-4 text-blue-600" />}
+                            <span className={copyPeriod===p.key? 'text-blue-600 font-medium':'text-gray-700'}>{p.label}</span>
+                          </button>
+                        ))}
                       </div>) }
                   </div>
-                  <button onClick={handleCopyAvailability} disabled={!selectedEmployee} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors">Powiel</button>
+                  <button onClick={handleCopyAvailability} disabled={!selectedEmployee || isCopying} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors">
+                    {isCopying ? (<><Loader2 className="h-4 w-4 animate-spin" /><span>Powielanie...</span></>) : 'Powiel'}
+                  </button>
                 </>)}
                 {viewType==='month' && monthPending && (<div className="flex items-center gap-2 ml-8 md:ml-12">
                   <button onClick={()=> runWithSaving(()=> { monthActionsRef.current?.save(); })} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors">Zapisz zmiany</button>
