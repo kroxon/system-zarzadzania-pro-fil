@@ -56,6 +56,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   selectedEndTime,
   patients = []
 }) => {
+  const isAdmin = currentUser.role === 'admin';
   const computeDefaultEnd = (start: string): string => {
     if (!start) return '';
     const [h, m] = start.split(':').map(Number);
@@ -317,8 +318,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       const startM = toMin(formData.startTime); const endM = toMin(formData.endTime);
       if (endM <= startM) newErrors.push('Godzina zakończenia musi być późniejsza niż rozpoczęcia');
     }
-    // creation: start must be in the future
-    if (!editingMeeting && formData.startTime && !isDateTimeInFuture(effectiveDate, formData.startTime)) {
+    // creation: start must be in the future (admin can create in the past)
+    if (!isAdmin && !editingMeeting && formData.startTime && !isDateTimeInFuture(effectiveDate, formData.startTime)) {
       newErrors.push('Termin rozpoczęcia musi być w przyszłości');
     }
     // conflict per specialist and room (using effectiveDate)
@@ -350,7 +351,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     e.preventDefault();
     if (!validateForm()) return;
     // If user changed time to past while form is open, block submission
-    if (!editingMeeting && !isDateTimeInFuture(effectiveDate, formData.startTime)) {
+    if (!isAdmin && !editingMeeting && !isDateTimeInFuture(effectiveDate, formData.startTime)) {
       setShowPastSubmitInfo(true);
       return;
     }
@@ -449,10 +450,13 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isEditingPast = !!editingMeeting && isMeetingInPastByEnd(editingMeeting);
+  // Only non-admins are blocked from editing past meetings
+  const pastEditBlocked = !isAdmin && isEditingPast;
   // (Manual status editing removed – statuses are now display-only)
 
   // When editing a past meeting and user has permission, restrict editing to status + notes only
-  const restrictPastEdit = !!editingMeeting && isEditingPast && canCurrentUserEdit(editingMeeting);
+  // Only non-admins are restricted when editing past meetings
+  const restrictPastEdit = !!editingMeeting && isEditingPast && !isAdmin && canCurrentUserEdit(editingMeeting);
   const canEditThis = !!editingMeeting && canCurrentUserEdit(editingMeeting);
 
   // lokalna data + format PL
@@ -467,11 +471,11 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   useEffect(() => {
     if (!isOpen || editingMeeting) return;
     const todayYMD = toYMD(new Date());
-    if (localDate < todayYMD) {
+    if (!isAdmin && localDate < todayYMD) {
       setLocalDate(todayYMD);
       setShowPastSubmitInfo(true);
     }
-  }, [isOpen, editingMeeting, localDate]);
+  }, [isOpen, editingMeeting, localDate, isAdmin]);
 
   useEffect(() => {}, [isOpen, currentUser, initialRoomId, selectedTime, selectedEndTime]);
 
@@ -609,7 +613,12 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   // Restriction dialog (employees attempting forbidden actions on multi-specialist meetings)
   const [restrictionDialog, setRestrictionDialog] = useState<null | { type: 'removeSpecialist' | 'deleteMeeting' }>(null);
   const participantIdsNormalized = editingMeeting ? (editingMeeting.specialistIds && editingMeeting.specialistIds.length ? editingMeeting.specialistIds : [editingMeeting.specialistId]) : [];
-  const showDeleteActionButton = !!editingMeeting && isMeetingInFuture(editingMeeting) && participantIdsNormalized.includes(currentUser.id) && !!onDelete; // show button even if employee not allowed, to show restriction dialog
+  // Option B:
+  // - Admin: can delete any meeting (past/future)
+  // - Non-admins: keep previous rule (can see delete only for future and being a participant)
+  const showDeleteActionButton = !!editingMeeting && !!onDelete && (
+    isAdmin || (isMeetingInFuture(editingMeeting) && participantIdsNormalized.includes(currentUser.id))
+  );
 
   const attemptRemoveSpecialist = (id: string) => {
     // Block employee from removing other specialists in existing multi-specialist meeting
@@ -624,7 +633,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
 
   const handleDeleteClick = () => {
     if (!editingMeeting) return;
-    if (currentUser.role === 'employee' && participantIdsNormalized.length > 1) {
+    if (!isAdmin && currentUser.role === 'employee' && participantIdsNormalized.length > 1) {
       setRestrictionDialog({ type: 'deleteMeeting' });
       return;
     }
@@ -635,15 +644,15 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const isCreatePastSelection = React.useMemo(() => {
     if (editingMeeting) return false;
     if (!formData.startTime) return false;
-    return !isDateTimeInFuture(effectiveDate, formData.startTime);
-  }, [editingMeeting, effectiveDate, formData.startTime]);
+    return !isAdmin && !isDateTimeInFuture(effectiveDate, formData.startTime);
+  }, [editingMeeting, effectiveDate, formData.startTime, isAdmin]);
 
   // Today guard: disable past time options when creating for today
   const isCreateToday = React.useMemo(() => {
     if (editingMeeting) return false;
     const today = toYMD(new Date());
-    return effectiveDate === today;
-  }, [editingMeeting, effectiveDate]);
+    return !isAdmin && (effectiveDate === today);
+  }, [editingMeeting, effectiveDate, isAdmin]);
   const nowMinutes = React.useMemo(() => {
     const n = new Date();
     return n.getHours() * 60 + n.getMinutes();
@@ -739,7 +748,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 onChange={e=> setFormData(fd=> ({...fd, meetingName: e.target.value}))}
                 placeholder="Np. Spotkanie konsulatacyjne"
                 className="w-full px-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-gray-900 shadow-sm hover:bg-indigo-50 focus:outline-none focus:ring-0 disabled:opacity-60 disabled:cursor-not-allowed text-xl"
-                disabled={isEditingPast}
+                disabled={pastEditBlocked}
               />
             </div>
           </div>
@@ -762,11 +771,11 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 {/* Date picker */}
                 <div className="relative min-w-0" ref={datePickerRef}>
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Data</label>
-                  <button type="button" disabled={isEditingPast} onClick={()=> setDateOpen(o=>!o)} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                  <button type="button" disabled={pastEditBlocked} onClick={()=> setDateOpen(o=>!o)} className="relative w-full pl-11 pr-3 py-2.5 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
                     <span className="absolute left-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Calendar className="h-3.5 w-3.5" /></span>
                     {formatPolishDate(effectiveDate)}
                   </button>
-                  {dateOpen && !isEditingPast && (
+                  {dateOpen && !pastEditBlocked && (
                     <div className="absolute z-20 mt-2 w-72 bg-white border border-gray-200 rounded-lg shadow-xl p-3">
                       <div className="flex items-center justify-between mb-2">
                         <button type="button" onClick={prevMonth} className="px-2 py-1 text-sm rounded hover:bg-gray-100">‹</button>
@@ -787,8 +796,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                             <button
                               key={i}
                               type="button"
-                              disabled={isEditingPast}
-                              onClick={() => { if (isEditingPast) return; setLocalDate(ymd); setDateOpen(false); }}
+                              disabled={pastEditBlocked}
+                              onClick={() => { if (pastEditBlocked) return; setLocalDate(ymd); setDateOpen(false); }}
                               className={[
                                 'h-8 w-8 rounded-md text-[12px] flex items-center justify-center transition-colors',
                                 !inMonth ? 'text-gray-300' : 'text-gray-700',
@@ -812,20 +821,20 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                     <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Start</label>
                     <button
                       type="button"
-                      disabled={isEditingPast}
+                      disabled={pastEditBlocked}
                       onClick={()=> { setStartOpen(o=>!o); setEndOpen(false); }}
                       className="relative w-full pl-10 pr-2 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate"
                     >
                       <span className="absolute left-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
                       {formData.startTime || 'Wybierz...'}
                     </button>
-                    {startOpen && !isEditingPast && (
+                    {startOpen && !pastEditBlocked && (
                       <div className="absolute z-20 mt-2 w-full max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
                         <ul className="py-1 text-sm">
                           {timeOptions
                             .filter(t=> !formData.endTime || toMin(t) < toMin(formData.endTime))
                             .map(t=> {
-                              const disabledOpt = isCreateToday && toMin(t) <= nowMinutes; // disable past times for today
+                              const disabledOpt = isCreateToday && toMin(t) <= nowMinutes; // for non-admin only (isCreateToday already accounts)
                               return (
                                 <li key={t}>
                                   <button
@@ -846,17 +855,17 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                   {/* End time picker */}
                   <div className="relative min-w-0" ref={endPickerRef}>
                     <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Koniec</label>
-                    <button type="button" disabled={isEditingPast} onClick={()=> { setEndOpen(o=>!o); setStartOpen(false); }} className="relative w-full pl-10 pr-2 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
+                    <button type="button" disabled={pastEditBlocked} onClick={()=> { setEndOpen(o=>!o); setStartOpen(false); }} className="relative w-full pl-10 pr-2 py-2 border border-indigo-200 rounded-lg bg-white text-left shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed truncate">
                       <span className="absolute left-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-md bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"><Clock className="h-3.5 w-3.5" /></span>
                       {formData.endTime || 'Wybierz...'}
                     </button>
-                    {endOpen && !isEditingPast && (
+                    {endOpen && !pastEditBlocked && (
                       <div className="absolute z-20 mt-2 w-full max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl">
                         <ul className="py-1 text-sm">
                           {timeOptions
                             .filter(t=> !formData.startTime || toMin(t) > toMin(formData.startTime))
                             .map(t=> {
-                              const disabledOpt = isCreateToday && !formData.startTime && toMin(t) <= nowMinutes;
+                              const disabledOpt = isCreateToday && !formData.startTime && toMin(t) <= nowMinutes; // for non-admin only
                               return (
                                 <li key={t}>
                                   <button
@@ -883,7 +892,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               <div ref={roomsMenuRef}>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Sala</label>
                 <div className="relative">
-                  <button type="button" onClick={()=> setRoomsOpen(o=>!o)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white flex items-center justify-between focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast}>
+                  <button type="button" onClick={()=> setRoomsOpen(o=>!o)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white flex items-center justify-between focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed" disabled={pastEditBlocked}>
                     {formData.roomId ? (
                       <span className="flex items-center gap-2">
                         {(() => { const rc = rooms.find(r=>r.id===formData.roomId); const col = rc?.hexColor || '#9ca3af'; return <span style={{ backgroundColor: col }} className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-white shadow" />; })()}
@@ -937,8 +946,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                       <input
                         type="text"
                         value={specSearch}
-                        onChange={(e)=> { setSpecSearch(e.target.value); if (!isEditingPast) { setSpecOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); } }}
-                        onFocus={()=> { if (!isEditingPast) { setSpecOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); } }}
+                        onChange={(e)=> { setSpecSearch(e.target.value); if (!pastEditBlocked) { setSpecOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); } }}
+                        onFocus={()=> { if (!pastEditBlocked) { setSpecOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); } }}
                         onKeyDown={(e)=> {
                           if (e.key === 'Escape') {
                             e.preventDefault();
@@ -949,7 +958,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                           }
                           if (e.key === 'Enter') {
                             e.preventDefault();
-                            if (isEditingPast) return;
+                            if (pastEditBlocked) return;
                             const q = specSearch.trim().toLowerCase();
                             const candidates = users
                               // wszystkie role dostępne do dodania
@@ -970,19 +979,19 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                         }}
                         placeholder="Dodaj specjalistę..."
                         className="w-full px-3 pr-8 py-2 border border-indigo-200 rounded-lg bg-white text-sm shadow-sm focus:outline-none focus:ring-0 disabled:opacity-60 disabled:cursor-not-allowed"
-                        disabled={isEditingPast}
+                        disabled={pastEditBlocked}
                       />
                       <button
                         type="button"
-                        onClick={() => { if (isEditingPast) return; setSpecOpen(o=>{ const next = !o; if (!next) setSpecSearch(''); return next; }); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); }}
+                        onClick={() => { if (pastEditBlocked) return; setSpecOpen(o=>{ const next = !o; if (!next) setSpecSearch(''); return next; }); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setPatientsOpen(false); }}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed"
                         aria-label="Rozwiń listę"
-                        disabled={isEditingPast}
+                        disabled={pastEditBlocked}
                       >
                         <svg className={`h-4 w-4 text-gray-500 transition-transform ${specOpen? 'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.38a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
                       </button>
                     </div>
-                    {specOpen && !isEditingPast && (
+                    {specOpen && !pastEditBlocked && (
                       <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto text-[15px]">
                         <ul className="py-1">
                           {users
@@ -1056,7 +1065,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                                 className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed"
                                 aria-label="Usuń specjalistę"
                                 title={currentUser.role==='employee' && editingMeeting && formData.specialistIds.length>1 && id!==currentUser.id ? 'Tę operację może wykonać administrator lub pierwszy kontakt' : (isCurrentEmployeeSelf ? 'Pracownik musi brać udział w swoim spotkaniu' : 'Usuń')}
-                                disabled={isEditingPast || isCurrentEmployeeSelf}
+                                disabled={pastEditBlocked || isCurrentEmployeeSelf}
                               >
                                 ×
                               </button>
@@ -1072,8 +1081,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 <div className="relative">
                   {/* Toggle buttons positioned above (slightly higher) */}
                   <div className="absolute -top-4 left-28 md:left-32 inline-flex text-[11px] rounded-lg overflow-hidden border border-indigo-300 bg-indigo-50 shadow-sm">
-                    <button type="button" onClick={()=> setPatientAssignmentFilter('wszyscy')} className={`px-3 py-1.5 font-medium transition-colors ${patientAssignmentFilter==='wszyscy' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`} disabled={isEditingPast}>Wszyscy</button>
-                    <button type="button" onClick={()=> setPatientAssignmentFilter('przypisani')} className={`px-3 py-1.5 font-medium transition-colors border-l border-indigo-300 ${patientAssignmentFilter==='przypisani' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`} disabled={isEditingPast}>Przypisani</button>
+                    <button type="button" onClick={()=> setPatientAssignmentFilter('wszyscy')} className={`px-3 py-1.5 font-medium transition-colors ${patientAssignmentFilter==='wszyscy' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`} disabled={pastEditBlocked}>Wszyscy</button>
+                    <button type="button" onClick={()=> setPatientAssignmentFilter('przypisani')} className={`px-3 py-1.5 font-medium transition-colors border-l border-indigo-300 ${patientAssignmentFilter==='przypisani' ? 'bg-indigo-600 text-white shadow-inner' : 'text-indigo-700 hover:bg-indigo-100'} disabled:opacity-50 disabled:cursor-not-allowed`} disabled={pastEditBlocked}>Przypisani</button>
                   </div>
                   <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Podopieczni</label>
                   {patientAssignmentFilter==='przypisani' && (
@@ -1091,8 +1100,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                       <input
                         type="text"
                         value={patientsSearch}
-                        onChange={(e)=> { setPatientsSearch(e.target.value); if (!(isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0))) { setPatientsOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); } }}
-                        onFocus={()=> { if (!(isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0))) { setPatientsOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); } }}
+                        onChange={(e)=> { setPatientsSearch(e.target.value); if (!(pastEditBlocked || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0))) { setPatientsOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); } }}
+                        onFocus={()=> { if (!(pastEditBlocked || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0))) { setPatientsOpen(true); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); } }}
                         onKeyDown={(e)=> {
                           if (e.key === 'Escape') {
                             e.preventDefault();
@@ -1103,7 +1112,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                           }
                           if (e.key === 'Enter') {
                             e.preventDefault();
-                            if (isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) return;
+                            if (pastEditBlocked || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) return;
                             const q = patientsSearch.trim().toLowerCase();
                             const base = patientAssignmentFilter==='przypisani' ? filteredPatients : effectivePatients;
                             const candidates = base.filter(p=> !q || (p.name||'').toLowerCase().includes(q) || (p.surname||'').toLowerCase().includes(q));
@@ -1122,19 +1131,19 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                         }}
                         placeholder="Dodaj podopiecznego..."
                         className="w-full px-3 pr-8 py-2 border border-indigo-200 rounded-lg bg-white text-sm shadow-sm focus:outline-none focus:ring-0 disabled:opacity-60 disabled:cursor-not-allowed"
-                        disabled={isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)}
+                        disabled={pastEditBlocked || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)}
                       />
                       <button
                         type="button"
-                        onClick={() => { if (isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) return; setPatientsOpen(o=>{ const next = !o; if (!next) setPatientsSearch(''); return next; }); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); }}
+                        onClick={() => { if (pastEditBlocked || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) return; setPatientsOpen(o=>{ const next = !o; if (!next) setPatientsSearch(''); return next; }); setRoomsOpen(false); setDateOpen(false); setStartOpen(false); setEndOpen(false); setSpecOpen(false); }}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed"
                         aria-label="Rozwiń listę podopiecznych"
-                        disabled={isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)}
+                        disabled={pastEditBlocked || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)}
                       >
                         <svg className={`h-4 w-4 text-gray-500 transition-transform ${patientsOpen? 'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.38a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
                       </button>
                     </div>
-                    {patientsOpen && !(isEditingPast || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) && (
+                    {patientsOpen && !(pastEditBlocked || (patientAssignmentFilter==='przypisani' && formData.specialistIds.length===0)) && (
                       <div className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto text-sm">
                         <ul className="py-1 divide-y divide-gray-100">
                           {effectivePatients.length>0 ? (
@@ -1202,7 +1211,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                           <li key={pid} className={`flex items-center justify-between p-2 transition-colors ${rowBg}`}>
                             <div className="min-w-0 pr-3"><div className="text-sm font-semibold leading-5 text-gray-900 truncate">{fullName}</div></div>
                             {conflict && <span className="text-[11px] text-amber-900 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-200 mr-2">zajęty</span>}
-                            <button type="button" onClick={()=> setFormData(fd=>({...fd, patientIds: fd.patientIds.filter(x=>x!==pid)}))} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed" aria-label="Usuń podopiecznego" title="Usuń" disabled={isEditingPast}>×</button>
+                            <button type="button" onClick={()=> setFormData(fd=>({...fd, patientIds: fd.patientIds.filter(x=>x!==pid)}))} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-100 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed" aria-label="Usuń podopiecznego" title="Usuń" disabled={pastEditBlocked}>×</button>
                           </li>
                         );
                       })}
@@ -1219,9 +1228,9 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
               {/* Guest field wider (2/3 on md+) */}
-              <div className={!isEditingPast ? 'md:col-span-2' : 'md:col-span-2'}>
+              <div className={!pastEditBlocked ? 'md:col-span-2' : 'md:col-span-2'}>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Gość (opcjonalnie)</label>
-                <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 disabled:opacity-60 disabled:cursor-not-allowed" disabled={isEditingPast} />
+                <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 disabled:opacity-60 disabled:cursor-not-allowed" disabled={pastEditBlocked} />
               </div>
               {/* Status compact (1/3) */}
               <div className="md:col-span-1">
@@ -1250,7 +1259,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 onChange={e => setFormData({ ...formData, notes: e.target.value })}
                 placeholder="Cel sesji, materiały, obserwacje..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 disabled:opacity-60 disabled:cursor-not-allowed resize-none"
-                disabled={isEditingPast && !canEditThis}
+                disabled={pastEditBlocked && !canEditThis}
                 style={{minHeight: '120px', maxHeight:'120px', overflow: 'auto'}}
               />
             </div>
@@ -1271,7 +1280,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
             </div>
             <div className="ml-auto flex items-center gap-3">
               <button type="button" onClick={handleClose} className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">Anuluj</button>
-              <button type="submit" disabled={isEditingPast && !canEditThis || unavailableSpecialists.length>0} className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed">{editingMeeting? 'Zapisz zmiany':'Utwórz sesję'}</button>
+              <button type="submit" disabled={pastEditBlocked && !canEditThis || unavailableSpecialists.length>0} className="px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed">{editingMeeting? 'Zapisz zmiany':'Utwórz sesję'}</button>
             </div>
           </div>
         </form>
