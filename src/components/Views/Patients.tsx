@@ -2,7 +2,7 @@
 function getPatientStatusLabel(isActive: boolean): 'aktywny' | 'nieaktywny' {
   return isActive ? 'aktywny' : 'nieaktywny';
 }
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FileText } from 'lucide-react';
 // Backend API functions
 import { fetchPatients, fetchPatientReport, createPatient as apiCreatePatient, updatePatient as apiUpdatePatient } from '../../utils/api/patients';
@@ -10,7 +10,7 @@ import { fetchEmployees, assignPatientsToEmployee, unassignPatientsFromEmployee 
 import { fetchEvents } from '../../utils/api/events';
 import { getRooms } from '../../utils/api/rooms';
 import { getAllEventStatuses } from '../../utils/api/eventStatuses';
-import {Patient, Meeting, Employee} from '../../types/index'
+import {Patient, Meeting, Employee, User} from '../../types/index'
 import { Search } from 'lucide-react';
 
 interface Visit {
@@ -26,6 +26,16 @@ export default function Patients(){
   // Pacjenci z backendu
   const [patients, setPatients] = useState<Patient[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  // Bieżący użytkownik z localStorage (zapisywany przez App.tsx)
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('schedule_current_user');
+      setCurrentUser(raw ? JSON.parse(raw) as User : null);
+    } catch {
+      setCurrentUser(null);
+    }
+  }, []);
 useEffect(() => {
   const token = localStorage.getItem('token');
   if (!token) return;
@@ -51,6 +61,22 @@ useEffect(() => {
 }, [patients]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [rooms, setRooms] = useState<{ id: string; name: string }[]>([]);
+  // Uprawnienia wynikające z roli i przypisań
+  const isAdmin = (currentUser?.role === 'admin');
+  const currentEmployeeId = useMemo(() => currentUser?.id ? Number(currentUser.id) : NaN, [currentUser?.id]);
+  const currentEmployee = useMemo(() => employees.find(e => Number(e.id) === currentEmployeeId), [employees, currentEmployeeId]);
+  const isPatientAssignedToCurrent = useCallback((p: Patient | null | undefined) => {
+    if (!p) return false;
+    if (isAdmin) return true; // admin zawsze ma dostęp
+    const myId = Number(currentEmployee?.id ?? currentEmployeeId);
+    const byPatientSide = Array.isArray(p.assignedEmployeesIds) && p.assignedEmployeesIds.map(Number).includes(myId);
+    const byEmployeeSide = currentEmployee ? (Array.isArray(currentEmployee.assignedPatientsIds) && currentEmployee.assignedPatientsIds.map(Number).includes(Number(p.id))) : false;
+    return !!(byPatientSide || byEmployeeSide);
+  }, [isAdmin, currentEmployee, currentEmployeeId]);
+  const canCreatePatient = isAdmin;
+  const canDeletePatient = isAdmin;
+  const canEditAssignments = isAdmin; // tylko admin może edytować przypisanych specjalistów
+  // Uwaga: zależne od 'selected' obliczenia przeniesione poniżej deklaracji 'selected'
 
   // Fetch events and rooms when employees/patients are available (needed to split participantIds)
   useEffect(() => {
@@ -150,6 +176,14 @@ useEffect(() => {
   const [query, setQuery] = useState('');
   // Nie można wybrać żadnego pacjenta
   const [selected, setSelected] = useState<Patient | null>(null);
+  // Teraz można bezpiecznie wyliczyć booleany zależne od 'selected'
+  const canSeeSelectedDetails = useMemo(() => isPatientAssignedToCurrent(selected), [isPatientAssignedToCurrent, selected]);
+  const canEditSelectedPatient = useMemo(() => {
+    if (!selected) return false;
+    if (isAdmin) return true;
+    // contact/employee: edycja tylko gdy przypisany
+    return canSeeSelectedDetails;
+  }, [selected, isAdmin, canSeeSelectedDetails]);
   const [statusFilter, setStatusFilter] = useState<'aktywny'|'nieaktywny'|'wszyscy'>('aktywny');
   // Replace generic assignment filter with a specialist single-select filter
   const [specialistFilter, setSpecialistFilter] = useState<'wszyscy' | number>('wszyscy');
@@ -462,10 +496,12 @@ useEffect(() => {
   const saveEdit = async () => {
     if(!selected) return;
     const token = localStorage.getItem('token') || '';
-    const nextAssigned = Array.isArray(editForm.assignedEmployeesIds) ? editForm.assignedEmployeesIds.map(Number) : [];
+    // Jeżeli użytkownik nie ma prawa do edycji przypisań, wymuś brak zmian w przypisaniach
+    const nextAssignedRaw = Array.isArray(editForm.assignedEmployeesIds) ? editForm.assignedEmployeesIds.map(Number) : [];
     const currentAssigned = Array.isArray(selected.assignedEmployeesIds) ? selected.assignedEmployeesIds.map(Number) : [];
-    const toAdd = nextAssigned.filter(id => !currentAssigned.includes(id));
-    const toRemove = currentAssigned.filter(id => !nextAssigned.includes(id));
+    const nextAssigned = canEditAssignments ? nextAssignedRaw : currentAssigned.slice();
+    const toAdd = canEditAssignments ? nextAssigned.filter(id => !currentAssigned.includes(id)) : [];
+    const toRemove = canEditAssignments ? currentAssigned.filter(id => !nextAssigned.includes(id)) : [];
 
     // Update patient core fields first
     await apiUpdatePatient(selected.id, {
@@ -477,10 +513,12 @@ useEffect(() => {
     }, token);
 
     // Then apply assignments via employees endpoints
-    await Promise.all([
-      ...toAdd.map(empId => assignPatientsToEmployee(empId, { patientIds: [selected.id] }, token)),
-      ...toRemove.map(empId => unassignPatientsFromEmployee(empId, { patientIds: [selected.id] }, token))
-    ]);
+    if (canEditAssignments) {
+      await Promise.all([
+        ...toAdd.map(empId => assignPatientsToEmployee(empId, { patientIds: [selected.id] }, token)),
+        ...toRemove.map(empId => unassignPatientsFromEmployee(empId, { patientIds: [selected.id] }, token))
+      ]);
+    }
 
     // Optionally update local notes mirror
     setPatientNotes(prev => {
@@ -534,10 +572,10 @@ useEffect(() => {
     setOpenSessionNotes(new Set());
   };
 
-  const openDeleteModal = () => { if(selected) setShowDeleteModal(true); };
+  const openDeleteModal = () => { if(selected && canDeletePatient) setShowDeleteModal(true); };
   const cancelDelete = () => { if(deleting) return; setShowDeleteModal(false); };
   const confirmDelete = () => {
-    if(!selected) return;
+    if(!selected || !canDeletePatient) return;
     setDeleting(true);
     deleteSelected();
     setDeleting(false);
@@ -775,9 +813,11 @@ useEffect(() => {
         </div>
         <button
           type="button"
-          onClick={openAdd}
+          onClick={canCreatePatient ? openAdd : undefined}
           ref={addBtnRef}
-          className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+          className={`inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold rounded-lg shadow focus:ring-2 focus:ring-offset-2 ${canCreatePatient ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:from-indigo-500 hover:to-blue-500 focus:ring-indigo-500' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
+          disabled={!canCreatePatient}
+          title={canCreatePatient ? undefined : 'Tylko administrator może dodawać podopiecznych'}
         >
           <span className="text-lg leading-none">＋</span> Dodaj
         </button>
@@ -809,7 +849,18 @@ useEffect(() => {
 
         <div className="flex-1 min-h-[400px] bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           {!selected && <div className="h-full flex items-center justify-center text-gray-400 text-sm">Wybierz podopiecznego z listy po lewej</div>}
-          {selected && (
+          {selected && !canSeeSelectedDetails && !isAdmin && (
+            <div className="h-full flex items-center justify-center">
+              <div className="max-w-md w-full text-center bg-gradient-to-br from-gray-50 to-white border border-gray-200 rounded-2xl p-8 shadow-sm">
+                <div className="mx-auto mb-3 h-10 w-10 rounded-full bg-indigo-50 flex items-center justify-center">
+                  <svg className="h-5 w-5 text-indigo-600" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-.75-5.25a.75.75 0 011.5 0v1.5a.75.75 0 01-1.5 0v-1.5zM10 6a1 1 0 00-1 1v4a1 1 0 102 0V7a1 1 0 00-1-1z" clipRule="evenodd"/></svg>
+                </div>
+                <h3 className="text-base font-semibold text-gray-900 mb-1">Podopieczny nie jest przypisany do Twojego konta</h3>
+                <p className="text-sm text-gray-600">Aby zobaczyć szczegóły, poproś administratora o przypisanie Ci tego podopiecznego.</p>
+              </div>
+            </div>
+          )}
+          {selected && (canSeeSelectedDetails || isAdmin) && (
             <div className="space-y-6">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
@@ -825,8 +876,22 @@ useEffect(() => {
                     <div className="flex items-center gap-2 ml-4">
                       {!editMode && (
                         <>
-                          <button onClick={openDeleteModal} className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Usuń</button>
-                          <button onClick={startEdit} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700">Edytuj</button>
+                          <button
+                            onClick={canDeletePatient ? openDeleteModal : undefined}
+                            className={`px-3 py-1.5 text-xs font-medium rounded-lg border ${canDeletePatient ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100' : 'border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed'}`}
+                            disabled={!canDeletePatient}
+                            title={canDeletePatient ? undefined : 'Usuwanie dostępne tylko dla administratora'}
+                          >
+                            Usuń
+                          </button>
+                          <button
+                            onClick={canEditSelectedPatient ? startEdit : undefined}
+                            className={`px-3 py-1.5 text-xs font-medium rounded-lg ${canEditSelectedPatient ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-100 text-gray-500 cursor-not-allowed'}`}
+                            disabled={!canEditSelectedPatient}
+                            title={canEditSelectedPatient ? undefined : 'Edycja dostępna dla przypisanych użytkowników'}
+                          >
+                            Edytuj
+                          </button>
                           <button onClick={handleGenerate} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 flex items-center gap-2">
                             <FileText className="h-4 w-4 text-white" />
                             Generuj raport
@@ -932,7 +997,15 @@ useEffect(() => {
                                 return (
                                   <span key={tId} className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm text-blue-900">
                                     <span className="font-medium">{name}</span>
-                                    <button onClick={()=> removeTherapist(tId)} className="ml-1 rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 h-5 w-5 inline-flex items-center justify-center" aria-label={`Usuń terapeutę ${name}`}>×</button>
+                                    <button
+                                      onClick={canEditAssignments ? (()=> removeTherapist(tId)) : undefined}
+                                      className={`ml-1 rounded-full h-5 w-5 inline-flex items-center justify-center ${canEditAssignments ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+                                      aria-label={`Usuń terapeutę ${name}`}
+                                      disabled={!canEditAssignments}
+                                      title={canEditAssignments ? undefined : 'Edycja przypisań dostępna tylko dla administratora'}
+                                    >
+                                      ×
+                                    </button>
                                   </span>
                                 );
                               })}
@@ -943,15 +1016,17 @@ useEffect(() => {
                                 <button
                                   ref={editTherBtnRef}
                                   type="button"
-                                  onClick={()=> setShowEditTherMenu(v=>!v)}
-                                  className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-xl bg-white border border-gray-300 shadow-sm hover:bg-gray-50 min-w-[14rem] justify-between"
+                                  onClick={canEditAssignments ? (()=> setShowEditTherMenu(v=>!v)) : undefined}
+                                  className={`inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-xl min-w-[14rem] justify-between ${canEditAssignments ? 'bg-white border border-gray-300 shadow-sm hover:bg-gray-50' : 'bg-gray-100 border border-gray-200 text-gray-500 cursor-not-allowed'}`}
                                   aria-haspopup="listbox"
                                   aria-expanded={showEditTherMenu}
+                                  disabled={!canEditAssignments}
+                                  title={canEditAssignments ? undefined : 'Edycja przypisań dostępna tylko dla administratora'}
                                 >
                                   <span className="truncate text-gray-700">Dodaj terapeutę...</span>
                                   <svg className={`h-4 w-4 text-gray-400 transition-transform ${showEditTherMenu?'rotate-180':''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.02l3.71-3.79a.75.75 0 111.08 1.04l-4.24 4.34a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd"/></svg>
                                 </button>
-                                {showEditTherMenu && (
+                                {showEditTherMenu && canEditAssignments && (
                                   <div
                                     ref={editTherMenuRef}
                                     role="listbox"
@@ -1084,7 +1159,7 @@ useEffect(() => {
               </div>
             </div>
           )}
-          {selected && (
+          {selected && (canSeeSelectedDetails || isAdmin) && (
             <div className="border-t border-gray-200 pt-4 mt-6">
               <h3 className="text-sm font-semibold text-gray-800 mb-3">Historia wizyt</h3>
               <div className="overflow-x-auto">
