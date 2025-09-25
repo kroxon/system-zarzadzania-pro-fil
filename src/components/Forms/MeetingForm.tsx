@@ -100,6 +100,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const [patientAssignmentFilter, setPatientAssignmentFilter] = useState<'wszyscy'|'przypisani'>('wszyscy'); // filter patients
   const effectivePatients = patients.length ? patients : [];
   const [showPastSubmitInfo, setShowPastSubmitInfo] = useState(false);
+  const [showNoSpecialistConfirm, setShowNoSpecialistConfirm] = useState(false);
 
   // Workhours cache for employees used to determine availability
   const [workhoursByEmployee, setWorkhoursByEmployee] = useState<Record<string, WorkHours[]>>({});
@@ -278,7 +279,9 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
         endTime: editingMeeting.endTime,
         notes: editingMeeting.notes || '',
         status: editingMeeting.status,
-        specialistIds: editingMeeting.specialistIds || [editingMeeting.specialistId],
+        specialistIds: (editingMeeting.specialistIds && editingMeeting.specialistIds.length
+          ? editingMeeting.specialistIds.filter(Boolean)
+          : (editingMeeting.specialistId ? [editingMeeting.specialistId] : [])),
         patientIds: editingMeeting.patientIds || (editingMeeting.patientId ? [editingMeeting.patientId] : []),
         meetingName: (editingMeeting as any)?.name || ''
       }));
@@ -306,9 +309,14 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       return true;
     }
     const newErrors: string[] = [];
-    if (!formData.specialistIds.length) newErrors.push('Wybierz co najmniej jednego specjalistę');
+    const selectedSpecialistIds = formData.specialistIds.filter(Boolean);
+    if (!selectedSpecialistIds.length) {
+      if (!isAdmin) {
+        newErrors.push('Wybierz co najmniej jednego specjalistę. Tylko administrator jest uprawniony do zarezerwowania sali bez specjalisty.');
+      }
+    }
     // Wymuś udział zalogowanego pracownika w spotkaniu które tworzy
-    if (currentUser.role === 'employee' && !formData.specialistIds.includes(currentUser.id)) {
+    if (currentUser.role === 'employee' && !formData.specialistIds.filter(Boolean).includes(currentUser.id)) {
       newErrors.push('Jako pracownik musisz być uczestnikiem spotkania');
     }
     // patient optional – no error
@@ -323,7 +331,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       newErrors.push('Termin rozpoczęcia musi być w przyszłości');
     }
     // conflict per specialist and room (using effectiveDate)
-    formData.specialistIds.forEach(id => {
+    selectedSpecialistIds.forEach(id => {
       const u = users.find(u=>u.id===id);
       const fullName = u ? `${u.surname} ${u.name}` : id;
       // Dostępność sprawdzamy tylko dla pracowników
@@ -347,14 +355,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     setErrors(newErrors); return newErrors.length===0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!validateForm()) return;
-    // If user changed time to past while form is open, block submission
-    if (!isAdmin && !editingMeeting && !isDateTimeInFuture(effectiveDate, formData.startTime)) {
-      setShowPastSubmitInfo(true);
-      return;
-    }
+  const doSubmit = () => {
     const primarySpec = formData.specialistIds[0];
     const primaryPatientId = formData.patientIds[0];
     // Use effectivePatients (prop patients or loaded from storage) to resolve names
@@ -364,7 +365,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       return `${p.name} ${p.surname}`;
     });
     const submitData: Omit<Meeting, 'id'> = {
-      specialistId: primarySpec,
+      specialistId: primarySpec || '',
       patientName: patientNamesList[0] || formData.patientName,
       patientId: primaryPatientId,
       guestName: formData.guestName,
@@ -379,10 +380,25 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       patientIds: formData.patientIds,
       patientNamesList,
       name: formData.meetingName,
-      // statusId pozostaje pominięty jeśli nie ustalony – backend może zmapować po status
     };
     onSubmit(submitData);
     onClose();
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!validateForm()) return;
+    // If user changed time to past while form is open, block submission
+    if (!isAdmin && !editingMeeting && !isDateTimeInFuture(effectiveDate, formData.startTime)) {
+      setShowPastSubmitInfo(true);
+      return;
+    }
+    // For admin: confirm saving without specialists
+    if (isAdmin && formData.specialistIds.length === 0) {
+      setShowNoSpecialistConfirm(true);
+      return;
+    }
+    doSubmit();
   };
 
   const [roomsOpen, setRoomsOpen] = useState(false);
@@ -560,10 +576,12 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
 
 
   // Sprawdź dostępność specjalistów (czy są dostępni wg EmployeeCalendar)
+  const selectedSpecialistIds = React.useMemo(() => formData.specialistIds.filter(Boolean), [formData.specialistIds]);
   const unavailableSpecialists = React.useMemo(() => {
     if (!formData.startTime || !formData.endTime) return [] as string[];
-    return formData.specialistIds.filter(id => !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime));
-  }, [formData.specialistIds, formData.startTime, formData.endTime, effectiveDate, isSpecialistAvailable]);
+    if (!selectedSpecialistIds.length) return [] as string[];
+    return selectedSpecialistIds.filter(id => !isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime));
+  }, [selectedSpecialistIds, formData.startTime, formData.endTime, effectiveDate, isSpecialistAvailable]);
 
   // Helper: jeden zunifikowany status dla wszystkich ról – patrzymy tylko na dostępność (workhours dla employee, inni zawsze mają "czas pracy"), konflikty i wybrany zakres czasu.
   // Priorytety: ładowanie -> brak godzin (employee) -> brak wybranego czasu -> niedostępny (poza godzinami) -> zajęty (konflikt) -> dostępny.
@@ -594,10 +612,11 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   // Sprawdź konflikty spotkań (zajętość)
   const conflictedSpecialists = React.useMemo(() => {
     if (!formData.startTime || !formData.endTime) return [] as string[];
-    return formData.specialistIds.filter(id =>
+    if (!selectedSpecialistIds.length) return [] as string[];
+    return selectedSpecialistIds.filter(id =>
       specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)
     );
-  }, [formData.specialistIds, formData.startTime, formData.endTime, effectiveDate, editingMeeting?.id, meetings]);
+  }, [selectedSpecialistIds, formData.startTime, formData.endTime, effectiveDate, editingMeeting?.id, meetings]);
 
   // Conflicted patients (already booked somewhere else)
   const conflictedPatients = React.useMemo(() => {
@@ -612,7 +631,11 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
 
   // Restriction dialog (employees attempting forbidden actions on multi-specialist meetings)
   const [restrictionDialog, setRestrictionDialog] = useState<null | { type: 'removeSpecialist' | 'deleteMeeting' }>(null);
-  const participantIdsNormalized = editingMeeting ? (editingMeeting.specialistIds && editingMeeting.specialistIds.length ? editingMeeting.specialistIds : [editingMeeting.specialistId]) : [];
+  const participantIdsNormalized = editingMeeting
+    ? ((editingMeeting.specialistIds && editingMeeting.specialistIds.length)
+        ? editingMeeting.specialistIds.filter(Boolean)
+        : (editingMeeting.specialistId ? [editingMeeting.specialistId] : []))
+    : [];
   // Option B:
   // - Admin: can delete any meeting (past/future)
   // - Non-admins: keep previous rule (can see delete only for future and being a participant)
@@ -1370,6 +1393,40 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                   autoFocus
                 >
                   OK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin-only confirmation: save without specialist */}
+      {showNoSpecialistConfirm && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/50" onClick={()=> setShowNoSpecialistConfirm(false)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in">
+            <div className="p-6">
+              <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-indigo-100 flex items-center justify-center">
+                <AlertCircle className="h-6 w-6 text-indigo-600" />
+              </div>
+              <h3 className="text-base font-semibold text-gray-900 mb-2 text-center">Zapisać bez specjalisty?</h3>
+              <p className="text-sm text-gray-600 mb-6 leading-relaxed text-center">
+                Zapiszesz spotkanie bez przypisanego specjalisty. Sala zostanie zarezerwowana, a uczestników możesz dodać później.
+              </p>
+              <div className="flex justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={()=> setShowNoSpecialistConfirm(false)}
+                  className="px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="button"
+                  onClick={()=> { setShowNoSpecialistConfirm(false); doSubmit(); }}
+                  className="px-4 py-2.5 text-sm font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  Zapisz bez specjalisty
                 </button>
               </div>
             </div>
