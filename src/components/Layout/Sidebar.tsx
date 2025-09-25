@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { /* Calendar, */ Users, MapPin, Settings, BarChart3, User, /* ListChecks, */ ClipboardList } from 'lucide-react';
+import { useUnsavedChangesGuard } from '../common/UnsavedChangesGuard';
 
 interface SidebarProps {
   currentView: string;
@@ -9,6 +10,7 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
   const navigate = useNavigate();
+  const { attempt } = useUnsavedChangesGuard();
   const [employeesOpen, setEmployeesOpen] = useState(false);
   const [employeesGroupSelected, setEmployeesGroupSelected] = useState(false);
   const [roomsOpen, setRoomsOpen] = useState(false);
@@ -65,7 +67,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
           {/* Panel główny */}
           <li>
             <button
-              onClick={() => { navigate('/dashboard'); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); }}
+              onClick={() => attempt(() => { navigate('/dashboard'); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); })}
               className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
                 currentView === 'dashboard' && !employeesGroupSelected && !roomsGroupSelected
                   ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
@@ -83,13 +85,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
           {/* Pracownicy Fundacji */}
           <li>
             <button
-              onClick={() => {
+              onClick={() => attempt(() => {
                 setEmployeesOpen(o => !o);
                 setEmployeesGroupSelected(true);
                 setRoomsGroupSelected(false);
                 setRoomsOpen(false);
                 navigate('/employees/schedule');
-              }}
+              })}
               aria-expanded={employeesOpen}
               className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
                 employeesActive
@@ -116,8 +118,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
                         <button
                           onClick={() => {
                             if (disabled) return;
-                            navigate(child.id === 'employee-calendar' ? '/employees/schedule' : '/employees/menage');
-                            setEmployeesGroupSelected(true);
+                            attempt(() => {
+                              navigate(child.id === 'employee-calendar' ? '/employees/schedule' : '/employees/menage');
+                              setEmployeesGroupSelected(true);
+                            });
                           }}
                           disabled={disabled}
                           className={`w-full flex items-center pl-11 pr-4 py-2 text-left rounded-md text-sm transition-colors ${
@@ -141,13 +145,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
           {/* Rezerwacje sal (submenu) */}
           <li>
             <button
-              onClick={() => {
+              onClick={() => attempt(() => {
                 setRoomsOpen(o => !o);
                 setRoomsGroupSelected(true);
                 setEmployeesGroupSelected(false);
                 setEmployeesOpen(false);
                 navigate('/reservation/schedule');
-              }}
+              })}
               aria-expanded={roomsOpen}
               className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
                 roomsActive
@@ -174,8 +178,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
                         <button
                           onClick={() => {
                             if (disabled) return;
-                            navigate(child.id === 'room-calendar' ? '/reservation/schedule' : '/reservation/menage');
-                            setRoomsGroupSelected(true);
+                            attempt(() => {
+                              navigate(child.id === 'room-calendar' ? '/reservation/schedule' : '/reservation/menage');
+                              setRoomsGroupSelected(true);
+                            });
                           }}
                           disabled={disabled}
                           className={`w-full flex items-center pl-11 pr-4 py-2 text-left rounded-md text-sm transition-colors ${
@@ -220,14 +226,14 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
             return (
               <li key={item.id}>
                 <button
-                  onClick={() => { 
+                  onClick={() => attempt(() => { 
                     navigate(
                       item.id === 'tasks' ? '/tasks' : 
                       item.id === 'settings' ? '/options' : 
                       '/'+item.id
                     );
                     setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); 
-                  }}
+                  })}
                   className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
                     isActive
                       ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'

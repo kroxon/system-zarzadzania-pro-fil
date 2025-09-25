@@ -7,6 +7,7 @@ import MonthCalendar from './MonthCalendar';
 import MeetingForm from '../Forms/MeetingForm';
 import { fetchEmployeeWorkHours } from '../../utils/api/employees';
 import { createWorkHour, deleteWorkHour, updateWorkHour } from '../../utils/api/workhours';
+import { useUnsavedChangesGuard } from '../common/UnsavedChangesGuard';
 
 const DAYOFF_MEETING_PREFIX = 'dayoff-';
 
@@ -42,6 +43,7 @@ interface EmployeeCalendarProps {
 }
 
 const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meetings, currentUser, showWeekends, startHour, endHour, onMeetingCreate, onMeetingUpdate, onMeetingDelete, patients = [] }) => {
+  const { register, attempt } = useUnsavedChangesGuard();
   // Core state
   // Only admin can edit availability hours
   const canEditAvailability = currentUser.role === 'admin';
@@ -208,8 +210,16 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
     return () => { cancelled = true; };
   }, [selectedEmployee, weekBounds.start.getTime(), weekBounds.end.getTime(), currentUser?.token]);
 
-  // Guard date change if unsaved
-  const guardedSetCurrentDate = (d: Date) => { const newBounds=getWeekBounds(d); const sameWeek= weekBounds.start.getTime()===newBounds.start.getTime(); if(!sameWeek && tempRanges.length){ alert('Najpierw zapisz zmiany dostępności dla tego tygodnia.'); return; } setCurrentDate(d); };
+  // Guard date change if unsaved (dialog-based)
+  const guardedSetCurrentDateWithDialog = (d: Date) => {
+    const newBounds = getWeekBounds(d);
+    const sameWeek = weekBounds.start.getTime() === newBounds.start.getTime();
+    if (sameWeek) { setCurrentDate(d); return; }
+    attempt(() => setCurrentDate(d), {
+      title: 'Niezapisane zmiany w grafiku',
+      message: 'Masz zmiany w bieżącym tygodniu. Zapisz lub odrzuć, aby przejść do innego tygodnia.'
+    });
+  };
 
   // Merge adjacency helper
   const mergeRangesAdjacency = (ranges: AvailabilityRange[]): AvailabilityRange[] => {
@@ -525,6 +535,35 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
     }
   };
 
+  // Register this calendar with the global Unsaved Changes guard
+  React.useEffect(() => {
+    const unsubscribe = register({
+      isDirty: () => (tempRanges.length > 0 || deletedRangeIds.length > 0 || monthPending),
+      save: async () => {
+        await runWithSaving(async () => {
+          if (monthPending && monthActionsRef.current) {
+            await monthActionsRef.current.save();
+          }
+          if (tempRanges.length > 0 || deletedRangeIds.length > 0) {
+            await saveAvailabilities();
+          }
+        });
+      },
+      discard: async () => {
+        if (monthPending && monthActionsRef.current) {
+          monthActionsRef.current.discard();
+        }
+        if (tempRanges.length > 0 || deletedRangeIds.length > 0) {
+          discardChanges();
+        }
+      },
+      title: 'Niezapisane zmiany',
+      message: 'Masz niezapisane zmiany w grafiku. Co chcesz zrobić?'
+    });
+    return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [register, monthPending, tempRanges.length, deletedRangeIds.length]);
+
   // Patients resolver to display full names instead of IDs (prefer backend patients prop)
   const patientNameById = React.useMemo(() => {
     const map: Record<string, string> = {};
@@ -671,7 +710,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
       <div className="mb-4">
         <div className="flex flex-wrap gap-2">
           {allDisplayUsers.map(emp=> { const active=emp.id===selectedEmployee; const disabled=(currentUser.role==='employee' || currentUser.role==='contact') && emp.id!==currentUser.id; const fullName = `${emp.surname || ''} ${emp.name}`.trim(); return (
-            <button key={emp.id} type="button" aria-pressed={active} disabled={disabled} onClick={()=> { if(disabled) return; setSelectedEmployee(emp.id); }}
+            <button key={emp.id} type="button" aria-pressed={active} disabled={disabled} onClick={()=> { if(disabled) return; attempt(() => setSelectedEmployee(emp.id), { title: 'Zmiana pracownika', message: 'Masz niezapisane zmiany w grafiku. Zapisz je lub odrzuć przed zmianą pracownika.' }); }}
               className={`px-4 py-1.5 text-xs md:text-sm rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${active? 'bg-blue-600 text-white border-blue-600':'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} ${disabled && !active? 'opacity-50 cursor-not-allowed hover:bg-white':''}`}>{fullName}</button>
           ); })}
         </div>
@@ -679,7 +718,7 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
       {selectedEmployee ? (
         <div className="flex flex-col flex-1 min-h-0">
           <div className="flex-shrink-0">
-            <CalendarHeader currentDate={currentDate} viewType={viewType} onDateChange={guardedSetCurrentDate} onViewTypeChange={(v)=> { if(v==='week'|| v==='month') setViewType(v); }} availableViews={['week','month']}
+            <CalendarHeader currentDate={currentDate} viewType={viewType} onDateChange={guardedSetCurrentDateWithDialog} onViewTypeChange={(v)=> { if(v!=='week' && v!=='month') return; attempt(() => setViewType(v), { title: 'Zmiana widoku', message: 'Masz niezapisane zmiany. Zapisz je lub odrzuć przed zmianą widoku.' }); }} availableViews={['week','month']}
               centerContent={(<div className="flex flex-wrap items-center gap-4 justify-center">
                 {viewType==='week' && canEditAvailability && (<>
                   <span className="text-sm font-medium text-gray-700">Powiel dostępność na:</span>

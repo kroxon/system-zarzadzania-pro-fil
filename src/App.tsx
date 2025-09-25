@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { UnsavedChangesProvider } from './components/common/UnsavedChangesGuard';
 import NotFound404 from './components/Views/NotFound404';
 import Sidebar from './components/Layout/Sidebar';
 import TopBar from './components/Layout/TopBar';
@@ -478,6 +479,7 @@ function App() {
 
   return (
     <BrowserRouter>
+      <UnsavedChangesProvider>
       <Routes>
         {/* Login route, no bars */}
         <Route path="/login" element={<LoginForm onLogin={handleLogin} />} />
@@ -507,6 +509,7 @@ function App() {
         {/* 404 route */}
         <Route path="*" element={<NotFound404 isAuthenticated={!!currentUser} />} />
       </Routes>
+      </UnsavedChangesProvider>
     </BrowserRouter>
   );
 }
