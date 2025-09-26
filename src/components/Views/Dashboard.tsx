@@ -31,11 +31,10 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
   const sortedTodayMeetings = React.useMemo(()=>[
     ...todayMeetings
   ].sort((a,b)=> a.startTime.localeCompare(b.startTime)), [todayMeetings]);
-  const splitThreshold = 10; // switch to two-column layout at this threshold
-  const useTwoColumns = sortedTodayMeetings.length >= splitThreshold;
-  const midIndex = useTwoColumns ? Math.ceil(sortedTodayMeetings.length / 2) : sortedTodayMeetings.length;
-  const firstColumn = sortedTodayMeetings.slice(0, midIndex);
-  const secondColumn = useTwoColumns ? sortedTodayMeetings.slice(midIndex) : [];
+  // Wyświetlaj zawsze w jednej kolumnie
+  const firstColumn = sortedTodayMeetings;
+  const useTwoColumns = false;
+  const secondColumn: typeof sortedTodayMeetings = [];
 
   // === Patient id -> full name map ===
   const patientsMap = React.useMemo(()=>{

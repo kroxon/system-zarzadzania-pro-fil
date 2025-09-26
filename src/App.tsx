@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { UnsavedChangesProvider } from './components/common/UnsavedChangesGuard';
 import NotFound404 from './components/Views/NotFound404';
 import Sidebar from './components/Layout/Sidebar';
 import TopBar from './components/Layout/TopBar';
@@ -12,6 +13,8 @@ import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
 import TasksPage from './components/Tasks/TasksPage';
 import { User, Meeting, Room, CreateEvent } from './types';
+import MobileMeetings from './components/Views/MobileMeetings';
+import { useIsMobile } from './utils/device';
 import Settings from './components/Views/Settings';
 // Icons were used in removed view meta; keeping import minimal
 import { mapBackendRolesToFrontend } from './utils/roleMapper';
@@ -38,7 +41,10 @@ function saveCurrentUser(user: User) {
 }
 
 function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any, onLogout: () => void, children?: React.ReactNode }) {
+  const isMobile = useIsMobile();
   if (!currentUser) return <Navigate to="/login" replace />;
+  // If mobile, block desktop routes and redirect to mobile view
+  if (isMobile) return <Navigate to="/m" replace />;
   // Derive current page meta (title + sidebar view) from the route path
   const { pathname } = useLocation();
   const getViewInfo = (path: string) => {
@@ -98,6 +104,7 @@ function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const isMobile = useIsMobile();
   // const [currentView, setCurrentView] = useState('dashboard');
   // Initialize ONLY from persisted storage (no implicit sample fallback)
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -336,8 +343,8 @@ function App() {
           token: token || localStorage.getItem('token') || undefined,
         // ...inne pola jeśli potrzebne
       };
-      setCurrentUser(frontendUser);
-      saveCurrentUser(frontendUser);
+  setCurrentUser(frontendUser);
+  saveCurrentUser(frontendUser);
       // Nie dodawaj tutaj backendowego usera do usersState (zapobiegnie to zapisowi do localStorage).
       // Lista zostanie zsynchronizowana przez efekt fetchEmployees powyżej.
       return;
@@ -351,6 +358,7 @@ function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem('schedule_current_user');
+    localStorage.removeItem('token');
   };
 
   const handleMeetingCreate = async (meetingData: Omit<Meeting, 'id'>) => {
@@ -471,11 +479,12 @@ function App() {
 
   return (
     <BrowserRouter>
+      <UnsavedChangesProvider>
       <Routes>
         {/* Login route, no bars */}
         <Route path="/login" element={<LoginForm onLogin={handleLogin} />} />
 
-        {/* Protected routes */}
+        {/* Protected routes for desktop */}
         <Route element={<ProtectedLayout currentUser={currentUser} onLogout={handleLogout} />}>
           <Route path="/dashboard" element={<Dashboard users={usersState} rooms={roomsState} meetings={meetings} patients={patientsState as any} />} />
           <Route path="/employees/schedule" element={<EmployeeCalendar users={usersState} rooms={roomsState} meetings={meetings} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} patients={patientsState as any} />} />
@@ -487,12 +496,20 @@ function App() {
           <Route path="/options" element={<Settings currentUser={currentUser!} token={currentUser?.token || localStorage.getItem('token') || undefined} onUsersRefresh={refreshBackendUsersGlobal} />} />
         </Route>
 
+        {/* Protected mobile route (no desktop layout) */}
+        <Route path="/m" element={currentUser ? (
+          <MobileMeetings currentUser={currentUser} meetings={meetings} onLogout={handleLogout} rooms={roomsState} />
+        ) : (
+          <Navigate to="/login" replace />
+        )} />
+
         {/* Redirect root to dashboard if authenticated, else to login */}
-        <Route path="/" element={currentUser ? <Navigate to="/dashboard" /> : <Navigate to="/login" />} />
+        <Route path="/" element={currentUser ? <Navigate to={isMobile ? '/m' : '/dashboard'} /> : <Navigate to="/login" />} />
 
         {/* 404 route */}
         <Route path="*" element={<NotFound404 isAuthenticated={!!currentUser} />} />
       </Routes>
+      </UnsavedChangesProvider>
     </BrowserRouter>
   );
 }

@@ -1,5 +1,6 @@
 import React from 'react';
 import { User, LogOut, Bell } from 'lucide-react';
+import { useUnsavedChangesGuard } from '../common/UnsavedChangesGuard';
 
 interface TopBarProps {
   currentUser: {
@@ -12,6 +13,7 @@ interface TopBarProps {
 }
 
 const TopBar: React.FC<TopBarProps> = ({ currentUser, onLogout, pageTitle, pageIcon }) => {
+  const { attempt } = useUnsavedChangesGuard();
   // Używaj tylko currentUser.role
   const getRoleName = (role: string) => {
     switch (role) {
@@ -50,7 +52,7 @@ const TopBar: React.FC<TopBarProps> = ({ currentUser, onLogout, pageTitle, pageI
         </div>
         
         <button
-          onClick={onLogout}
+          onClick={() => attempt(onLogout, { title: 'Wylogować się?', message: 'Masz niezapisane zmiany. Zapisz je lub odrzuć, zanim się wylogujesz.' })}
           className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
           title="Wyloguj"
         >
