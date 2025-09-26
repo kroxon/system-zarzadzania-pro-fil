@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loginUser } from '../../utils/api/auth';
 import { fetchUserById } from '../../utils/api/user';
@@ -35,7 +35,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
   };
 
   const [loginData, setLoginData] = useState({ username: '', password: '' });
-  const [loginSuccess, setLoginSuccess] = useState(false);
+  // loginSuccess state removed (unused)
 
   // Obsługa logowania z backendem
   const handleFormLogin = async (e: React.FormEvent) => {
@@ -55,9 +55,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
         } catch (err) {
           alert('Nie udało się pobrać danych użytkownika');
         }
-      }
-  setLoginSuccess(true);
-  navigate('/dashboard');
+    }
+    navigate('/dashboard');
     } catch (error) {
       alert('Nieprawidłowy login lub hasło');
     }
@@ -119,9 +118,12 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                 </div>
                 <form className="space-y-4" onSubmit={handleFormLogin}>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Login</label>
+                    <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-2">Login</label>
                     <input
-                      type="text"
+                      id="login-email"
+                      name="email"
+                      autoComplete="email"
+                      type="email"
                       value={loginData.username}
                       onChange={e => setLoginData({ ...loginData, username: e.target.value })}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
@@ -129,8 +131,11 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Hasło</label>
+                    <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-2">Hasło</label>
                     <input
+                      id="login-password"
+                      name="password"
+                      autoComplete="current-password"
                       type="password"
                       value={loginData.password}
                       onChange={e => setLoginData({ ...loginData, password: e.target.value })}
