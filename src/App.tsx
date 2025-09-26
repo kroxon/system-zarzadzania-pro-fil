@@ -15,6 +15,7 @@ import TasksPage from './components/Tasks/TasksPage';
 import { User, Meeting, Room, CreateEvent } from './types';
 import MobileMeetings from './components/Views/MobileMeetings';
 import { useIsMobile } from './utils/device';
+import { notify } from './components/common/Notification';
 import Settings from './components/Views/Settings';
 // Icons were used in removed view meta; keeping import minimal
 import { mapBackendRolesToFrontend } from './utils/roleMapper';
@@ -220,8 +221,7 @@ function App() {
       // Backend-only: just set mapped events
       setMeetings(mapped);
     } catch (e) {
-      // Silent for now; could add Notification later
-      console.warn('Failed to fetch backend events', e);
+      notify.error('Nie udało się pobrać wydarzeń');
     }
   }, [currentUser?.token, usersState]);
 
@@ -345,6 +345,7 @@ function App() {
       };
   setCurrentUser(frontendUser);
   saveCurrentUser(frontendUser);
+  notify.success('Zalogowano pomyślnie');
       // Nie dodawaj tutaj backendowego usera do usersState (zapobiegnie to zapisowi do localStorage).
       // Lista zostanie zsynchronizowana przez efekt fetchEmployees powyżej.
       return;
@@ -353,6 +354,7 @@ function App() {
     setCurrentUser(user);
     saveCurrentUser(user);
     setUsersState(prev => prev.some(u=>u.id===user.id) ? prev : [...prev, user]);
+  notify.success('Zalogowano pomyślnie');
   };
 
   const handleLogout = () => {

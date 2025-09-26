@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Pencil, Trash2, X, Loader2 } from 'lucide-react';
 import { Room, RoomAPI, Meeting, Event } from '../../types';
 import { getRooms, updateRoom as apiUpdateRoom, deleteRoom as apiDeleteRoom, createRoom as apiCreateRoom } from '../../utils/api/rooms';
+import { notify } from '../common/Notification';
 import { fetchEvents } from '../../utils/api/events';
 // import { fetchEmployees } from '../../utils/api/employees';
 
@@ -108,7 +109,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
     }
   // Creating new room -> send to backend
   const token = localStorage.getItem('token') || undefined;
-    if (!token) { alert('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
+  if (!token) { notify.error('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
     setCreateSaving(true);
     try {
   await apiCreateRoom({ name: editing.name.trim(), hexColor: editing.hexColor || ROOM_COLOR_PALETTE[0] }, token);
@@ -118,15 +119,16 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
       onBackendRoomsRefresh && onBackendRoomsRefresh();
       cancel();
     } catch (e) {
-      alert('Nie udało się utworzyć sali.');
+      notify.error('Nie udało się utworzyć sali.');
     } finally {
       setCreateSaving(false);
     }
   };
 
   const removeRoom = (id: string) => {
-    if(!confirm('Usuń salę?')) return;
+    // Local/demo rooms removal without native confirm; use immediate action and rely on undo/toast if needed
     onRoomsChange(roomsList.filter((r: Room)=>r.id!==id));
+    notify.success('Sala usunięta');
   };
 
   const updateEditing = (patch: Partial<Room>) => {

@@ -5,6 +5,7 @@ import { fetchUserById } from '../../utils/api/user';
 import { User as UserIcon } from 'lucide-react';
 import RegisterForm from './RegisterForm';
 import ResetPasswordForm from './ResetPasswordForm';
+import { notify } from '../common/Notification';
 
 
 interface LoginFormProps {
@@ -53,12 +54,14 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
           const userData = await fetchUserById(response.employeeId, response.token);
           onLogin(userData, response.token);
         } catch (err) {
-          alert('Nie udało się pobrać danych użytkownika');
+          notify.error('Nie udało się pobrać danych użytkownika');
         }
     }
     navigate('/dashboard');
     } catch (error) {
-      alert('Nieprawidłowy login lub hasło');
+      // loginUser already shows a user-friendly notification for failed logins.
+      // Avoid duplicating the toast here. Keep a console log for debugging.
+      console.error('Login failed', error);
     }
   };
 

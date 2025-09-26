@@ -1,4 +1,5 @@
 import {  Event, CreateEvent, PatchEventPersons} from '../../types/index';
+import { notify, notifyFromResponseError } from '../../components/common/Notification';
 
 const API_URL = import.meta.env.VITE_API_URL
 
@@ -13,6 +14,7 @@ export async function fetchEvents(token: string): Promise<Event[]> {
   });
 
   if (!response.ok) {
+    await notifyFromResponseError(response, 'error');
     throw new Error('Nie udało się pobrać wydarzeń');
   }
 
@@ -33,10 +35,12 @@ export async function createEvent(data: CreateEvent, token: string): Promise<Eve
   });
 
   if (!response.ok) {
+    await notifyFromResponseError(response, 'error');
     throw new Error('Nie udało się utworzyć wydarzenia');
   }
-
-  return await response.json();
+  const created = await response.json();
+  notify.success('Wydarzenie utworzone');
+  return created;
 }
 
 // GET /api/events/{id}
@@ -50,6 +54,7 @@ export async function fetchEvent(id: number, token: string): Promise<Event> {
   });
 
   if (!response.ok) {
+    await notifyFromResponseError(response, 'error');
     throw new Error('Nie udało się pobrać wydarzenia');
   }
 
@@ -67,8 +72,10 @@ export async function deleteEvent(id: number, token: string): Promise<void> {
   });
 
   if (!response.ok) {
+    await notifyFromResponseError(response, 'error');
     throw new Error('Nie udało się usunąć wydarzenia');
   }
+  notify.success('Wydarzenie usunięte');
 }
 
 
@@ -87,8 +94,10 @@ export async function updateEvent(id: number, data: UpdateEvent, token: string):
   });
 
   if (!response.ok) {
+    await notifyFromResponseError(response, 'error');
     throw new Error('Nie udało się zaktualizować wydarzenia');
   }
+  notify.success('Wydarzenie zaktualizowane');
 }
 
 
@@ -105,8 +114,10 @@ export async function patchEventPersons(eventId: number, data: PatchEventPersons
   });
 
   if (!response.ok) {
+    await notifyFromResponseError(response, 'error');
     throw new Error('Nie udało się zaktualizować uczestników wydarzenia');
   }
+  notify.success('Uczestnicy zaktualizowani');
 }
 
 

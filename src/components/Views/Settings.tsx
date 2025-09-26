@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { fetchPendingUsers, approveUser, rejectUser } from '../../utils/api/admin';
 import { PendingUser, Role } from '../../types';
+import { notify } from '../common/Notification';
 
 type SettingsProps = {
 	currentUser?: { role: string };
@@ -40,7 +41,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, token, onUsersRefresh 
 				try { await onUsersRefresh(); } catch { /* ciche pominięcie */ }
 			}
 		} catch (e: any) {
-			alert('Error approving user: ' + e.message);
+			notify.error('Nie udało się zaakceptować użytkownika' + (e?.message ? `: ${e.message}` : ''));
 		}
 	};
 
@@ -51,7 +52,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, token, onUsersRefresh 
 			await rejectUser(userId, token);
 			setPendingUsers(prev => prev.filter(u => u.id !== userId));
 		} catch (e: any) {
-			alert('Error rejecting user: ' + e.message);
+			notify.error('Nie udało się odrzucić użytkownika' + (e?.message ? `: ${e.message}` : ''));
 		}
 	};
 

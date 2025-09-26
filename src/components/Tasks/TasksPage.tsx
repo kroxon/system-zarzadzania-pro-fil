@@ -1,4 +1,5 @@
-import { MoreHorizontal, Plus, CheckCircle2, Circle, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react';
+import { MoreHorizontal, Plus, CheckCircle2, Circle, ArrowUpDown, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { notify } from '../common/Notification';
 import { useState, useEffect } from 'react';
 import { EmployeeTask } from '../../types/index'
 import { Employee } from '../../types/index';
@@ -241,18 +242,34 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
     setEditingTask(null);
   };
 
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const handleDeleteTask = (taskId: number) => {
     if (userRole !== 'admin') return;
-    if (!window.confirm('Czy na pewno chcesz usunąć to zadanie?')) return;
+    setDeleteTargetId(taskId);
+    setDeleteError(null);
+    setShowDeleteDialog(true);
+  };
+  const confirmDeleteTask = async () => {
+    if (deleteTargetId == null) return;
     const token = localStorage.getItem('token');
-    if (!token) return;
-    import('../../utils/api/tasks').then(api => {
-      api.deleteEmployeeTask(taskId, token)
-        .then(() => {
-          setTaskList(taskList.filter(task => task.id !== taskId));
-        })
-        .catch(() => {/* obsługa błędu */});
-    });
+    if (!token) { setDeleteError('Brak tokenu'); return; }
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const api = await import('../../utils/api/tasks');
+      await api.deleteEmployeeTask(deleteTargetId, token);
+      setTaskList(prev => prev.filter(t => t.id !== deleteTargetId));
+      setShowDeleteDialog(false);
+      setDeleteTargetId(null);
+      notify.success('Zadanie usunięte');
+    } catch (e: any) {
+      setDeleteError(e?.message || 'Nie udało się usunąć zadania');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
 
@@ -419,6 +436,29 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
                       const selected = Array.from(e.target.selectedOptions, opt => Number(opt.value));
                       setFormData({ ...formData, assignedEmployeesIds: selected });
                     }
+
+                    {/* Delete confirmation dialog for tasks */}
+                    {userRole==='admin' && showDeleteDialog && (
+                      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <div className="absolute inset-0 bg-black/40" onClick={() => !isDeleting && setShowDeleteDialog(false)} />
+                        <div className="relative w-full max-w-md bg-white rounded-xl shadow-xl border border-red-100">
+                          <div className="flex items-center justify-between px-5 py-4 border-b border-red-100">
+                            <h3 className="text-lg font-semibold text-gray-900">Potwierdź usunięcie</h3>
+                            <button onClick={() => !isDeleting && setShowDeleteDialog(false)} className="p-2 rounded hover:bg-gray-100"><X className="w-5 h-5 text-gray-500"/></button>
+                          </div>
+                          <div className="px-5 py-4 space-y-3">
+                            <p className="text-sm text-gray-700">Czy na pewno chcesz usunąć to zadanie? Tej operacji nie można cofnąć.</p>
+                            {deleteError && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{deleteError}</div>}
+                          </div>
+                          <div className="px-5 py-4 border-t border-gray-100 flex justify-end gap-3">
+                            <button onClick={() => setShowDeleteDialog(false)} disabled={isDeleting} className="px-4 py-2 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800">Anuluj</button>
+                            <button onClick={confirmDeleteTask} disabled={isDeleting} className="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+                              {isDeleting ? 'Usuwanie…' : 'Usuń'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   }}
                 >
                   {employees.map(emp => (
@@ -441,4 +481,5 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
     </>
   );
 }
+
 

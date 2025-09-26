@@ -520,7 +520,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
   };
 
   const handleDelete = (id: string) => {
-    if (!confirm('Na pewno usunąć pracownika?')) return;
+    // Use the dedicated delete dialog for backend; for demo users call onDelete directly without native confirm
     onDelete && onDelete(id);
   };
 

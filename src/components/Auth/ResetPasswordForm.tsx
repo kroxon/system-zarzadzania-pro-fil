@@ -13,6 +13,7 @@ const ResetPasswordForm: React.FC<ResetPasswordFormProps> = ({ onResetSuccess, o
   const [newPassword, setNewPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  // info state removed - global notify used instead
   const [loading, setLoading] = useState(false);
 
   // Obsługa backendu
@@ -20,17 +21,12 @@ const ResetPasswordForm: React.FC<ResetPasswordFormProps> = ({ onResetSuccess, o
     e.preventDefault();
     setLoading(true);
     setError(null);
-    setInfo(null);
     try {
       await forgotPassword({ email });
-      setStep(2);
-      setInfo('Kod został wysłany na email.');
+  setStep(2);
     } catch (err: any) {
-      if (err?.message?.toLowerCase().includes('email') || err?.message?.toLowerCase().includes('not found')) {
-        setError('Podany email nie istnieje w bazie.');
-      } else {
-        setError('Nie udało się wysłać kodu resetującego.');
-      }
+      // let backend-driven notification (translated) be shown; avoid local duplicate messages
+      console.error('forgotPassword failed', err);
     } finally {
       setLoading(false);
     }
@@ -40,15 +36,32 @@ const ResetPasswordForm: React.FC<ResetPasswordFormProps> = ({ onResetSuccess, o
     e.preventDefault();
     setLoading(true);
     setError(null);
-    setInfo(null);
     try {
       await resetPassword({ email, token, newPassword });
-      setInfo('Hasło zostało zmienione.');
+      // success notification shown by backend (translated) via auth API
       onResetSuccess();
     } catch (err: any) {
-      setError('Nie udało się zresetować hasła.');
+      // backend-driven notification will be shown (translated). Keep a console log for debugging.
+      console.error('resetPassword failed', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && text.trim()) {
+        setToken(text.trim());
+        setInfo('Kod wklejony ze schowka');
+        setTimeout(() => setInfo(null), 2500);
+      } else {
+        setInfo('Schowek jest pusty');
+        setTimeout(() => setInfo(null), 2500);
+      }
+    } catch (e) {
+      setInfo('Brak dostepu do schowka');
+      setTimeout(() => setInfo(null), 2500);
     }
   };
 
@@ -101,13 +114,18 @@ const ResetPasswordForm: React.FC<ResetPasswordFormProps> = ({ onResetSuccess, o
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Kod z maila</label>
-              <input
-                type="text"
-                value={token}
-                onChange={e => setToken(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                required
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={token}
+                  onChange={e => setToken(e.target.value)}
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  required
+                />
+                        <button type="button" onClick={handlePasteFromClipboard} className="px-3 py-2 bg-gray-100 rounded-md text-sm hover:bg-gray-200">
+                          Wklej ze schowka
+                        </button>
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Nowe hasło</label>
