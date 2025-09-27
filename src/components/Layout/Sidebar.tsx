@@ -68,11 +68,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
           <li>
             <button
               onClick={() => attempt(() => { navigate('/dashboard'); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); })}
-              className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
+              className={`w-full flex items-center py-3 text-left rounded-lg transition-colors duration-200 ${
                 currentView === 'dashboard' && !employeesGroupSelected && !roomsGroupSelected
-                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              } px-4 items-center`}
+                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700 pl-3 pr-4'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 pl-4 pr-4'
+              } items-center`}
             >
               <BarChart3 className={`h-5 w-5 flex-shrink-0 ${currentView === 'dashboard' && !employeesGroupSelected && !roomsGroupSelected ? 'text-blue-700' : 'text-gray-400'}`} />
               <span
@@ -93,11 +93,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
                 navigate('/employees/schedule');
               })}
               aria-expanded={employeesOpen}
-              className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
+              className={`w-full flex items-center py-3 text-left rounded-lg transition-colors duration-200 ${
                 employeesActive
-                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              } px-4 items-center`}
+                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700 pl-3 pr-4'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 pl-4 pr-4'
+              } items-center`}
             >
               <Users className={`h-5 w-5 flex-shrink-0 ${employeesActive ? 'text-blue-700' : 'text-gray-400'}`} />
               <span
@@ -153,11 +153,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
                 navigate('/reservation/schedule');
               })}
               aria-expanded={roomsOpen}
-              className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
+              className={`w-full flex items-center py-3 text-left rounded-lg transition-colors duration-200 ${
                 roomsActive
-                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              } px-4 items-center`}
+                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700 pl-3 pr-4'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 pl-4 pr-4'
+              } items-center`}
             >
               <MapPin className={`h-5 w-5 flex-shrink-0 ${roomsActive ? 'text-blue-700' : 'text-gray-400'}`} />
               <span
@@ -206,11 +206,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
           <li>
             <button
               onClick={() => { navigate('/patients'); setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); }}
-              className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
+              className={`w-full flex items-center py-3 text-left rounded-lg transition-colors duration-200 ${
                 currentView === 'patients' && !roomsGroupSelected && !employeesGroupSelected
-                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              } px-4 items-center`}
+                  ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700 pl-3 pr-4'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 pl-4 pr-4'
+              } items-center`}
             >
               <User className={`h-5 w-5 flex-shrink-0 ${currentView === 'patients' && !roomsGroupSelected && !employeesGroupSelected ? 'text-blue-700' : 'text-gray-400'}`} />
               <span
@@ -234,11 +234,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
                     );
                     setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); 
                   })}
-                  className={`w-full flex items-center py-3 text-left rounded-lg transition-all duration-200 ${
+                  className={`w-full flex items-center py-3 text-left rounded-lg transition-colors duration-200 ${
                     isActive
-                      ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700'
-                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                  } px-4 items-center`}
+                      ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-700 pl-3 pr-4'
+                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 pl-4 pr-4'
+                  } items-center`}
                 >
                   <Icon className={`h-5 w-5 flex-shrink-0 ${isActive ? 'text-blue-700' : 'text-gray-400'}`} />
                   <span
