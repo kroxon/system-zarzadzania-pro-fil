@@ -96,7 +96,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
   const [editApiData, setEditApiData] = useState<ApiEmployee | null>(null);
   const [isEditLoading, setIsEditLoading] = useState(false);
   const [editFetchError, setEditFetchError] = useState<string | null>(null);
-  type EditDraft = { name: string; surname: string; email: string; occupationId: number; occupationName: string; info: string };
+  type EditDraft = { name: string; surname: string; occupationId: number; occupationName: string; info: string };
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   // Patients data for assignment UI
   const [allPatients, setAllPatients] = useState<Patient[]>([]);
@@ -390,7 +390,6 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
         setEditDraft({
           name: fresh.name,
           surname: fresh.surname,
-          email: fresh.email,
           occupationId: fresh.occupationId,
           occupationName: fresh.occupationName,
           info: fresh.info ?? ''
@@ -424,7 +423,7 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
     if (!editApiData || !editDraft) return;
     const token = getAuthToken();
     if (!token) return;
-    if (!editDraft.name.trim() || !editDraft.surname.trim() || !editDraft.email.trim() || !Number.isFinite(editDraft.occupationId)) {
+    if (!editDraft.name.trim() || !editDraft.surname.trim() || !Number.isFinite(editDraft.occupationId)) {
       setSaveBackendError('Uzupełnij wymagane pola');
       return;
     }
@@ -435,7 +434,8 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
       await updateEmployee(editApiData.id, {
         name: editDraft.name.trim(),
         surname: editDraft.surname.trim(),
-        email: editDraft.email.trim(),
+        // Email jest tylko informacyjny w edycji – wysyłamy niezmieniony z backendu
+        email: (editApiData.email || '').trim(),
         occupationId: Number(editDraft.occupationId),
         info: editDraft.info?.trim() ? editDraft.info.trim() : null,
       }, token);
@@ -920,7 +920,15 @@ const EmployeesManage: React.FC<EmployeesManageProps> = ({ users, onAdd, onUpdat
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1 uppercase tracking-wide">Email<span className="text-red-500">*</span></label>
-                            <input type="email" value={editDraft.email} onChange={e => setEditDraft({ ...(editDraft ?? editApiData), email: e.target.value })} required className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400" />
+                            <input
+                              type="email"
+                              value={editApiData.email}
+                              readOnly
+                              disabled
+                              title="Email jest stały i nie podlega edycji"
+                              className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600 cursor-not-allowed"
+                            />
+                            <div className="mt-1 text-[11px] text-gray-500">Email jest stały i nie podlega edycji.</div>
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1 uppercase tracking-wide">Specjalizacja<span className="text-red-500">*</span></label>
