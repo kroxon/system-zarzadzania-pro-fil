@@ -132,7 +132,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
                                 : 'text-gray-600 hover:text-blue-600'
                           }`}
                         >
-                          <span>{child.label}</span>
+                          <span className="whitespace-nowrap truncate">{child.label}</span>
                         </button>
                       </li>
                     );
@@ -192,7 +192,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
                                 : 'text-gray-600 hover:text-blue-600'
                           }`}
                         >
-                          <span>{child.label}</span>
+                          <span className="whitespace-nowrap truncate">{child.label}</span>
                         </button>
                       </li>
                     );
