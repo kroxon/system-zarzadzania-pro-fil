@@ -102,13 +102,31 @@ function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any
   );
 }
 
+// When user lacks permissions, notify and redirect
+function UnauthorizedRedirect() {
+  useEffect(() => {
+    // React.StrictMode w dev podwójnie montuje komponenty -> efekt może odpalić 2x.
+    // Prosty bezpiecznik: nie pokazuj powiadomienia częściej niż raz na 1s.
+    try {
+      const key = 'last_unauthorized_notice_ts';
+      const prev = Number(sessionStorage.getItem(key) || '0');
+      const now = Date.now();
+      if (!prev || now - prev > 1000) {
+        notify.warning('Nie masz dostępu do tej strony.');
+        sessionStorage.setItem(key, String(now));
+      }
+    } catch {
+      notify.warning('Nie masz dostępu do tej strony.');
+    }
+  }, []);
+  return <Navigate to="/dashboard" replace />;
+}
+
 // Simple role-based guard for routes that require specific roles
 function RequireRoles({ allow, currentUser, children }: { allow: Array<'admin' | 'contact' | 'employee'>, currentUser: User | null, children: JSX.Element }) {
   if (!currentUser) return <Navigate to="/login" replace />;
   // Only allow users whose role is included in the allowed list
-  if (!allow.includes(currentUser.role)) {
-    return <Navigate to="/dashboard" replace />;
-  }
+  if (!allow.includes(currentUser.role)) return <UnauthorizedRedirect />;
   return children;
 }
 
