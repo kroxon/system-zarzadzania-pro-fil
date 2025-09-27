@@ -1,11 +1,12 @@
 import {  Event, CreateEvent, PatchEventPersons} from '../../types/index';
 import { notify, notifyFromResponseError } from '../../components/common/Notification';
+import { authFetch } from './http';
 
 const API_URL = import.meta.env.VITE_API_URL
 
 // GET /api/events
 export async function fetchEvents(token: string): Promise<Event[]> {
-  const response = await fetch(`${API_URL}/api/events`, {
+  const response = await authFetch(`${API_URL}/api/events`, {
     method: 'GET',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -25,7 +26,7 @@ export async function fetchEvents(token: string): Promise<Event[]> {
 // POST /api/events
 
 export async function createEvent(data: CreateEvent, token: string): Promise<Event> {
-  const response = await fetch(`${API_URL}/api/events`, {
+  const response = await authFetch(`${API_URL}/api/events`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -45,7 +46,7 @@ export async function createEvent(data: CreateEvent, token: string): Promise<Eve
 
 // GET /api/events/{id}
 export async function fetchEvent(id: number, token: string): Promise<Event> {
-  const response = await fetch(`${API_URL}/api/events/${id}`, {
+  const response = await authFetch(`${API_URL}/api/events/${id}`, {
     method: 'GET',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -63,7 +64,7 @@ export async function fetchEvent(id: number, token: string): Promise<Event> {
 
 // DELETE /api/events/{id}
 export async function deleteEvent(id: number, token: string): Promise<void> {
-  const response = await fetch(`${API_URL}/api/events/${id}`, {
+  const response = await authFetch(`${API_URL}/api/events/${id}`, {
     method: 'DELETE',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -84,7 +85,7 @@ export async function deleteEvent(id: number, token: string): Promise<void> {
 import { UpdateEvent } from '../../types/index';
 
 export async function updateEvent(id: number, data: UpdateEvent, token: string): Promise<void> {
-  const response = await fetch(`${API_URL}/api/events/${id}`, {
+  const response = await authFetch(`${API_URL}/api/events/${id}`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -104,7 +105,7 @@ export async function updateEvent(id: number, data: UpdateEvent, token: string):
 // PATCH /api/events/{eventId}/persons
 
 export async function patchEventPersons(eventId: number, data: PatchEventPersons, token: string): Promise<void> {
-  const response = await fetch(`${API_URL}/api/events/${eventId}/persons`, {
+  const response = await authFetch(`${API_URL}/api/events/${eventId}/persons`, {
     method: 'PATCH',
     headers: {
       'Authorization': `Bearer ${token}`,
