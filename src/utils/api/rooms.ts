@@ -1,4 +1,5 @@
 import { RoomAPI, CreateRoom, UpdateRoom } from '../../types';
+import { authFetch } from './http';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -15,7 +16,7 @@ async function buildError(res: Response, fallback: string) {
 
 // GET /api/rooms – list all rooms
 export async function getRooms(token: string): Promise<RoomAPI[]> {
-	const res = await fetch(`${API_URL}/api/rooms`, {
+	const res = await authFetch(`${API_URL}/api/rooms`, {
     headers: {
       'Authorization': `Bearer ${token}`,
       'Accept': 'application/json'
@@ -27,7 +28,7 @@ export async function getRooms(token: string): Promise<RoomAPI[]> {
 
 // GET /api/rooms/{id} – get single room by id
 export async function getRoom(id: number, token: string): Promise<RoomAPI> {
-		const res = await fetch(`${API_URL}/api/rooms/${id}`, {
+		const res = await authFetch(`${API_URL}/api/rooms/${id}`, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'Accept': 'application/json'
@@ -39,7 +40,7 @@ export async function getRoom(id: number, token: string): Promise<RoomAPI> {
 
 // POST /api/rooms – create new room
 export async function createRoom(data: CreateRoom, token: string): Promise<RoomAPI> {
-		const res = await fetch(`${API_URL}/api/rooms`, {
+		const res = await authFetch(`${API_URL}/api/rooms`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
 		body: JSON.stringify(data)
@@ -50,7 +51,7 @@ export async function createRoom(data: CreateRoom, token: string): Promise<RoomA
 
 // PUT /api/rooms/{id} – update existing room
 export async function updateRoom(id: number, data: UpdateRoom, token: string): Promise<void> {
-		const res = await fetch(`${API_URL}/api/rooms/${id}`, {
+		const res = await authFetch(`${API_URL}/api/rooms/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
 		body: JSON.stringify(data)
@@ -60,7 +61,7 @@ export async function updateRoom(id: number, data: UpdateRoom, token: string): P
 
 // DELETE /api/rooms/{id} – remove room by id
 export async function deleteRoom(id: number, token: string): Promise<void> {
-		const res = await fetch(`${API_URL}/api/rooms/${id}`, {
+		const res = await authFetch(`${API_URL}/api/rooms/${id}`, {
 		method: 'DELETE',
       headers: {
         'Authorization': `Bearer ${token}`,
