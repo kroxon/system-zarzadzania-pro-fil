@@ -102,6 +102,16 @@ function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any
   );
 }
 
+// Simple role-based guard for routes that require specific roles
+function RequireRoles({ allow, currentUser, children }: { allow: Array<'admin' | 'contact' | 'employee'>, currentUser: User | null, children: JSX.Element }) {
+  if (!currentUser) return <Navigate to="/login" replace />;
+  // Only allow users whose role is included in the allowed list
+  if (!allow.includes(currentUser.role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children;
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -490,9 +500,34 @@ function App() {
         <Route element={<ProtectedLayout currentUser={currentUser} onLogout={handleLogout} />}>
           <Route path="/dashboard" element={<Dashboard users={usersState} rooms={roomsState} meetings={meetings} patients={patientsState as any} />} />
           <Route path="/employees/schedule" element={<EmployeeCalendar users={usersState} rooms={roomsState} meetings={meetings} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} patients={patientsState as any} />} />
-          <Route path="/employees/menage" element={<EmployeesManage users={usersState} onAdd={handleAddEmployee} onUpdate={handleUpdateEmployee} onDelete={handleDeleteEmployee} onBackendRefresh={refreshBackendUsersGlobal} />} />
+          <Route
+            path="/employees/menage"
+            element={
+              <RequireRoles allow={["admin", "contact"]} currentUser={currentUser}>
+                <EmployeesManage
+                  users={usersState}
+                  onAdd={handleAddEmployee}
+                  onUpdate={handleUpdateEmployee}
+                  onDelete={handleDeleteEmployee}
+                  onBackendRefresh={refreshBackendUsersGlobal}
+                />
+              </RequireRoles>
+            }
+          />
           <Route path="/reservation/schedule" element={<RoomCalendar users={usersState} rooms={roomsState} meetings={meetings} patients={patientsState} currentUser={currentUser!} onMeetingCreate={handleMeetingCreate} onMeetingUpdate={handleMeetingUpdate} onMeetingDelete={handleMeetingDelete} showWeekends={showWeekends} startHour={startHour} endHour={endHour} />} />
-          <Route path="/reservation/menage" element={<RoomsManage rooms={roomsState} onRoomsChange={setRoomsState} userRole={currentUser?.role || 'employee'} onBackendRoomsRefresh={refreshBackendRoomsGlobal} />} />
+          <Route
+            path="/reservation/menage"
+            element={
+              <RequireRoles allow={["admin", "contact"]} currentUser={currentUser}>
+                <RoomsManage
+                  rooms={roomsState}
+                  onRoomsChange={setRoomsState}
+                  userRole={currentUser?.role || 'employee'}
+                  onBackendRoomsRefresh={refreshBackendRoomsGlobal}
+                />
+              </RequireRoles>
+            }
+          />
           <Route path="/patients" element={<Patients />} />
           <Route path="/tasks" element={<TasksPage userRole={currentUser?.role || 'employee'} currentUserId={currentUser?.id || ''} />} />
           <Route path="/options" element={<Settings currentUser={currentUser!} token={currentUser?.token || localStorage.getItem('token') || undefined} onUsersRefresh={refreshBackendUsersGlobal} />} />
