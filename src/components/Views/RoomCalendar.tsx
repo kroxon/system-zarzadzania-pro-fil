@@ -3,9 +3,91 @@ const ScheduleMeetingModal: React.FC<{
   open: boolean;
   onClose: () => void;
   users: User[];
-  onSelect: (specialistId: string) => void;
-}> = ({ open, onClose, users, onSelect }) => {
+  meetings: Meeting[];
+  fetchWorkHours?: (specialistId: string) => Promise<any[]>;
+  onQuickBook?: (specialistId: string, date: string, start: string, end: string) => void;
+}> = ({ open, onClose, users, meetings, fetchWorkHours, onQuickBook }) => {
   const [selectedId, setSelectedId] = useState<string>('');
+  const [workHours, setWorkHours] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState<{year:number, month:number}|null>(null);
+  const [selectedDay, setSelectedDay] = useState<number|null>(null);
+
+  React.useEffect(() => {
+    if (selectedId && fetchWorkHours) {
+      setLoading(true);
+      fetchWorkHours(selectedId)
+        .then(list => {
+          setWorkHours(list);
+          if (list.length > 0) {
+            const first = new Date(list[0].start);
+            setCalendarMonth({ year: first.getFullYear(), month: first.getMonth() });
+          }
+        })
+        .finally(() => setLoading(false));
+    } else {
+      setWorkHours([]);
+      setCalendarMonth(null);
+    }
+    setSelectedDay(null);
+  }, [selectedId, fetchWorkHours]);
+
+  // Wyciągnij dni z wolnymi godzinami (czyli workHours, gdzie end>now)
+  let highlightedDays: number[] = [];
+  let daySlotsMap: Record<number, {start: string, end: string}[]> = {};
+  if (calendarMonth && workHours.length > 0) {
+    const now = new Date();
+    workHours.forEach(wh => {
+      const d = new Date(wh.start);
+      const end = new Date(wh.end);
+      if (d.getFullYear() === calendarMonth.year && d.getMonth() === calendarMonth.month && end > now) {
+        const day = d.getDate();
+        if (!daySlotsMap[day]) daySlotsMap[day] = [];
+        daySlotsMap[day].push({ start: wh.start, end: wh.end });
+      }
+    });
+    highlightedDays = Object.keys(daySlotsMap).map(Number);
+  }
+
+  // Pozwól użytkownikowi wybrać długość spotkania (30 lub 60 min)
+  const [slotDuration, setSlotDuration] = React.useState(30); // minuty
+  let slotsForSelectedDay: {start: string, end: string}[] = [];
+  if (selectedDay && daySlotsMap[selectedDay] && selectedId && calendarMonth) {
+    const intervals = daySlotsMap[selectedDay].map(({start, end}) => [new Date(start), new Date(end)]);
+    const year = calendarMonth.year;
+    const month = calendarMonth.month + 1;
+    const day = selectedDay;
+    const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const meetingsForDay = meetings.filter(m =>
+      m.specialistId === selectedId &&
+      m.date === dateStr
+    );
+    const busyRanges = meetingsForDay.map(m => {
+      const [sh, sm] = m.startTime.split(':').map(Number);
+      const [eh, em] = m.endTime.split(':').map(Number);
+      const start = new Date(year, month-1, day, sh, sm);
+      const end = new Date(year, month-1, day, eh, em);
+      return { start, end };
+    });
+    intervals.forEach(([start, end]) => {
+      let cur = new Date(start);
+      while (cur.getTime() + slotDuration*60*1000 <= end.getTime()) {
+        const slotStart = new Date(cur);
+        const slotEnd = new Date(cur.getTime() + slotDuration*60*1000);
+        const hasConflict = busyRanges.some(busy =>
+          (slotStart < busy.end && slotEnd > busy.start)
+        );
+        if (!hasConflict) {
+          slotsForSelectedDay.push({
+            start: slotStart.toISOString(),
+            end: slotEnd.toISOString()
+          });
+        }
+        cur = slotEnd;
+      }
+    });
+  }
+
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30">
@@ -19,8 +101,98 @@ const ScheduleMeetingModal: React.FC<{
             ))}
           </select>
         </div>
+        {selectedId && calendarMonth && (
+          <div className="w-full flex flex-col items-center mb-2">
+            {loading ? (
+              <div className="text-gray-500">Ładowanie dostępności...</div>
+            ) : (
+              <>
+                {!selectedDay && (
+                  <>
+                    <div className="mb-1 text-sm font-medium text-gray-700">Dni z wolnymi godzinami:</div>
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <button
+                        className="px-2 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                        onClick={() => {
+                          if (calendarMonth) {
+                            let y = calendarMonth.year;
+                            let m = calendarMonth.month - 1;
+                            if (m < 0) { m = 11; y -= 1; }
+                            setCalendarMonth({ year: y, month: m });
+                          }
+                        }}
+                        aria-label="Poprzedni miesiąc"
+                      >&#8592;</button>
+                      <span className="font-semibold text-sm">{calendarMonth ? `${String(calendarMonth.month+1).padStart(2,'0')}.${calendarMonth.year}` : ''}</span>
+                      <button
+                        className="px-2 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                        onClick={() => {
+                          if (calendarMonth) {
+                            let y = calendarMonth.year;
+                            let m = calendarMonth.month + 1;
+                            if (m > 11) { m = 0; y += 1; }
+                            setCalendarMonth({ year: y, month: m });
+                          }
+                        }}
+                        aria-label="Następny miesiąc"
+                      >&#8594;</button>
+                    </div>
+                    <MiniCalendar
+                      year={calendarMonth.year}
+                      month={calendarMonth.month}
+                      highlightedDays={highlightedDays}
+                      onSelectDay={day => {
+                        if (highlightedDays.includes(day)) {
+                          setSelectedDay(day);
+                        }
+                      }}
+                    />
+                  </>
+                )}
+                {selectedDay && (
+                  <>
+                    <div className="mb-2 text-center text-blue-700 text-[16px] font-bold">Dostępność {selectedDay}.{String(calendarMonth.month+1).padStart(2,'0')}.{calendarMonth.year}</div>
+                    <div className="mb-2 flex items-center justify-center gap-2">
+                      <span className="text-sm font-medium">Czas spotkania:</span>
+                      <select
+                        className="border rounded px-2 py-1 text-sm"
+                        value={slotDuration}
+                        onChange={e => setSlotDuration(Number(e.target.value))}
+                      >
+                        <option value={30}>30 min</option>
+                        <option value={60}>60 min</option>
+                      </select>
+                    </div>
+                    {slotsForSelectedDay.length === 0 ? (
+                      <div className="text-red-500">Brak wolnych slotów dla wybranej długości</div>
+                    ) : (
+                      <ul className="space-y-2 w-full max-h-64 overflow-y-auto">
+                        {slotsForSelectedDay.map((slot, idx) => {
+                          const dateStr = `${calendarMonth.year}-${String(calendarMonth.month+1).padStart(2,'0')}-${String(selectedDay).padStart(2,'0')}`;
+                          return (
+                            <li key={idx} className="border rounded px-3 py-2 flex flex-col items-center">
+                              <span className="text-xs text-gray-500">{new Date(slot.start).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} - {new Date(slot.end).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
+                              <button
+                                className="mt-2 px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700"
+                                onClick={() => {
+                                  if (onQuickBook && selectedId) {
+                                    onQuickBook(selectedId, dateStr, new Date(slot.start).toTimeString().slice(0,5), new Date(slot.end).toTimeString().slice(0,5));
+                                  }
+                                }}
+                              >Umów spotkanie</button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                    <button className="mt-4 px-4 py-1 rounded bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300" onClick={() => setSelectedDay(null)}>Wróć do kalendarza</button>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
         <div className="flex gap-4 mt-2">
-          <button className="px-4 py-1 rounded bg-blue-600 text-white font-semibold hover:bg-blue-700" disabled={!selectedId} onClick={() => selectedId && onSelect(selectedId)}>Dalej</button>
           <button className="px-4 py-1 rounded bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300" onClick={onClose}>Anuluj</button>
         </div>
       </div>
@@ -28,6 +200,7 @@ const ScheduleMeetingModal: React.FC<{
   );
 };
 import React, { useState, useEffect, useRef } from 'react';
+import { MiniCalendar } from '../Calendar/MiniCalendar';
 
 // Modal potwierdzający z podglądem nowych godzin
 const ConfirmModal: React.FC<{
@@ -105,86 +278,64 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
   // Stan modala umawiania spotkania
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [selectedSpecialistId, setSelectedSpecialistId] = useState<string>('');
-  const [specialistWorkHours, setSpecialistWorkHours] = useState<any[]>([]);
-  const [loadingWorkHours, setLoadingWorkHours] = useState(false);
+  // const [specialistWorkHours, setSpecialistWorkHours] = useState<any[]>([]);
+  // const [loadingWorkHours, setLoadingWorkHours] = useState(false);
   const [step, setStep] = useState<'select'|'slots'|'form'>('select');
   // Pobierz dostępność specjalisty po wyborze
   useEffect(() => {
     if (step === 'slots' && selectedSpecialistId) {
-      setLoadingWorkHours(true);
+  // setLoadingWorkHours(true);
       const token = currentUser?.token || localStorage.getItem('token') || undefined;
       if (!token) return;
       import('../../utils/api/employees').then(api => {
         api.fetchEmployeeWorkHours(Number(selectedSpecialistId), token)
-          .then(list => { setSpecialistWorkHours(list); setLoadingWorkHours(false); })
-          .catch(() => setLoadingWorkHours(false));
+          // .then(list => { setSpecialistWorkHours(list); setLoadingWorkHours(false); })
+          // .catch(() => setLoadingWorkHours(false));
       });
     }
   }, [step, selectedSpecialistId, currentUser]);
   // Renderuj modal z wyborem specjalisty i slotami
+  // Nowy flow: MeetingForm wyświetlany na wierzchu ScheduleMeetingModal, nie zamyka go
+  const [showMeetingFormModal, setShowMeetingFormModal] = useState(false);
   const renderScheduleMeetingModal = () => {
+    const meetingForm = (showMeetingFormModal && selectedSlot && selectedSpecialistId) ? (
+      <MeetingForm
+        isOpen={true}
+        onClose={() => { setShowMeetingFormModal(false); setSelectedSlot(undefined); setSelectedSpecialistId(''); }}
+        users={users}
+        rooms={rooms}
+        meetings={meetings}
+        patients={patients}
+        currentUser={currentUser}
+        onSubmit={onMeetingCreate}
+        selectedDate={selectedSlot.date}
+        selectedTime={selectedSlot.startTime}
+        selectedEndTime={selectedSlot.endTime}
+        selectedSpecialistId={selectedSpecialistId}
+      />
+    ) : null;
+    if (showMeetingFormModal) return meetingForm;
     if (!showScheduleModal) return null;
-    if (step === 'select') {
-      return <ScheduleMeetingModal open={true} onClose={() => { setShowScheduleModal(false); setStep('select'); setSelectedSpecialistId(''); }} users={users} onSelect={id => { setSelectedSpecialistId(id); setStep('slots'); }} />;
-    }
-    if (step === 'slots') {
-      // Filtrowanie tylko przyszłych terminów
-      const nowTs = Date.now();
-      const futureWorkHours = specialistWorkHours.filter(wh => new Date(wh.start).getTime() > nowTs);
-      return (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-xl shadow-xl p-6 min-w-[320px] max-w-md flex flex-col items-center">
-            <div className="mb-4 text-center text-gray-800 text-lg font-semibold">Dostępność specjalisty</div>
-            {loadingWorkHours ? <div className="text-gray-500">Ładowanie dostępności...</div> : (
-              <div className="w-full mb-4 max-h-80 overflow-y-auto styled-scrollbar">
-                {futureWorkHours.length === 0 ? <div className="text-red-500">Brak dostępnych terminów</div> : (
-                  <ul className="space-y-2">
-                    {futureWorkHours.map((wh, idx) => (
-                      <li key={idx} className="border rounded px-3 py-2 flex flex-col">
-                        <span><b>{new Date(wh.start).toLocaleString('pl-PL')}</b> - {new Date(wh.end).toLocaleTimeString('pl-PL')}</span>
-                        <span className="text-xs text-gray-500">Długość: {Math.round((new Date(wh.end).getTime() - new Date(wh.start).getTime())/60000)} min</span>
-                        <button className="mt-2 px-3 py-1 rounded bg-blue-600 text-white text-xs" onClick={() => {
-                          setSelectedSlot({
-                            date: new Date(wh.start).toISOString().slice(0,10),
-                            startTime: new Date(wh.start).toTimeString().slice(0,5),
-                            endTime: new Date(wh.end).toTimeString().slice(0,5)
-                          });
-                          setStep('form');
-                        }}>Wybierz ten termin</button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-            <div className="flex gap-4 mt-2">
-              <button className="px-4 py-1 rounded bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300" onClick={() => { setStep('select'); setSelectedSpecialistId(''); }}>Wstecz</button>
-              <button className="px-4 py-1 rounded bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300" onClick={() => { setShowScheduleModal(false); setStep('select'); setSelectedSpecialistId(''); }}>Anuluj</button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-    if (step === 'form') {
-      // Przekazanie wybranego slotu do MeetingForm
-      return (
-        <MeetingForm
-          isOpen={true}
-          onClose={() => { setShowScheduleModal(false); setStep('select'); setSelectedSpecialistId(''); setSelectedSlot(undefined); }}
-          onSubmit={onMeetingCreate}
-          users={users}
-          rooms={rooms}
-          meetings={meetings}
-          selectedDate={selectedSlot?.date || new Date().toISOString().slice(0,10)}
-          selectedTime={selectedSlot?.startTime || ''}
-          selectedEndTime={selectedSlot?.endTime || ''}
-          currentUser={currentUser}
-          patients={patients}
-          initialRoomId={undefined}
-        />
-      );
-    }
-    return null;
+    return (
+      <ScheduleMeetingModal 
+        open={true}
+        onClose={() => { setShowScheduleModal(false); setStep('select'); setSelectedSpecialistId(''); setSelectedSlot(undefined); setShowMeetingFormModal(false); }} 
+        users={users}
+        meetings={meetings}
+        fetchWorkHours={async (specialistId: string) => {
+          // Użyj tego samego API co w głównym komponencie
+          const api = await import('../../utils/api/employees');
+          const token = currentUser?.token || '';
+          return api.fetchEmployeeWorkHours(Number(specialistId), token);
+        }}
+        onQuickBook={(specialistId, date, start, end) => {
+          setSelectedSpecialistId(specialistId);
+          setSelectedSlot({ date, startTime: start, endTime: end });
+          setShowMeetingFormModal(true);
+          setShowScheduleModal(false);
+        }}
+      />
+    );
   };
   // Multi-select employee filter
   // Pokaż wszystkich użytkowników (admin, contact, employee) w filtrze
@@ -774,144 +925,196 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
 
   // Day multi-room view
   const renderDayViewMultiRoom = () => {
+    // Ujednolicenie z renderWeekView: identyczne animacje, ghosty, poświaty, style
     const HEADER_OFFSET = 32;
     const dateStr = formatDateForComparison(currentDate);
-  const dayMeetings = displayMeetings.filter(m=>m.date===dateStr);
+    const dayMeetings = displayMeetings.filter(m=>m.date===dateStr);
     const halfHourSlots = timeSlots;
-    const slotHeight = dynamicSlotHeight; // dynamic
+    const slotHeight = dynamicSlotHeight;
     const slotGap = SLOT_GAP;
     const formatHourLabels = halfHourSlots.filter(t=>t.endsWith(':00'));
     const timeToIdx = (t:string)=>halfHourSlots.indexOf(t);
     const dayColumnTotalHeight = HEADER_OFFSET + (halfHourSlots.length*slotHeight + (halfHourSlots.length-1)*slotGap);
     return (
       <div
-        className={`bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full overflow-hidden select-none`}
+        className={`bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full select-none ${(isSelecting||resizingMeetingId||movingMeetingId)?'':''}`}
         style={{ userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}
         onMouseLeave={cancelSelectionIfActive}
       >
         <div ref={scrollAreaRef} className="flex-1 min-h-0 overflow-y-auto styled-scrollbar" style={{scrollbarGutter:'stable'}}>
           <div className="grid" style={{gridTemplateColumns:`${TIME_COL_WIDTH}px repeat(${rooms.length},1fr)`}}>
+            {/* Time labels column */}
             <div className="relative border-r border-gray-200 bg-gray-50" style={{height:dayColumnTotalHeight}}>
               <div className="sticky top-0 z-30 h-8 bg-white/80 backdrop-blur-sm border-b border-gray-200 flex items-center justify-center text-[12px] font-medium text-gray-500 whitespace-nowrap px-1">Czas</div>
-              {formatHourLabels.map((h,i)=>(<div key={h} className="flex items-start justify-center text-[12px] font-medium text-gray-600 whitespace-nowrap px-1" style={{position:'absolute', top:HEADER_OFFSET + i*(slotHeight*2+slotGap*2), height:slotHeight*2+slotGap, left:0,right:0,paddingTop:4}}>{h}</div>))}
+              {formatHourLabels.map((h,i)=>(
+                <div key={h} className="flex items-start justify-center text-[12px] font-medium text-gray-600 whitespace-nowrap px-1" style={{position:'absolute', top:HEADER_OFFSET + i*(slotHeight*2+slotGap*2), height:slotHeight*2+slotGap, left:0,right:0,paddingTop:4}}>{h}</div>
+              ))}
+              <div style={{height:dayColumnTotalHeight}} />
             </div>
-            {rooms.map(room=>{
+            {rooms.map((room) => {
               const roomDayMeetings = dayMeetings.filter(m=>m.roomId===room.id);
               const roomHeaderStyle = (()=>{ const rs = getRoomStyle(room); return { backgroundColor: rs.backgroundColor, color: rs.color, borderBottom: `1px solid ${rs.borderColor}`}; })();
-              const meetingBlocks = roomDayMeetings.flatMap(m=>{
-                const isResizing = resizingMeetingId===m.id;
+              // layout identyczny jak w tygodniu (1 lane per room)
+              const layout = roomDayMeetings.map(m => ({
+                m,
+                startIdx: timeToIdx(m.startTime),
+                endIdx: endExclusiveIdx(m.endTime),
+                lane: 0,
+                lanes: 1
+              })).filter(i => i.startIdx !== -1 && i.endIdx !== -1);
+              const laneMap: Record<string,{lane:number; lanes:number; startIdx:number; endIdx:number}> = {};
+              layout.forEach(it=>{ laneMap[it.m.id] = { lane: (it as any).lane, lanes: (it as any).lanes, startIdx: (it as any).startIdx, endIdx: (it as any).endIdx }; });
+
+              const meetingBlocks = layout.flatMap(item => {
+                const { m } = item as any;
+                const info = laneMap[m.id];
                 const isMoving = movingMeetingId===m.id;
-                const startIdx = timeToIdx(m.startTime);
-                const endIdxExclusive = endExclusiveIdx(m.endTime);
-                if(startIdx===-1||endIdxExclusive===-1) return [];
-                const slots = endIdxExclusive - startIdx;
+                const isResizing = resizingMeetingId===m.id;
+                if(isMoving || isResizing) return [];
+                const slots = info.endIdx - info.startIdx;
                 const isShort = slots===1;
-                const top = HEADER_OFFSET + startIdx*(slotHeight+slotGap);
+                const top = HEADER_OFFSET + info.startIdx*(slotHeight+slotGap);
                 const height = slots*slotHeight + (slots-1)*slotGap;
+                const widthPct = 100/info.lanes;
+                const leftPct = info.lane*widthPct;
                 const specialist = users.find(u=>u.id===m.specialistId);
-                const specName = specialist?specialist.name:'Specjalista';
+                const specName = specialist? specialist.name : 'Specjalista';
                 const timeRange = `${m.startTime}-${m.endTime}`;
-                const content = (
-                  <div className={`pointer-events-none select-none flex ${isShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
-                    <div className={`${isShort?'text-[12px]':'text-[11px] mb-2'} font-semibold opacity-80`}>{timeRange}</div>
-                    <div className="text-[12px] font-semibold uppercase tracking-wide truncate max-w-full">{specName}</div>
-                  </div>
-                );
+                const enlarged = slots>1 || info.lanes>1;
+                const nameFontClass = enlarged ? (isShort ? 'text-[12px]' : 'text-[12px]') : 'text-[10px]';
+                const paddingClass = enlarged ? 'px-1.5 py-1' : 'px-1.5';
+                const marginClass = enlarged ? 'm-0.5' : '';
+                const isRightmost = info.lane === info.lanes - 1;
+                // Tooltip identyczny jak w tygodniu
+                let patientName = '';
+                if (m.patientId) {
+                  const patient = patients.find(p => p.id === m.patientId);
+                  if (patient) {
+                    patientName = `${patient.name} ${patient.surname}`;
+                  }
+                }
+                let patientsLabel = '';
+                if (m.patientIds && m.patientIds.length) {
+                  const names = m.patientIds.map((pid: string) => {
+                    const p = patients.find(pp => String(pp.id) === String(pid));
+                    return p ? `${p.name} ${p.surname}` : String(pid);
+                  }).filter(Boolean);
+                  patientsLabel = names.join(', ');
+                } else if (m.patientNamesList && m.patientNamesList.length) {
+                  patientsLabel = m.patientNamesList.join(', ');
+                } else if (patientName) {
+                  patientsLabel = patientName;
+                }
+                const tooltipText = `${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}${patientsLabel ? `\nPacjent: ${patientsLabel}` : ''}`;
                 // Color logic: highlight if selected, else gray
                 const highlight = isHighlightMeeting(m);
                 const colorStyle = highlight
                   ? getRoomStyle(room)
                   : { backgroundColor: '#f3f4f6', borderColor: '#d1d5db', color: '#9ca3af', filter: 'grayscale(0.7) brightness(1.08)' };
-                const enlarged = slots>1; // w widoku dnia nie ma lanes, więc tylko slots>1
-                const paddingClass = enlarged ? 'px-1.5 py-1' : 'px-1.5';
-                const marginClass = enlarged ? 'm-0.5' : '';
-                const originalBlock = (
+                return (
                   <div key={m.id+"_orig"}
-                    onMouseDown={(e)=>{ if(e.button!==0) return; if(resizingMeetingId) return; setPointerDownMeeting({ id:m.id, y:e.clientY, t:Date.now(), dateStr, roomId: room.id }); }}
-                    onMouseEnter={(e)=> scheduleTooltip(`${specName}\u00A0\u00A0${m.startTime} - ${m.endTime}`, e.clientX, e.clientY+14)}
+                    onMouseDown={(e)=>{ if(e.button!==0) return; if(resizingMeetingId) return; setPointerDownMeeting({ id:m.id, y:e.clientY, t:Date.now(), dateStr, roomId:m.roomId }); }}
+                    onMouseEnter={(e)=> scheduleTooltip(tooltipText, e.clientX, e.clientY+14)}
                     onMouseMove={(e)=> updateTooltipPosition(e.clientX, e.clientY+14)}
                     onMouseLeave={cancelTooltip}
-                    className={`group absolute left-1 right-1 rounded-md ${paddingClass} ${marginClass} text-[11px] shadow-sm cursor-pointer overflow-visible hover:brightness-95 transition-opacity flex items-center justify-center border ${(isResizing)?'ring-2 ring-blue-400':''} ${conflictFlashId===m.id? '!ring-4 !ring-red-500 !border-red-500 animate-pulse':''} ${m.status==='cancelled'?'line-through opacity-70':''}`}
-                    style={{top,height, opacity:isResizing||isMoving?0.25:1, ...colorStyle}}>
-                    <div onMouseDown={(e)=>startResize(e,m,'end')} className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize flex items-end justify-center group/handleEnd">
-                      <span className="w-8 h-0.5 rounded bg-black/20 mb-[3px] group-hover/handleEnd:bg-black/40 transition" />
+                    className={`group absolute rounded-md ${paddingClass} ${marginClass} text-[11px] shadow-sm cursor-pointer overflow-visible hover:brightness-95 transition-opacity flex items-center justify-center border ${(conflictFlashId===m.id)?'!ring-4 !ring-red-500 !border-red-500 animate-pulse':''} ${m.status==='cancelled'?'line-through opacity-70':''}`}
+                    style={{
+                      top,
+                      height,
+                      left: `${leftPct}%`,
+                      width: `${widthPct}%`,
+                      marginRight: isRightmost ? '18px' : undefined,
+                      ...colorStyle
+                    }}
+                  >
+                    <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize flex items-end justify-center" onMouseDown={(e)=>startResize(e,m,'end')}>
+                      <span className="w-8 h-0.5 rounded bg-black/20 mb-[3px] group-hover:bg-black/40 transition" />
                     </div>
-                    {content}
+                    <div className={`pointer-events-none select-none flex ${isShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
+                      <div className={`${isShort?'text-[12px]':'text-[11px] mb-1'} font-semibold drop-shadow-sm`}>{timeRange}</div>
+                      <div className={`${nameFontClass} font-medium truncate max-w-full drop-shadow-sm`}>{specName}</div>
+                    </div>
                   </div>
                 );
-                const blocks = [originalBlock];
-                if(isMoving && moveMeta && moveMeta.startIdx===startIdx && moveMeta.endIdx===endIdxExclusive){
-                  const ghostStartIdx = moveMeta.startIdx + moveGhostSlotDelta;
-                  const ghostTop = HEADER_OFFSET + ghostStartIdx*(slotHeight+slotGap);
-                  const ghostSlots = slots;
-                  const ghostEndIdx = ghostStartIdx + ghostSlots;
-                  const ghostIsShort = ghostSlots===1;
-                  const ghostTimeRange = `${timeSlots[ghostStartIdx]}-${getEndLabel(ghostEndIdx)}`;
-                  const ghostContent = (
-                    <div className={`pointer-events-none select-none flex ${ghostIsShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
-                      <div className={`${ghostIsShort?'text-[12px]':'text-[11px] mb-2'} font-semibold opacity-80`}>{ghostTimeRange}</div>
-                      <div className="text-[12px] font-semibold uppercase tracking-wide truncate max-w-full">{specName}</div>
-                    </div>
-                  );
-                  const ghostHeight = ghostSlots*slotHeight + (ghostSlots-1)*slotGap;
-                  const ghostEnlarged = ghostSlots>1;
-                  const ghostPaddingClass = ghostEnlarged ? 'px-1.5 py-1' : 'px-1.5';
-                  const ghostMarginClass = ghostEnlarged ? 'm-0.5' : '';
-                  // Color logic for ghost: match highlight logic
-                  const highlight = isHighlightMeeting(m);
-                  const colorStyle = highlight
-                    ? getRoomStyle(room)
-                    : { backgroundColor: '#f3f4f6', borderColor: '#d1d5db', color: '#9ca3af', filter: 'grayscale(0.7) brightness(1.08)' };
-                  const moveGhost = (
-                    <div key={m.id+"_moveGhost"} className={`absolute left-1 right-1 rounded-md ${ghostPaddingClass} ${ghostMarginClass} text-[11px] shadow-lg cursor-grabbing overflow-hidden flex items-center justify-center border-2 !border-blue-400 ring-2 ring-blue-400`} style={{top:ghostTop, height:ghostHeight, transform:`translateY(${movePixelOffset}px)`, transition:'none', zIndex:65, ...colorStyle}}>
-                      {ghostContent}
-                    </div>
-                  );
-                  blocks.push(moveGhost);
-                }
-                if(isResizing && resizeMeta && resizeEdge && resizeMeta.startIdx===startIdx && resizeMeta.endIdx===endIdxExclusive){
-                  let ghostStartIdx = resizeMeta.startIdx;
-                  let ghostEndIdx = resizeMeta.endIdx;
-                  if(resizeEdge==='start') ghostStartIdx = resizeMeta.startIdx + resizeGhostSlotDelta; else ghostEndIdx = resizeMeta.endIdx + resizeGhostSlotDelta;
-                  const ghostSlots = ghostEndIdx - ghostStartIdx;
-                  const ghostIsShort = ghostSlots===1;
-                  const ghostTop = HEADER_OFFSET + (resizeEdge==='start'? ghostStartIdx : resizeMeta.startIdx)*(slotHeight+slotGap);
-                  const ghostHeight = ghostSlots*slotHeight + (ghostSlots-1)*slotGap + (resizeEdge==='end'? resizePixelOffset:0);
-                  const transform = resizeEdge==='start'? `translateY(${resizePixelOffset}px)`:'none';
-                  const ghostTimeRange = `${timeSlots[ghostStartIdx]}-${getEndLabel(ghostEndIdx)}`;
-                  const ghostContent = (
-                    <div className={`pointer-events-none select-none flex ${ghostIsShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
-                      <div className={`${ghostIsShort?'text-[12px]':'text-[11px] mb-2'} font-semibold opacity-80`}>{ghostTimeRange}</div>
-                      <div className="text-[12px] font-semibold uppercase tracking-wide truncate max-w-full">{specName}</div>
-                    </div>
-                  );
-                  const resizeEnlarged = ghostSlots>1;
-                  const resizePaddingClass = resizeEnlarged ? 'px-1.5 py-1' : 'px-1.5';
-                  const resizeMarginClass = resizeEnlarged ? 'm-0.5' : '';
-                  // Color logic for ghost: match highlight logic
-                  const highlight = isHighlightMeeting(m);
-                  const colorStyle = highlight
-                    ? getRoomStyle(room)
-                    : { backgroundColor: '#f3f4f6', borderColor: '#d1d5db', color: '#9ca3af', filter: 'grayscale(0.7) brightness(1.08)' };
-                  const ghost = (
-                    <div key={m.id+"_resizeGhost"} className={`absolute left-1 right-1 rounded-md ${resizePaddingClass} ${resizeMarginClass} text-[11px] shadow-lg cursor-ns-resize overflow-hidden flex items-center justify-center border`} style={{top:ghostTop, height:ghostHeight, transform, zIndex:70, ...colorStyle}}>
-                      {ghostContent}
-                    </div>
-                  );
-                  blocks.push(ghost);
-                }
-                return blocks;
               }).filter(Boolean);
 
-              // Selection ghost for new reservation (same visual style as move ghost)
+              // Ghosty przesuwania i resize identyczne jak w tygodniu
+              let interactiveGhost: React.ReactNode = null;
+              if(movingMeetingId && moveMeta && roomDayMeetings.some(m=>m.id===movingMeetingId)){
+                const info = laneMap[movingMeetingId];
+                if(info){
+                  const durationSlots = moveMeta.endIdx - moveMeta.startIdx;
+                  const ghostStartIdx = moveMeta.startIdx + moveGhostSlotDelta;
+                  const top = HEADER_OFFSET + ghostStartIdx*(slotHeight+slotGap);
+                  const height = durationSlots*slotHeight + (durationSlots-1)*slotGap;
+                  const widthPct = 100/info.lanes; const leftPct = info.lane*widthPct;
+                  const m = meetings.find(mm=>mm.id===movingMeetingId)!;
+                  const ghostStart = timeSlots[ghostStartIdx];
+                  const ghostEnd = getEndLabel(ghostStartIdx+durationSlots);
+                  const specialist = users.find(u=>u.id===m.specialistId); const specName = specialist?specialist.name:'Specjalista';
+                  const timeRange = `${ghostStart}-${ghostEnd}`;
+                  const isShort = durationSlots===1;
+                  const enlarged = durationSlots>1 || info.lanes>1;
+                  const paddingClass = enlarged ? 'px-1.5 py-1' : 'px-1.5';
+                  const marginClass = enlarged ? 'm-0.5' : '';
+                  interactiveGhost = (
+                    <div
+                      key={m.id+"_moveGhostLive"}
+                      className={`absolute rounded-md ${paddingClass} ${marginClass} text-[12px] font-bold cursor-grabbing overflow-hidden flex items-center justify-center border-4 border-blue-500 ring-4 ring-blue-300/60 bg-blue-200/90 text-blue-900 shadow-2xl animate-pulse`}
+                      style={{
+                        top,
+                        height,
+                        left: `${leftPct}%`,
+                        width: `${widthPct}%`,
+                        transform: `translateY(${movePixelOffset}px)`,
+                        transition: 'none',
+                        zIndex: 120,
+                      }}
+                    >
+                      <div className={`pointer-events-none select-none flex ${isShort ? 'flex-row gap-2 px-1' : 'flex-col'} items-center justify-center leading-tight w-full text-center`}>
+                        <div className={`${isShort ? 'text-[14px]' : 'text-[13px] mb-1'} font-bold`}>{timeRange}</div>
+                        <div className="text-[11px] font-semibold truncate max-w-full">{specName}</div>
+                      </div>
+                    </div>
+                  );
+                }
+              } else if(resizingMeetingId && resizeMeta && resizeEdge && roomDayMeetings.some(m=>m.id===resizingMeetingId)){
+                const info = laneMap[resizingMeetingId];
+                if(info){
+                  let ghostStartIdx = resizeMeta.startIdx; let ghostEndIdx = resizeMeta.endIdx;
+                  if(resizeEdge==='start') ghostStartIdx = resizeMeta.startIdx + resizeGhostSlotDelta; else ghostEndIdx = resizeMeta.endIdx + resizeGhostSlotDelta;
+                  const top = HEADER_OFFSET + (resizeEdge==='start'? ghostStartIdx : resizeMeta.startIdx)*(slotHeight+slotGap);
+                  const slots = ghostEndIdx - ghostStartIdx;
+                  const height = slots*slotHeight + (slots-1)*slotGap + (resizeEdge==='end'? resizePixelOffset:0);
+                  const widthPct = 100/info.lanes; const leftPct = info.lane*widthPct;
+                  const m = meetings.find(mm=>mm.id===resizingMeetingId)!;
+                  const ghostStart = timeSlots[ghostStartIdx]; const ghostEnd = getEndLabel(ghostEndIdx);
+                  const specialist = users.find(u=>u.id===m.specialistId); const specName = specialist?specialist.name:'Specjalista';
+                  const timeRange = `${ghostStart}-${ghostEnd}`; const isShort = slots===1;
+                  const transform = resizeEdge==='start'? `translateY(${resizePixelOffset}px)`:'none';
+                  const roomStyle = getRoomStyle(room);
+                  const enlarged = slots>1 || info.lanes>1;
+                  const paddingClass = enlarged ? 'px-1.5 py-1' : 'px-1.5';
+                  const marginClass = enlarged ? 'm-0.5' : '';
+                  interactiveGhost = (
+                    <div key={m.id+"_resizeGhostLive"} className={`absolute rounded-md ${paddingClass} ${marginClass} text-[11px] shadow-lg cursor-ns-resize overflow-hidden flex items-center justify-center border`} style={{top, height, left:`${leftPct}%`, width:`${widthPct}%`, transform, zIndex:70, ...roomStyle}}>
+                      <div className={`pointer-events-none select-none flex ${isShort?'flex-row gap-2 px-1':'flex-col'} items-center justify-center leading-tight w-full text-center`}>
+                        <div className={`${isShort?'text-[12px]':'text-[11px] mb-1'} font-semibold opacity-80`}>{timeRange}</div>
+                        <div className="text-[10px] font-medium truncate max-w-full opacity-80">{specName}</div>
+                      </div>
+                    </div>
+                  );
+                }
+              }
+
+              // Selection ghost identyczny jak w tygodniu
               const selectionGhost = (()=>{
                 if(!(isSelecting && selectionStart && selectionCurrentTime && selectionStart.roomId===room.id)) return null;
                 const sIdx = timeToIdx(selectionStart.time);
                 const cIdx = timeToIdx(selectionCurrentTime);
                 if(sIdx===-1 || cIdx===-1) return null;
                 let from = Math.min(sIdx, cIdx);
-                let toExclusive = Math.max(sIdx, cIdx) + 1; // target exclusive end
-                // stop before first occupied slot inside range
+                let toExclusive = Math.max(sIdx, cIdx) + 1;
                 for(let i=from; i<toExclusive; i++){
                   const occupied = roomDayMeetings.some(m=>{ const ms=timeToIdx(m.startTime); const me=endExclusiveIdx(m.endTime); return i>=ms && i<me; });
                   if(occupied){ toExclusive = i; break; }
@@ -920,12 +1123,11 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                 const ghostSlots = toExclusive - from;
                 const top = HEADER_OFFSET + from*(slotHeight+slotGap);
                 const height = ghostSlots*slotHeight + (ghostSlots-1)*slotGap;
-                // compute end label safely (toExclusive may equal length)
                 let endLabel: string;
                 if(toExclusive >= timeSlots.length){
                   const last = timeSlots[timeSlots.length-1];
                   const [lh,lm]=last.split(':').map(Number);
-                  const total = lh*60+lm+30; // add 30min
+                  const total = lh*60+lm+30;
                   const eh = String(Math.floor(total/60)).padStart(2,'0');
                   const em = String(total%60).padStart(2,'0');
                   endLabel = `${eh}:${em}`;
@@ -944,9 +1146,10 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
               })();
 
               return (
-                <div key={room.id} className="relative border-r last:border-r-0 border-gray-200" style={{height:dayColumnTotalHeight}}>
+                <div key={room.id} className="relative border-r last:border-r-0 border-gray-200 pr-6" style={{height:dayColumnTotalHeight}}>
                   <div className="sticky top-0 z-30 h-8 flex items-center justify-center text-[14px] font-semibold tracking-wide rounded-md px-2 py-1" style={roomHeaderStyle}>{room.name}</div>
                   {halfHourSlots.map(slotTime=> {
+                    const idx = timeToIdx(slotTime); const top = HEADER_OFFSET + idx*(slotHeight+slotGap);
                     const inDragRange = isSelecting && selectionStart && selectionStart.roomId===room.id && selectionCurrentTime && isTimeInRange(slotTime, selectionStart.time, selectionCurrentTime);
                     const occupiedMeeting = roomDayMeetings.find(m=>{ let s=m.startTime; let e=m.endTime; const ms=timeToIdx(s); const me=endExclusiveIdx(e); return ms!==-1 && me!==-1 && timeToIdx(slotTime)>=ms && timeToIdx(slotTime)<me; });
                     const occupied = !!occupiedMeeting;
@@ -954,10 +1157,22 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                     return (
                       <div
                         key={slotTime}
-                        className={`absolute left-0 right-0 rounded-md border text-[11px] flex items-center justify-start px-1 cursor-pointer transition-colors
-                          ${isAvailable ? 'bg-gray-50 border-gray-200 hover:bg-blue-50 hover:border-blue-300' : 'bg-transparent border-transparent pointer-events-none'}
-                          ${inDragRange && isAvailable ? 'bg-blue-300 !border-blue-400 text-white' : ''}`}
-                        style={{top: HEADER_OFFSET + (timeToIdx(slotTime))*(slotHeight+slotGap), height:slotHeight, zIndex:0}}
+                        className={`absolute left-0 right-0 rounded-md border text-[11px] flex items-center px-1 transition-colors
+                          ${movingMeetingId && moveMeta && roomDayMeetings.some(m=>m.id===movingMeetingId) && (() => {
+                            const slotIdx = timeToIdx(slotTime);
+                            const m = meetings.find(m => m.id === movingMeetingId);
+                            if (m) {
+                              const startIdx = moveMeta.startIdx + moveGhostSlotDelta;
+                              const endIdx = startIdx + (moveMeta.endIdx - moveMeta.startIdx);
+                              if (slotIdx >= startIdx && slotIdx < endIdx) {
+                                return 'bg-blue-200 border-blue-400 text-blue-900 font-semibold';
+                              }
+                            }
+                            return occupied ? 'bg-gray-100 border-gray-300' : 'bg-gray-50 border-gray-200 hover:bg-blue-50 hover:border-blue-300 cursor-pointer';
+                          })()}
+                          ${!movingMeetingId || !roomDayMeetings.some(m=>m.id===movingMeetingId) ? (occupied ? 'bg-gray-100 border-gray-300' : 'bg-gray-50 border-gray-200 hover:bg-blue-50 hover:border-blue-300 cursor-pointer') : ''}
+                          ${inDragRange ? 'bg-blue-300 !border-blue-400 text-white' : ''}`}
+                        style={{top, height:slotHeight, zIndex:0}}
                         onMouseDownCapture={()=>{ if(isAvailable){ startDragSelection(dateStr, slotTime, room.id); } }}
                         onMouseEnter={()=>{ if(isAvailable){ updateDragSelection(dateStr, slotTime, room.id); } }}
                         onClick={()=>{ if(!isSelecting && isAvailable){ handleTimeSlotClick(dateStr, slotTime, undefined, room.id); } }}
@@ -968,8 +1183,10 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                   })}
                   {selectionGhost}
                   {meetingBlocks}
+                  {interactiveGhost}
                 </div>
-              ); })}
+              );
+            })}
           </div>
         </div>
       </div>

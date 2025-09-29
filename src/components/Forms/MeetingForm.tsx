@@ -24,6 +24,7 @@ interface MeetingFormProps {
   initialRoomId?: string;
   selectedEndTime?: string;
   patients?: Patient[];
+  selectedSpecialistId?: string;
 }
 
 interface MeetingFormState {
@@ -54,7 +55,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   editingMeeting,
   initialRoomId,
   selectedEndTime,
-  patients = []
+  patients = [],
+  selectedSpecialistId
 }) => {
   const isAdmin = currentUser.role === 'admin';
   const computeDefaultEnd = (start: string): string => {
@@ -83,7 +85,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   };
 
   const [formData, setFormData] = useState<MeetingFormState>({
-    specialistId: currentUser.role === 'employee' ? currentUser.id : '',
+    specialistId: (currentUser.role === 'employee' ? currentUser.id : (selectedSpecialistId || '')),
     patientName: '',
     guestName: '',
     roomId: initialRoomId || '',
@@ -91,7 +93,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     endTime: selectedEndTime || computeDefaultEnd(selectedTime),
     notes: '',
     status: 'present',
-    specialistIds: currentUser.role === 'employee' ? [currentUser.id] : [],
+    specialistIds: (currentUser.role === 'employee' ? [currentUser.id] : (selectedSpecialistId ? [selectedSpecialistId] : [])),
     patientIds: [],
     meetingName: ''
   });
@@ -287,7 +289,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       }));
     } else {
       setFormData({
-        specialistId: currentUser.role === 'employee' ? currentUser.id : '',
+        specialistId: (currentUser.role === 'employee' ? currentUser.id : (selectedSpecialistId || '')),
         patientName: '',
         guestName: '',
         roomId: initialRoomId || '',
@@ -295,7 +297,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
         endTime: selectedEndTime || computeDefaultEnd(selectedTime),
         notes: '',
         status: 'present',
-        specialistIds: currentUser.role === 'employee' ? [currentUser.id] : [],
+        specialistIds: (currentUser.role === 'employee' ? [currentUser.id] : (selectedSpecialistId ? [selectedSpecialistId] : [])),
         patientIds: [],
         meetingName: ''
       });
