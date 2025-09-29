@@ -50,6 +50,24 @@ const hexToRGBA = (hex: string, alpha = 0.12): string => {
   return `rgba(229, 231, 235, ${alpha})`;
 };
 
+// Simple HEX validators/normalizers for #RGB / #RRGGBB (case-insensitive)
+const isValidHex = (value?: string): boolean => {
+  if (!value) return false;
+  const v = value.trim();
+  return /^#?([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(v);
+};
+
+const normalizeHex = (value: string, fallback: string = '#000000'): string => {
+  const v = (value || '').trim();
+  if (!isValidHex(v)) return fallback;
+  let withHash = v.startsWith('#') ? v : `#${v}`;
+  if (withHash.length === 4) {
+    // Expand #RGB to #RRGGBB
+    withHash = `#${withHash[1]}${withHash[1]}${withHash[2]}${withHash[2]}${withHash[3]}${withHash[3]}`;
+  }
+  return withHash.toUpperCase();
+};
+
 interface RoomsManageProps {
   rooms: Room[];
   onRoomsChange: (rooms: Room[]) => void;
@@ -112,7 +130,7 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
   if (!token) { notify.error('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
     setCreateSaving(true);
     try {
-  await apiCreateRoom({ name: editing.name.trim(), hexColor: editing.hexColor || ROOM_COLOR_PALETTE[0] }, token);
+  await apiCreateRoom({ name: editing.name.trim(), hexColor: normalizeHex(editing.hexColor || ROOM_COLOR_PALETTE[0]) }, token);
       const data = await getRooms(token);
       setBackendRooms(data);
       // inform App to refresh global rooms so MeetingForm sees updates
@@ -163,7 +181,8 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
   const startEditBackendRoom = (r: RoomAPI) => {
     setBackendEditing(r);
     setBackendEditName(r.name);
-    setBackendEditColor(ROOM_COLOR_PALETTE.includes(r.hexColor) ? r.hexColor : ROOM_COLOR_PALETTE[0]);
+    // Preserve existing color even if it's not in the palette
+    setBackendEditColor(r.hexColor || ROOM_COLOR_PALETTE[0]);
     setBackendActionError(null);
     setShowBackendEdit(true);
   };
@@ -177,9 +196,14 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
     const token = localStorage.getItem('token') || undefined;
     if (!token) { setBackendActionError('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.'); return; }
     if (!backendEditName.trim()) { setBackendActionError('Nazwa nie może być pusta.'); return; }
+    if (!isValidHex(backendEditColor)) { setBackendActionError('Nieprawidłowy kolor HEX.'); return; }
     setBackendSaveLoading(true);
     try {
-      await apiUpdateRoom(backendEditing.id, { name: backendEditName.trim(), hexColor: backendEditColor.toUpperCase() }, token);
+      await apiUpdateRoom(
+        backendEditing.id,
+        { name: backendEditName.trim(), hexColor: normalizeHex(backendEditColor) },
+        token
+      );
       const data = await getRooms(token);
       setBackendRooms(data);
       setShowBackendEdit(false);
@@ -384,15 +408,38 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
                     );
                   })}
                 </div>
+                {/* Custom color picker */}
+                <div className="mt-3 grid grid-cols-[auto,1fr] items-center gap-3">
+                  <label className="text-xs font-medium text-gray-600">Własny kolor</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={normalizeHex(editing.hexColor || ROOM_COLOR_PALETTE[0])}
+                      onChange={(e)=>updateEditing({ hexColor: e.target.value })}
+                      className="h-8 w-10 p-0 border rounded cursor-pointer"
+                      title="Wybierz kolor"
+                    />
+                    <input
+                      type="text"
+                      value={editing.hexColor}
+                      onChange={(e)=>updateEditing({ hexColor: e.target.value })}
+                      placeholder="#RRGGBB lub #RGB"
+                      className={`w-40 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${isValidHex(editing.hexColor) ? '' : 'border-red-300'}`}
+                    />
+                  </div>
+                  {!isValidHex(editing.hexColor) && (
+                    <div className="col-span-2 text-xs text-red-600 mt-1">Nieprawidłowy HEX. Użyj #RRGGBB lub #RGB.</div>
+                  )}
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-3 text-xs text-gray-500">
-              <div className="w-5 h-5 rounded border" style={{ background: editing.hexColor || ROOM_COLOR_PALETTE[0] }} />
-              <span>{editing.hexColor || ROOM_COLOR_PALETTE[0]}</span>
+              <div className="w-5 h-5 rounded border" style={{ background: isValidHex(editing.hexColor) ? normalizeHex(editing.hexColor) : ROOM_COLOR_PALETTE[0] }} />
+              <span>{isValidHex(editing.hexColor) ? normalizeHex(editing.hexColor) : (editing.hexColor || ROOM_COLOR_PALETTE[0])}</span>
             </div>
             <div className="flex justify-end gap-3">
               <button onClick={cancel} className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700">Anuluj</button>
-              <button onClick={saveRoom} disabled={createSaving || !editing.name.trim()} className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg">
+              <button onClick={saveRoom} disabled={createSaving || !editing.name.trim() || !isValidHex(editing.hexColor)} className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg">
                 {createSaving ? (<><Loader2 className="w-4 h-4 animate-spin" /><span>Zapisuję...</span></>) : (editing.id ? 'Zapisz' : 'Utwórz')}
               </button>
             </div>
@@ -433,16 +480,39 @@ const RoomsManage: React.FC<RoomsManageProps> = ({ rooms, onRoomsChange, userRol
                     );
                   })}
                 </div>
+                {/* Custom color picker */}
+                <div className="mt-3 grid grid-cols-[auto,1fr] items-center gap-3">
+                  <label className="text-xs font-medium text-gray-600">Własny kolor</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={normalizeHex(backendEditColor || ROOM_COLOR_PALETTE[0])}
+                      onChange={(e)=>setBackendEditColor(e.target.value)}
+                      className="h-8 w-10 p-0 border rounded cursor-pointer"
+                      title="Wybierz kolor"
+                    />
+                    <input
+                      type="text"
+                      value={backendEditColor}
+                      onChange={(e)=>setBackendEditColor(e.target.value)}
+                      placeholder="#RRGGBB lub #RGB"
+                      className={`w-40 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${isValidHex(backendEditColor) ? '' : 'border-red-300'}`}
+                    />
+                  </div>
+                  {!isValidHex(backendEditColor) && (
+                    <div className="col-span-2 text-xs text-red-600 mt-1">Nieprawidłowy HEX. Użyj #RRGGBB lub #RGB.</div>
+                  )}
+                </div>
               </div>
             </div>
             {backendActionError && <p className="text-sm text-red-600">{backendActionError}</p>}
             <div className="flex items-center gap-3 text-xs text-gray-500">
-              <div className="w-5 h-5 rounded border" style={{ background: backendEditColor }} />
-              <span>{backendEditColor}</span>
+              <div className="w-5 h-5 rounded border" style={{ background: isValidHex(backendEditColor) ? normalizeHex(backendEditColor) : backendEditColor }} />
+              <span>{isValidHex(backendEditColor) ? normalizeHex(backendEditColor) : backendEditColor}</span>
             </div>
             <div className="flex justify-end gap-3">
               <button onClick={cancelBackendEdit} className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700">Anuluj</button>
-              <button onClick={saveBackendEdit} disabled={backendSaveLoading || !backendEditName.trim()} className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg">
+              <button onClick={saveBackendEdit} disabled={backendSaveLoading || !backendEditName.trim() || !isValidHex(backendEditColor)} className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg">
                 {backendSaveLoading ? (<><Loader2 className="w-4 h-4 animate-spin" /><span>Zapisywanie...</span></>) : 'Zapisz'}
               </button>
             </div>
