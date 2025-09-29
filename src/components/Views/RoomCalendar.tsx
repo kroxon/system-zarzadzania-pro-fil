@@ -59,7 +59,7 @@ const ScheduleMeetingModal: React.FC<{
     const day = selectedDay;
     const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
     const meetingsForDay = meetings.filter(m =>
-      m.specialistId === selectedId &&
+      (m.specialistId === selectedId || (m.specialistIds && m.specialistIds.includes(selectedId))) &&
       m.date === dateStr
     );
     const busyRanges = meetingsForDay.map(m => {
@@ -469,6 +469,10 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
   const displayMeetings = meetings;
   const isHighlightMeeting = (meeting: Meeting) => {
     if (!selectedEmployees.length) return true; // all colored if no filter
+    // Podświetl jeśli którykolwiek z wybranych specjalistów jest w tym spotkaniu
+    if (meeting.specialistIds && meeting.specialistIds.length > 0) {
+      return meeting.specialistIds.some(id => selectedEmployees.includes(id));
+    }
     return selectedEmployees.includes(meeting.specialistId);
   };
   const getWeekDays = (date: Date) => { const week: Date[] = []; const startOfWeek = new Date(date); startOfWeek.setDate(date.getDate() - date.getDay() + 1); for(let i=0;i<7;i++){ const d = new Date(startOfWeek); d.setDate(startOfWeek.getDate()+i); if(!showWeekends){ const dow = d.getDay(); if(dow===0||dow===6) continue; } week.push(d);} return week; };
@@ -723,8 +727,24 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                 const height = slots*slotHeight + (slots-1)*slotGap;
                 const widthPct = 100/info.lanes;
                 const leftPct = info.lane*widthPct;
-                const specialist = users.find(u=>u.id===m.specialistId);
-                const specName = specialist? specialist.name : 'Specjalista';
+                // const specialist = users.find(u=>u.id===m.specialistId); // niepotrzebne po zmianie logiki
+                let specName = '';
+                if (m.specialistIds && m.specialistIds.length > 0) {
+                  const names = m.specialistIds.map((sid: string) => {
+                    const s = users.find(u => String(u.id) === String(sid));
+                    return s ? `${s.name} ${s.surname}` : String(sid);
+                  }).filter(Boolean);
+                  if (m.specialistIds.length > 1) {
+                    specName = `(${m.specialistIds.length}) ` + names.join(', ');
+                  } else {
+                    specName = names.join(', ');
+                  }
+                } else if (m.specialistId) {
+                  const specialist = users.find(u=>u.id===m.specialistId);
+                  specName = specialist ? `${specialist.name} ${specialist.surname}` : 'Specjalista';
+                } else {
+                  specName = m.name || '';
+                }
                 const timeRange = `${m.startTime}-${m.endTime}`;
                 const room = rooms.find(r=>r.id===m.roomId);
                 const enlarged = slots>1 || info.lanes>1;
@@ -977,8 +997,18 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
                 const height = slots*slotHeight + (slots-1)*slotGap;
                 const widthPct = 100/info.lanes;
                 const leftPct = info.lane*widthPct;
-                const specialist = users.find(u=>u.id===m.specialistId);
-                const specName = specialist? specialist.name : 'Specjalista';
+                // const specialist = users.find(u=>u.id===m.specialistId); // niepotrzebne po zmianie logiki
+                let specName = '';
+                if (m.specialistIds && m.specialistIds.length > 0) {
+                  const names = m.specialistIds.map((sid: string) => {
+                    const s = users.find(u => String(u.id) === String(sid));
+                    return s ? `${s.name} ${s.surname}` : String(sid);
+                  }).filter(Boolean);
+                  specName = names.join(', ');
+                } else {
+                  const specialist = users.find(u=>u.id===m.specialistId);
+                  specName = specialist ? `${specialist.name} ${specialist.surname}` : 'Specjalista';
+                }
                 const timeRange = `${m.startTime}-${m.endTime}`;
                 const enlarged = slots>1 || info.lanes>1;
                 const nameFontClass = enlarged ? (isShort ? 'text-[12px]' : 'text-[12px]') : 'text-[10px]';
