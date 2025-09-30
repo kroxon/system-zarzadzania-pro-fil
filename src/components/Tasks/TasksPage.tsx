@@ -1,4 +1,5 @@
 import { MoreHorizontal, Plus, CheckCircle2, Circle, ArrowUpDown, ChevronUp, ChevronDown, X } from 'lucide-react';
+import Portal from '../common/Portal';
 import { notify } from '../common/Notification';
 import { useState, useEffect } from 'react';
 import { EmployeeTask } from '../../types/index'
@@ -374,8 +375,9 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
 
       {/* Modal dodawania nowego zadania */}
   {userRole==='admin' && showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
+        <Portal>
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-100 p-6 w-full max-w-md">
             <form onSubmit={e => { e.preventDefault(); handleSaveCreateTask(); }}>
               <h3 className="text-lg font-semibold mb-2">Dodaj nowe zadanie</h3>
               <div className="mb-4">
@@ -409,11 +411,12 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Modal edycji zadania */}
   {userRole==='admin' && editingTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
             <div className="mb-4">
               <h3 className="text-lg font-semibold">Edytuj zadanie</h3>
@@ -439,9 +442,10 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
 
                     {/* Delete confirmation dialog for tasks */}
                     {userRole==='admin' && showDeleteDialog && (
-                      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                        <div className="absolute inset-0 bg-black/40" onClick={() => !isDeleting && setShowDeleteDialog(false)} />
-                        <div className="relative w-full max-w-md bg-white rounded-xl shadow-xl border border-red-100">
+                      <Portal>
+                      <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6">
+                        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => !isDeleting && setShowDeleteDialog(false)} />
+                        <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-red-100">
                           <div className="flex items-center justify-between px-5 py-4 border-b border-red-100">
                             <h3 className="text-lg font-semibold text-gray-900">Potwierdź usunięcie</h3>
                             <button onClick={() => !isDeleting && setShowDeleteDialog(false)} className="p-2 rounded hover:bg-gray-100"><X className="w-5 h-5 text-gray-500"/></button>
@@ -458,6 +462,7 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
                           </div>
                         </div>
                       </div>
+                      </Portal>
                     )}
                   }}
                 >
