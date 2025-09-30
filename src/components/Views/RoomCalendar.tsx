@@ -1,4 +1,5 @@
 // Modal do umawiania spotkania: wybór specjalisty, podgląd dostępnych terminów, przejście do MeetingForm
+import Portal from '../common/Portal';
 const ScheduleMeetingModal: React.FC<{
   open: boolean;
   onClose: () => void;
@@ -90,7 +91,8 @@ const ScheduleMeetingModal: React.FC<{
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30">
+    <Portal>
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-xl shadow-xl p-6 min-w-[320px] max-w-md flex flex-col items-center">
         <div className="mb-4 text-center text-gray-800 text-lg font-semibold">Wybierz specjalistę</div>
         <div className="w-full mb-4">
@@ -197,6 +199,7 @@ const ScheduleMeetingModal: React.FC<{
         </div>
       </div>
     </div>
+    </Portal>
   );
 };
 import React, { useState, useEffect, useRef } from 'react';
@@ -212,7 +215,8 @@ const ConfirmModal: React.FC<{
 }> = ({ open, message, onConfirm, onCancel, newTimeRange }) => {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30">
+    <Portal>
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-xl shadow-xl p-6 min-w-[280px] max-w-xs flex flex-col items-center">
         <div className="mb-4 text-center text-gray-800 text-[15px]">{message}</div>
         {newTimeRange && (
@@ -226,6 +230,7 @@ const ConfirmModal: React.FC<{
         </div>
       </div>
     </div>
+    </Portal>
   );
 };
 import CalendarHeader from '../Calendar/CalendarHeader';
