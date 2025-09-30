@@ -4,6 +4,7 @@ function getPatientStatusLabel(isActive: boolean): 'aktywny' | 'nieaktywny' {
 }
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FileText } from 'lucide-react';
+import Portal from '../common/Portal';
 // Backend API functions
 import { fetchPatients, fetchPatientReport, createPatient as apiCreatePatient, updatePatient as apiUpdatePatient } from '../../utils/api/patients';
 import { fetchEmployees, assignPatientsToEmployee, unassignPatientsFromEmployee } from '../../utils/api/employees';
@@ -1195,8 +1196,9 @@ useEffect(() => {
       </div>
 
       {showAddModal && (
+        <Portal>
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center p-6 bg-black/40 backdrop-blur-sm overflow-y-auto"
+          className="fixed inset-0 z-[1000] flex items-start justify-center p-6 bg-black/40 backdrop-blur-sm overflow-y-auto"
           onKeyDown={(e)=> {
             if(e.key==='Escape'){ e.stopPropagation(); cancelAdd(); }
             if(e.key==='Tab' && modalRef.current){
@@ -1359,11 +1361,13 @@ useEffect(() => {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {showDeleteModal && (
+        <Portal>
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center p-6 bg-black/40 backdrop-blur-sm overflow-y-auto"
+          className="fixed inset-0 z-[1000] flex items-start justify-center p-6 bg-black/40 backdrop-blur-sm overflow-y-auto"
           onKeyDown={(e)=> {
             if(e.key==='Escape'){ e.stopPropagation(); cancelDelete(); }
             if(e.key==='Tab' && deleteModalRef.current){
@@ -1417,11 +1421,13 @@ useEffect(() => {
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
       {showNotesModal && selected && !editMode && (
+        <Portal>
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm"
+          className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm"
           onKeyDown={(e)=> {
             if(e.key==='Escape'){
               e.stopPropagation();
@@ -1540,13 +1546,15 @@ useEffect(() => {
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
       {showDatePicker && (
+        <Portal>
         <div
           ref={datePickerOverlayRef}
           tabIndex={-1}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
+          className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/40"
           onClick={closeDatePicker}
           onKeyDown={(e)=> { if(e.key==='Escape'){ e.stopPropagation(); closeDatePicker(); } }}
           role="dialog"
@@ -1656,6 +1664,7 @@ useEffect(() => {
             </div>
           </div>
         </div>
+        </Portal>
       )}
     </div>
   );
