@@ -1,11 +1,129 @@
-import { MoreHorizontal, Plus, CheckCircle2, Circle, ArrowUpDown, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { MoreHorizontal, Plus, CheckCircle2, Circle, ArrowUpDown, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Calendar, UserRoundPlus, Loader2 } from 'lucide-react';
 import Portal from '../common/Portal';
 import { notify } from '../common/Notification';
-import { useState, useEffect } from 'react';
-import { EmployeeTask } from '../../types/index'
-import { Employee } from '../../types/index';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { EmployeeTask, Employee } from '../../types/index';
 import { fetchEmployees } from '../../utils/api/employees';
 import { createEmployeeTask } from '../../utils/api/tasks';
+
+type TaskFormState = {
+  name: string;
+  assignedEmployeeId: number | null;
+  dueDate: string;
+};
+
+const createEmptyFormState = (): TaskFormState => ({
+  name: '',
+  assignedEmployeeId: null,
+  dueDate: '',
+});
+
+const monthNames = ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'] as const;
+const daysOfWeek = ['Pn','Wt','Śr','Cz','Pt','So','Nd'] as const;
+const FUTURE_YEAR_LOOKAHEAD = 10;
+
+const formatDateYMD = (date: Date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const getMonthGrid = (month: Date) => {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const offset = (first.getDay() + 6) % 7; // Monday-first
+  const start = new Date(first);
+  start.setDate(first.getDate() - offset);
+  return Array.from({ length: 42 }, (_, idx) => {
+    const current = new Date(start);
+    current.setDate(start.getDate() + idx);
+    return {
+      date: current,
+      isCurrentMonth: current.getMonth() === month.getMonth(),
+    };
+  });
+};
+
+const formatDueDateHuman = (value: string) => {
+  if (!value) return 'Wybierz termin';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('pl-PL', { day: '2-digit', month: 'long', year: 'numeric' });
+};
+
+const validateTaskForm = (form: TaskFormState) => {
+  const errors: string[] = [];
+  if (!form.name.trim()) errors.push('Tytuł zadania jest wymagany');
+  if (form.assignedEmployeeId == null) errors.push('Wybierz pracownika');
+  if (!form.dueDate.trim()) errors.push('Termin wykonania jest wymagany');
+  return errors;
+};
+
+type TaskDatePickerHook = {
+  show: boolean;
+  open: () => void;
+  close: () => void;
+  month: Date;
+  setMonth: React.Dispatch<React.SetStateAction<Date>>;
+  selectDate: (date: Date) => void;
+  overlayRef: React.RefObject<HTMLDivElement>;
+  showYearMenu: boolean;
+  setShowYearMenu: React.Dispatch<React.SetStateAction<boolean>>;
+  yearBtnRef: React.RefObject<HTMLButtonElement>;
+  yearMenuRef: React.RefObject<HTMLDivElement>;
+};
+
+const useTaskDatePicker = (
+  getCurrentValue: () => string,
+  onChange: (next: string) => void,
+  onAfterSelect?: () => void
+): TaskDatePickerHook => {
+  const [show, setShow] = useState(false);
+  const [month, setMonth] = useState<Date>(() => new Date());
+  const [showYearMenu, setShowYearMenu] = useState(false);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const yearBtnRef = useRef<HTMLButtonElement | null>(null);
+  const yearMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const open = () => {
+    const current = getCurrentValue();
+    const base = current ? new Date(current) : new Date();
+    const safe = Number.isNaN(base.getTime()) ? new Date() : base;
+    setMonth(new Date(safe.getFullYear(), safe.getMonth(), 1));
+    setShow(true);
+  };
+
+  const close = () => {
+    setShow(false);
+    setShowYearMenu(false);
+  };
+
+  const selectDate = (date: Date) => {
+    onChange(formatDateYMD(date));
+    onAfterSelect?.();
+    close();
+  };
+
+  useEffect(() => {
+    if (show) {
+      requestAnimationFrame(() => overlayRef.current?.focus());
+    }
+  }, [show]);
+
+  useEffect(() => {
+    if (!showYearMenu) return;
+    const handler = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!yearMenuRef.current?.contains(target) && !yearBtnRef.current?.contains(target)) {
+        setShowYearMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showYearMenu]);
+
+  return { show, open, close, month, setMonth, selectDate, overlayRef, showYearMenu, setShowYearMenu, yearBtnRef, yearMenuRef };
+};
 
 
 // Usunięto demo dane, lista zawsze pusta na start
@@ -61,15 +179,53 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [taskList, setTaskList] = useState<EmployeeTask[]>([]);
   const [editingTask, setEditingTask] = useState<EmployeeTask | null>(null);
-  const [formData, setFormData] = useState<EmployeeTask | null>(null);
+
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newTask, setNewTask] = useState<EmployeeTask>({
-    id: 0,
-    name: '',
-    assignedEmployeesIds: [],
-    dueDate: '',
-    isCompleted: false,
-  });
+  const [createForm, setCreateForm] = useState<TaskFormState>(() => createEmptyFormState());
+  const [createErrors, setCreateErrors] = useState<string[]>([]);
+  const [creatingTask, setCreatingTask] = useState(false);
+  const [showCreateAssignMenu, setShowCreateAssignMenu] = useState(false);
+  const createAssignBtnRef = useRef<HTMLButtonElement | null>(null);
+  const createAssignMenuRef = useRef<HTMLDivElement | null>(null);
+  const createModalRef = useRef<HTMLDivElement | null>(null);
+  const createPrevFocusRef = useRef<HTMLElement | null>(null);
+
+  const [showEditAssignMenu, setShowEditAssignMenu] = useState(false);
+  const editAssignBtnRef = useRef<HTMLButtonElement | null>(null);
+  const editAssignMenuRef = useRef<HTMLDivElement | null>(null);
+  const editModalRef = useRef<HTMLDivElement | null>(null);
+  const editPrevFocusRef = useRef<HTMLElement | null>(null);
+  const [editForm, setEditForm] = useState<TaskFormState>(() => createEmptyFormState());
+  const [editErrors, setEditErrors] = useState<string[]>([]);
+  const [editSaving, setEditSaving] = useState(false);
+
+  const yearsList = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const maxYear = currentYear + FUTURE_YEAR_LOOKAHEAD;
+    const minYear = 1900;
+    const list: number[] = [];
+    for (let year = maxYear; year >= minYear; year--) {
+      list.push(year);
+    }
+    return list;
+  }, []);
+
+  const todayYMD = useMemo(() => formatDateYMD(new Date()), []);
+
+  const createDatePicker = useTaskDatePicker(
+    () => createForm.dueDate,
+    (next) => setCreateForm(prev => ({ ...prev, dueDate: next })),
+    () => setCreateErrors([])
+  );
+
+  const editDatePicker = useTaskDatePicker(
+    () => editForm.dueDate,
+    (next) => setEditForm(prev => ({ ...prev, dueDate: next })),
+    () => setEditErrors([])
+  );
+
+  const createMonthGrid = useMemo(() => getMonthGrid(createDatePicker.month), [createDatePicker.month]);
+  const editMonthGrid = useMemo(() => getMonthGrid(editDatePicker.month), [editDatePicker.month]);
 
   // Sort state
   type SortField = 'assigned' | 'dueDate' | 'status' | null;
@@ -138,9 +294,49 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
     return list;
   })();
 
+  const employeesSorted = useMemo(() => {
+    const strip = (value: string) => value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+    return employees
+      .map(emp => {
+        const first = (emp.name || '').trim();
+        const last = (emp.surname || '').trim();
+        const label = last ? `${last} ${first}`.trim() : (first || String(emp.id));
+        const sortKey = `${strip(last)} ${strip(first)}`;
+        return { id: emp.id, label, sortKey };
+      })
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  }, [employees]);
+
+  const createSelectedEmployee = useMemo(() => {
+    if (createForm.assignedEmployeeId == null) return null;
+    return employees.find(emp => Number(emp.id) === Number(createForm.assignedEmployeeId)) ?? null;
+  }, [employees, createForm.assignedEmployeeId]);
+
+  const createSelectedEmployeeLabel = useMemo(() => {
+    if (!createSelectedEmployee) return '';
+    const first = (createSelectedEmployee.name || '').trim();
+    const last = (createSelectedEmployee.surname || '').trim();
+    return [last, first].filter(Boolean).join(' ').trim();
+  }, [createSelectedEmployee]);
+
+  const editSelectedEmployee = useMemo(() => {
+    if (editForm.assignedEmployeeId == null) return null;
+    return employees.find(emp => Number(emp.id) === Number(editForm.assignedEmployeeId)) ?? null;
+  }, [employees, editForm.assignedEmployeeId]);
+
+  const editSelectedEmployeeLabel = useMemo(() => {
+    if (!editSelectedEmployee) return '';
+    const first = (editSelectedEmployee.name || '').trim();
+    const last = (editSelectedEmployee.surname || '').trim();
+    return [last, first].filter(Boolean).join(' ').trim();
+  }, [editSelectedEmployee]);
+
   const handleOpenCreateModal = () => {
     if (userRole !== 'admin') return; // guard
-    setNewTask({ id: 0, name: '', assignedEmployeesIds: [], dueDate: '', isCompleted: false });
+    setCreateForm(createEmptyFormState());
+    setCreateErrors([]);
+    setShowCreateAssignMenu(false);
+    setCreatingTask(false);
     setShowCreateModal(true);
   };
 
@@ -150,38 +346,133 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
 
   const handleCloseCreateModal = () => {
     setShowCreateModal(false);
+    setShowCreateAssignMenu(false);
+    setCreateErrors([]);
+    setCreateForm(createEmptyFormState());
   };
 
-  const handleChangeNewTask = (field: keyof EmployeeTask, value: string | number | number[]) => {
-    if (field === 'assignedEmployeesIds') {
-      // value is array of selected employee IDs
-      setNewTask((prev) => ({ ...prev, assignedEmployeesIds: Array.isArray(value) ? value : [Number(value)] }));
-    } else {
-      setNewTask((prev) => ({ ...prev, [field]: value }));
-    }
+  const selectNewTaskAssignee = (id: number) => {
+    const numericId = Number(id);
+    if (Number.isNaN(numericId)) return;
+    setCreateForm(prev => ({ ...prev, assignedEmployeeId: numericId }));
+    setShowCreateAssignMenu(false);
+    setCreateErrors([]);
   };
 
-  const handleSaveCreateTask = () => {
+  const clearNewTaskAssignee = () => {
+    setCreateForm(prev => ({ ...prev, assignedEmployeeId: null }));
+    setShowCreateAssignMenu(false);
+  };
+
+  const handleCreateClearDate = () => {
+    setCreateForm(prev => ({ ...prev, dueDate: '' }));
+    setCreateErrors([]);
+    createDatePicker.close();
+  };
+
+  const handleCreateToday = () => {
+    const today = new Date();
+    createDatePicker.selectDate(today);
+  };
+
+  const handleSaveCreateTask = async () => {
     if (userRole !== 'admin') return;
-    if (!newTask.name.trim() || newTask.assignedEmployeesIds.length === 0 || !newTask.dueDate.trim()) return;
+    const errors = validateTaskForm(createForm);
+    if (errors.length) {
+      setCreateErrors(errors);
+      return;
+    }
     const token = localStorage.getItem('token');
     if (!token) return;
-    createEmployeeTask({
-      name: newTask.name,
-      assignedEmployeesIds: newTask.assignedEmployeesIds,
-      dueDate: newTask.dueDate,
-      isCompleted: false
-    }, token)
-      .then((created) => {
-        setTaskList(prev => [...prev, created]);
-        setShowCreateModal(false);
-      })
-      .catch(() => {/* obsługa błędu */});
+    setCreatingTask(true);
+    try {
+      const created = await createEmployeeTask({
+        name: createForm.name.trim(),
+        assignedEmployeesIds: createForm.assignedEmployeeId == null ? [] : [createForm.assignedEmployeeId],
+        dueDate: createForm.dueDate,
+        isCompleted: false
+      }, token);
+      setTaskList(prev => [...prev, created]);
+      setShowCreateModal(false);
+      setCreateForm(createEmptyFormState());
+      notify.success('Zadanie utworzone');
+    } catch (err) {
+      setCreateErrors(['Nie udało się utworzyć zadania. Spróbuj ponownie.']);
+    } finally {
+      setCreatingTask(false);
+    }
   };
 
   const handleEditTask = (task: EmployeeTask) => {
     if (userRole !== 'admin') return;
     setEditingTask(task);
+    setEditForm({
+      name: task.name || '',
+      assignedEmployeeId: task.assignedEmployeesIds.length ? Number(task.assignedEmployeesIds[0]) : null,
+      dueDate: task.dueDate || '',
+    });
+    setEditErrors([]);
+    setShowEditAssignMenu(false);
+    setEditSaving(false);
+  };
+
+  const handleCloseEditModal = () => {
+    setShowEditAssignMenu(false);
+    setEditingTask(null);
+    setEditErrors([]);
+  };
+
+  const selectEditTaskAssignee = (id: number) => {
+    const numericId = Number(id);
+    if (Number.isNaN(numericId)) return;
+    setEditForm(prev => ({ ...prev, assignedEmployeeId: numericId }));
+    setShowEditAssignMenu(false);
+    setEditErrors([]);
+  };
+
+  const clearEditTaskAssignee = () => {
+    setEditForm(prev => ({ ...prev, assignedEmployeeId: null }));
+    setShowEditAssignMenu(false);
+  };
+
+  const handleEditClearDate = () => {
+    setEditForm(prev => ({ ...prev, dueDate: '' }));
+    setEditErrors([]);
+    editDatePicker.close();
+  };
+
+  const handleEditToday = () => {
+    const today = new Date();
+    editDatePicker.selectDate(today);
+  };
+
+  const handleSaveEdit = async () => {
+    if (userRole !== 'admin' || !editingTask) return;
+    const errors = validateTaskForm(editForm);
+    if (errors.length) {
+      setEditErrors(errors);
+      return;
+    }
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    setEditSaving(true);
+    try {
+      const api = await import('../../utils/api/tasks');
+      const payload = {
+        ...editingTask,
+        name: editForm.name.trim(),
+        assignedEmployeesIds: editForm.assignedEmployeeId == null ? [] : [editForm.assignedEmployeeId],
+        dueDate: editForm.dueDate,
+      };
+  await api.updateEmployeeTask(editingTask.id, payload, token);
+  setTaskList(prev => prev.map(task => (task.id === editingTask.id ? { ...task, ...payload } : task)));
+      notify.success('Zadanie zaktualizowane');
+      setEditingTask(null);
+    } catch (err: any) {
+      setEditErrors([err?.message || 'Nie udało się zaktualizować zadania']);
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -199,11 +490,65 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
   }, []);
 
   useEffect(() => {
-    if (editingTask) {
-      setFormData(editingTask);
+    if (!showCreateAssignMenu) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!createAssignMenuRef.current?.contains(target) && !createAssignBtnRef.current?.contains(target)) {
+        setShowCreateAssignMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showCreateAssignMenu]);
+
+  useEffect(() => {
+    if (showCreateModal) {
+      createPrevFocusRef.current = document.activeElement as HTMLElement;
+      document.body.style.overflow = 'hidden';
+      requestAnimationFrame(() => {
+        const focusable = createModalRef.current?.querySelector<HTMLElement>(
+          "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"
+        );
+        focusable?.focus();
+      });
     } else {
-      setFormData(null);
+      document.body.style.overflow = '';
+      createPrevFocusRef.current?.focus?.();
     }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showCreateModal]);
+
+  useEffect(() => {
+    if (!showEditAssignMenu) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!editAssignMenuRef.current?.contains(target) && !editAssignBtnRef.current?.contains(target)) {
+        setShowEditAssignMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showEditAssignMenu]);
+
+  useEffect(() => {
+    if (editingTask) {
+      editPrevFocusRef.current = document.activeElement as HTMLElement;
+      document.body.style.overflow = 'hidden';
+      requestAnimationFrame(() => {
+        const focusable = editModalRef.current?.querySelector<HTMLElement>(
+          "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"
+        );
+        focusable?.focus();
+      });
+    } else {
+      document.body.style.overflow = '';
+      editPrevFocusRef.current?.focus?.();
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
   }, [editingTask]);
 
   const handleUndoCompleteTask = (taskId: number) => {
@@ -236,40 +581,21 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
     });
   };
 
-  const handleSaveEdit = () => {
+  const handleDeleteTask = async (taskId: number) => {
     if (userRole !== 'admin') return;
-    if (!formData) return;
-    setTaskList(taskList.map(task => task.id === formData.id ? formData : task));
-    setEditingTask(null);
-  };
-
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const handleDeleteTask = (taskId: number) => {
-    if (userRole !== 'admin') return;
-    setDeleteTargetId(taskId);
-    setDeleteError(null);
-    setShowDeleteDialog(true);
-  };
-  const confirmDeleteTask = async () => {
-    if (deleteTargetId == null) return;
+    if (!window.confirm('Czy na pewno chcesz usunąć to zadanie?')) return;
     const token = localStorage.getItem('token');
-    if (!token) { setDeleteError('Brak tokenu'); return; }
-    setIsDeleting(true);
-    setDeleteError(null);
+    if (!token) {
+      notify.error('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.');
+      return;
+    }
     try {
       const api = await import('../../utils/api/tasks');
-      await api.deleteEmployeeTask(deleteTargetId, token);
-      setTaskList(prev => prev.filter(t => t.id !== deleteTargetId));
-      setShowDeleteDialog(false);
-      setDeleteTargetId(null);
+      await api.deleteEmployeeTask(taskId, token);
+      setTaskList(prev => prev.filter(t => t.id !== taskId));
       notify.success('Zadanie usunięte');
-    } catch (e: any) {
-      setDeleteError(e?.message || 'Nie udało się usunąć zadania');
-    } finally {
-      setIsDeleting(false);
+    } catch (error: any) {
+      notify.error(error?.message || 'Nie udało się usunąć zadania');
     }
   };
 
@@ -374,39 +700,166 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
       </div>
 
       {/* Modal dodawania nowego zadania */}
-  {userRole==='admin' && showCreateModal && (
+      {userRole==='admin' && showCreateModal && (
         <Portal>
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl border border-gray-100 p-6 w-full max-w-md">
-            <form onSubmit={e => { e.preventDefault(); handleSaveCreateTask(); }}>
-              <h3 className="text-lg font-semibold mb-2">Dodaj nowe zadanie</h3>
-              <div className="mb-4">
-                <label className="block text-sm font-medium mb-1">Tytuł zadania</label>
-                <input type="text" className="w-full border px-3 py-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" value={newTask.name} onChange={e => handleChangeNewTask('name', e.target.value)} />
+        <div
+          className="fixed inset-0 z-[1000] flex items-start justify-center p-6 bg-black/40 backdrop-blur-sm overflow-y-auto"
+          onKeyDown={(e) => {
+            if(e.key==='Escape'){ e.stopPropagation(); handleCloseCreateModal(); }
+            if(e.key==='Tab' && createModalRef.current){
+              const focusables = Array.from(createModalRef.current.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"))
+                .filter(el => !el.hasAttribute('disabled'));
+              if(!focusables.length) return;
+              const first = focusables[0];
+              const last = focusables[focusables.length-1];
+              if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); }
+              else if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+            }
+          }}
+          aria-modal="true"
+          role="dialog"
+          aria-labelledby="createTaskTitle"
+        >
+          <div
+            ref={createModalRef}
+            className="bg-white w-full max-w-xl rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in slide-in-from-top-2"
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-blue-100 bg-gradient-to-r from-blue-50 via-indigo-50 to-sky-50 rounded-t-2xl">
+              <div className="space-y-1">
+                <h3 id="createTaskTitle" className="text-lg font-semibold text-gray-800">Nowe zadanie</h3>
+                <p className="text-sm text-gray-500">Utwórz zadanie i przypisz je do wybranego specjalisty.</p>
               </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium mb-1">Przypisane do pracownika</label>
-                <select
-                  multiple
-                  className="w-full border px-3 py-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  value={newTask.assignedEmployeesIds.map(String)}
-                  onChange={e => {
-                    const selected = Array.from(e.target.selectedOptions, opt => Number(opt.value));
-                    handleChangeNewTask('assignedEmployeesIds', selected);
-                  }}
+              <button
+                type="button"
+                onClick={handleCloseCreateModal}
+                className="p-2 rounded-lg hover:bg-white/70 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                aria-label="Zamknij"
+              >
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+            </div>
+            <form onSubmit={e => { e.preventDefault(); handleSaveCreateTask(); }} className="px-6 py-6 space-y-6">
+              {createErrors.length>0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700" aria-live="assertive">
+                  <ul className="list-disc list-inside space-y-1">
+                    {createErrors.map((error, index) => (
+                      <li key={index}>{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Tytuł zadania</label>
+                  <input
+                    value={createForm.name}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setCreateForm(prev => ({ ...prev, name: value }));
+                      setCreateErrors([]);
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    placeholder="Wprowadź nazwę zadania"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Pracownik</label>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <button
+                        ref={createAssignBtnRef}
+                        type="button"
+                        onClick={() => setShowCreateAssignMenu(v => !v)}
+                        className="w-full inline-flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-lg bg-white border border-gray-300 shadow-sm hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        aria-haspopup="listbox"
+                        aria-expanded={showCreateAssignMenu}
+                      >
+                        <span className="inline-flex items-center gap-2 text-gray-700">
+                          <UserRoundPlus className="h-4 w-4 text-indigo-500" />
+                          <span className="truncate">{createSelectedEmployeeLabel || 'Wybierz pracownika'}</span>
+                        </span>
+                        <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${showCreateAssignMenu ? 'rotate-180' : ''}`} />
+                      </button>
+                      {showCreateAssignMenu && (
+                        <div
+                          ref={createAssignMenuRef}
+                          role="listbox"
+                          tabIndex={-1}
+                          onKeyDown={(e)=> { if(e.key==='Escape'){ e.preventDefault(); setShowCreateAssignMenu(false); createAssignBtnRef.current?.focus(); } }}
+                          className="absolute z-50 mt-2 w-full overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 border border-gray-100"
+                        >
+                          <div className="max-h-60 overflow-y-auto py-1">
+                            {employeesSorted.map(option => {
+                              const isActive = Number(option.id) === Number(createForm.assignedEmployeeId);
+                              return (
+                                <button
+                                  type="button"
+                                  key={option.id}
+                                  onClick={() => selectNewTaskAssignee(Number(option.id))}
+                                  className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${isActive ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700'}`}
+                                  role="option"
+                                  aria-selected={isActive}
+                                >
+                                  <span className="truncate">{option.label}</span>
+                                  {isActive && <CheckCircle2 className="h-4 w-4 text-indigo-500" />}
+                                </button>
+                              );
+                            })}
+                            {!employeesSorted.length && (
+                              <div className="px-3 py-2 text-sm text-gray-500">Brak dostępnych pracowników</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={clearNewTaskAssignee}
+                      className="px-3 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-50"
+                      disabled={createForm.assignedEmployeeId == null}
+                    >
+                      Wyczyść
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Termin</label>
+                  <button
+                    type="button"
+                    onClick={createDatePicker.open}
+                    className="w-full inline-flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white shadow-sm hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    <span className="inline-flex items-center gap-2 text-gray-700">
+                      <Calendar className="h-4 w-4 text-indigo-500" />
+                      <span className="truncate">{formatDueDateHuman(createForm.dueDate)}</span>
+                    </span>
+                    <ChevronDown className="h-4 w-4 text-gray-400" />
+                  </button>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleCloseCreateModal}
+                  className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-60"
+                  disabled={creatingTask}
                 >
-                  {employees.map(emp => (
-                    <option key={emp.id} value={emp.id}>{emp.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium mb-1">Termin</label>
-                <input type="date" className="w-full border px-3 py-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" value={newTask.dueDate} onChange={e => handleChangeNewTask('dueDate', e.target.value)} />
-              </div>
-              <div className="flex justify-end gap-2 mt-6">
-                <button type="button" className="px-4 py-2 rounded border text-sm bg-gray-50 hover:bg-gray-100" onClick={handleCloseCreateModal}>Anuluj</button>
-                <button type="submit" className="px-4 py-2 rounded bg-blue-600 text-white text-sm hover:bg-blue-700">Dodaj zadanie</button>
+                  Anuluj
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingTask}
+                  className="inline-flex items-center gap-2 px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-60"
+                >
+                  {creatingTask ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Zapisywanie...
+                    </>
+                  ) : (
+                    'Utwórz zadanie'
+                  )}
+                </button>
               </div>
             </form>
           </div>
@@ -414,74 +867,398 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
         </Portal>
       )}
 
-      {/* Modal edycji zadania */}
-  {userRole==='admin' && editingTask && (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
-            <div className="mb-4">
-              <h3 className="text-lg font-semibold">Edytuj zadanie</h3>
-              <p className="text-sm text-gray-500">Wprowadź zmiany w zadaniu.</p>
-            </div>
-            <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-4 items-center gap-4">
-                <label htmlFor="title" className="text-right text-sm font-medium text-gray-700">Zadanie</label>
-                <input id="title" value={formData?.name || ''} onChange={(e) => formData && setFormData({ ...formData, name: e.target.value })} className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+        {createDatePicker.show && (
+          <Portal>
+          <div
+            ref={createDatePicker.overlayRef}
+            tabIndex={-1}
+            className="fixed inset-0 z-[1100] flex items-center justify-center p-4 bg-black/40"
+            onClick={(e) => { if (e.target === e.currentTarget) createDatePicker.close(); }}
+            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); createDatePicker.close(); } }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Wybierz termin zadania"
+          >
+            <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-gray-100 p-5" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => createDatePicker.setMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+                    className="p-2 rounded-lg hover:bg-gray-100 focus:ring-2 focus:ring-indigo-500"
+                    aria-label="Poprzedni miesiąc"
+                  >
+                    <ChevronLeft className="h-4 w-4 text-gray-600" />
+                  </button>
+                  <div className="text-sm font-semibold text-gray-800 min-w-[120px] text-center">
+                    {monthNames[createDatePicker.month.getMonth()]} {createDatePicker.month.getFullYear()}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => createDatePicker.setMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+                    className="p-2 rounded-lg hover:bg-gray-100 focus:ring-2 focus:ring-indigo-500"
+                    aria-label="Następny miesiąc"
+                  >
+                    <ChevronRight className="h-4 w-4 text-gray-600" />
+                  </button>
+                </div>
+                <div className="relative">
+                  <button
+                    ref={createDatePicker.yearBtnRef}
+                    type="button"
+                    onClick={() => createDatePicker.setShowYearMenu(v => !v)}
+                    className="inline-flex items-center gap-1 px-3 py-2 text-xs font-semibold text-gray-700 uppercase tracking-wide border border-gray-300 rounded-lg hover:bg-gray-100 focus:ring-2 focus:ring-indigo-500"
+                    aria-haspopup="listbox"
+                    aria-expanded={createDatePicker.showYearMenu}
+                  >
+                    {createDatePicker.month.getFullYear()}
+                    <ChevronDown className={`h-3 w-3 text-gray-500 transition-transform ${createDatePicker.showYearMenu ? 'rotate-180' : ''}`} />
+                  </button>
+                  {createDatePicker.showYearMenu && (
+                    <div
+                      ref={createDatePicker.yearMenuRef}
+                      role="listbox"
+                      tabIndex={-1}
+                      className="absolute right-0 mt-2 w-28 max-h-48 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-2xl"
+                    >
+                      {yearsList.map(year => {
+                        const active = createDatePicker.month.getFullYear() === year;
+                        return (
+                          <button
+                            type="button"
+                            key={year}
+                            onClick={() => {
+                              createDatePicker.setMonth(prev => new Date(year, prev.getMonth(), 1));
+                              createDatePicker.setShowYearMenu(false);
+                            }}
+                            className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100 ${active ? 'text-indigo-600 font-semibold' : 'text-gray-700'}`}
+                            role="option"
+                            aria-selected={active}
+                          >
+                            {year}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <label htmlFor="assignedTo" className="text-right text-sm font-medium text-gray-700">Przypisane do</label>
-                <select
-                  id="assignedTo"
-                  multiple
-                  className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  value={formData?.assignedEmployeesIds ? formData.assignedEmployeesIds.map(String) : []}
-                  onChange={e => {
-                    if (formData) {
-                      const selected = Array.from(e.target.selectedOptions, opt => Number(opt.value));
-                      setFormData({ ...formData, assignedEmployeesIds: selected });
-                    }
-
-                    {/* Delete confirmation dialog for tasks */}
-                    {userRole==='admin' && showDeleteDialog && (
-                      <Portal>
-                      <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6">
-                        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => !isDeleting && setShowDeleteDialog(false)} />
-                        <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-red-100">
-                          <div className="flex items-center justify-between px-5 py-4 border-b border-red-100">
-                            <h3 className="text-lg font-semibold text-gray-900">Potwierdź usunięcie</h3>
-                            <button onClick={() => !isDeleting && setShowDeleteDialog(false)} className="p-2 rounded hover:bg-gray-100"><X className="w-5 h-5 text-gray-500"/></button>
-                          </div>
-                          <div className="px-5 py-4 space-y-3">
-                            <p className="text-sm text-gray-700">Czy na pewno chcesz usunąć to zadanie? Tej operacji nie można cofnąć.</p>
-                            {deleteError && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{deleteError}</div>}
-                          </div>
-                          <div className="px-5 py-4 border-t border-gray-100 flex justify-end gap-3">
-                            <button onClick={() => setShowDeleteDialog(false)} disabled={isDeleting} className="px-4 py-2 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800">Anuluj</button>
-                            <button onClick={confirmDeleteTask} disabled={isDeleting} className="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
-                              {isDeleting ? 'Usuwanie…' : 'Usuń'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                      </Portal>
-                    )}
-                  }}
-                >
-                  {employees.map(emp => (
-                    <option key={emp.id} value={emp.id}>{emp.name}</option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-7 gap-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">
+                {daysOfWeek.map(day => (
+                  <div key={day} className="text-center">{day}</div>
+                ))}
               </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <label htmlFor="dueDate" className="text-right text-sm font-medium text-gray-700">Termin</label>
-                <input id="dueDate" value={formData?.dueDate || ''} onChange={(e) => formData && setFormData({ ...formData, dueDate: e.target.value })} className="col-span-3 border px-2 py-1 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent" type="date" />
+              <div className="grid grid-cols-7 gap-1">
+                {createMonthGrid.map(({ date, isCurrentMonth }) => {
+                  const cellValue = formatDateYMD(date);
+                  const isSelected = createForm.dueDate === cellValue;
+                  const isToday = todayYMD === cellValue;
+                  let cls = 'w-10 h-10 flex items-center justify-center rounded-lg text-sm transition-colors';
+                  if (isSelected) cls += ' bg-indigo-600 text-white shadow hover:bg-indigo-600';
+                  else if (isToday) cls += ' border border-indigo-400 text-indigo-700 hover:bg-indigo-50';
+                  else if (!isCurrentMonth) cls += ' text-gray-400 hover:bg-gray-100';
+                  else cls += ' text-gray-700 hover:bg-indigo-50';
+                  return (
+                    <button
+                      type="button"
+                      key={cellValue}
+                      onClick={() => createDatePicker.selectDate(date)}
+                      className={cls}
+                      aria-pressed={isSelected}
+                    >
+                      {date.getDate()}
+                    </button>
+                  );
+                })}
               </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button type="button" className="px-4 py-2 rounded border text-sm bg-gray-50 hover:bg-gray-100" onClick={() => setEditingTask(null)}>Anuluj</button>
-              <button type="button" className="px-4 py-2 rounded bg-blue-600 text-white text-sm hover:bg-blue-700" onClick={handleSaveEdit}>Zapisz</button>
+              <div className="mt-4 flex items-center justify-between">
+                <button type="button" onClick={handleCreateClearDate} className="text-sm text-gray-500 hover:text-gray-700">Wyczyść</button>
+                <button type="button" onClick={handleCreateToday} className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">Dziś</button>
+              </div>
             </div>
           </div>
+          </Portal>
+        )}
+
+        {editDatePicker.show && (
+          <Portal>
+          <div
+            ref={editDatePicker.overlayRef}
+            tabIndex={-1}
+            className="fixed inset-0 z-[1100] flex items-center justify-center p-4 bg-black/40"
+            onClick={(e) => { if (e.target === e.currentTarget) editDatePicker.close(); }}
+            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); editDatePicker.close(); } }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Wybierz termin zadania"
+          >
+            <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-gray-100 p-5" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => editDatePicker.setMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+                    className="p-2 rounded-lg hover:bg-gray-100 focus:ring-2 focus:ring-indigo-500"
+                    aria-label="Poprzedni miesiąc"
+                  >
+                    <ChevronLeft className="h-4 w-4 text-gray-600" />
+                  </button>
+                  <div className="text-sm font-semibold text-gray-800 min-w-[120px] text-center">
+                    {monthNames[editDatePicker.month.getMonth()]} {editDatePicker.month.getFullYear()}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => editDatePicker.setMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+                    className="p-2 rounded-lg hover:bg-gray-100 focus:ring-2 focus:ring-indigo-500"
+                    aria-label="Następny miesiąc"
+                  >
+                    <ChevronRight className="h-4 w-4 text-gray-600" />
+                  </button>
+                </div>
+                <div className="relative">
+                  <button
+                    ref={editDatePicker.yearBtnRef}
+                    type="button"
+                    onClick={() => editDatePicker.setShowYearMenu(v => !v)}
+                    className="inline-flex items-center gap-1 px-3 py-2 text-xs font-semibold text-gray-700 uppercase tracking-wide border border-gray-300 rounded-lg hover:bg-gray-100 focus:ring-2 focus:ring-indigo-500"
+                    aria-haspopup="listbox"
+                    aria-expanded={editDatePicker.showYearMenu}
+                  >
+                    {editDatePicker.month.getFullYear()}
+                    <ChevronDown className={`h-3 w-3 text-gray-500 transition-transform ${editDatePicker.showYearMenu ? 'rotate-180' : ''}`} />
+                  </button>
+                  {editDatePicker.showYearMenu && (
+                    <div
+                      ref={editDatePicker.yearMenuRef}
+                      role="listbox"
+                      tabIndex={-1}
+                      className="absolute right-0 mt-2 w-28 max-h-48 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-2xl"
+                    >
+                      {yearsList.map(year => {
+                        const active = editDatePicker.month.getFullYear() === year;
+                        return (
+                          <button
+                            type="button"
+                            key={year}
+                            onClick={() => {
+                              editDatePicker.setMonth(prev => new Date(year, prev.getMonth(), 1));
+                              editDatePicker.setShowYearMenu(false);
+                            }}
+                            className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100 ${active ? 'text-indigo-600 font-semibold' : 'text-gray-700'}`}
+                            role="option"
+                            aria-selected={active}
+                          >
+                            {year}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-7 gap-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">
+                {daysOfWeek.map(day => (
+                  <div key={day} className="text-center">{day}</div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7 gap-1">
+                {editMonthGrid.map(({ date, isCurrentMonth }) => {
+                  const cellValue = formatDateYMD(date);
+                  const isSelected = editForm.dueDate === cellValue;
+                  const isToday = todayYMD === cellValue;
+                  let cls = 'w-10 h-10 flex items-center justify-center rounded-lg text-sm transition-colors';
+                  if (isSelected) cls += ' bg-indigo-600 text-white shadow hover:bg-indigo-600';
+                  else if (isToday) cls += ' border border-indigo-400 text-indigo-700 hover:bg-indigo-50';
+                  else if (!isCurrentMonth) cls += ' text-gray-400 hover:bg-gray-100';
+                  else cls += ' text-gray-700 hover:bg-indigo-50';
+                  return (
+                    <button
+                      type="button"
+                      key={cellValue}
+                      onClick={() => editDatePicker.selectDate(date)}
+                      className={cls}
+                      aria-pressed={isSelected}
+                    >
+                      {date.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-4 flex items-center justify-between">
+                <button type="button" onClick={handleEditClearDate} className="text-sm text-gray-500 hover:text-gray-700">Wyczyść</button>
+                <button type="button" onClick={handleEditToday} className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">Dziś</button>
+              </div>
+            </div>
+          </div>
+          </Portal>
+        )}
+
+      {/* Modal edycji zadania */}
+      {userRole==='admin' && editingTask && (
+        <Portal>
+        <div
+          className="fixed inset-0 z-[1000] flex items-start justify-center p-6 bg-black/40 backdrop-blur-sm overflow-y-auto"
+          onKeyDown={(e) => {
+            if(e.key==='Escape'){ e.stopPropagation(); handleCloseEditModal(); }
+            if(e.key==='Tab' && editModalRef.current){
+              const focusables = Array.from(editModalRef.current.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"))
+                .filter(el => !el.hasAttribute('disabled'));
+              if(!focusables.length) return;
+              const first = focusables[0];
+              const last = focusables[focusables.length-1];
+              if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); }
+              else if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+            }
+          }}
+          aria-modal="true"
+          role="dialog"
+          aria-labelledby="editTaskTitle"
+        >
+          <div
+            ref={editModalRef}
+            className="bg-white w-full max-w-xl rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in slide-in-from-top-2"
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-blue-100 bg-gradient-to-r from-blue-50 via-indigo-50 to-sky-50 rounded-t-2xl">
+              <div className="space-y-1">
+                <h3 id="editTaskTitle" className="text-lg font-semibold text-gray-800">Edytuj zadanie</h3>
+                <p className="text-sm text-gray-500">Aktualizuj szczegóły i przypisanie zadania.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseEditModal}
+                className="p-2 rounded-lg hover:bg-white/70 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                aria-label="Zamknij"
+              >
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+            </div>
+            <form onSubmit={e => { e.preventDefault(); handleSaveEdit(); }} className="px-6 py-6 space-y-6">
+              {editErrors.length>0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700" aria-live="assertive">
+                  <ul className="list-disc list-inside space-y-1">
+                    {editErrors.map((error, index) => (
+                      <li key={index}>{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Tytuł zadania</label>
+                  <input
+                    value={editForm.name}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setEditForm(prev => ({ ...prev, name: value }));
+                      setEditErrors([]);
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    placeholder="Wprowadź nazwę zadania"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Pracownik</label>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <button
+                        ref={editAssignBtnRef}
+                        type="button"
+                        onClick={() => setShowEditAssignMenu(v => !v)}
+                        className="w-full inline-flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-lg bg-white border border-gray-300 shadow-sm hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        aria-haspopup="listbox"
+                        aria-expanded={showEditAssignMenu}
+                      >
+                        <span className="inline-flex items-center gap-2 text-gray-700">
+                          <UserRoundPlus className="h-4 w-4 text-indigo-500" />
+                          <span className="truncate">{editSelectedEmployeeLabel || 'Wybierz pracownika'}</span>
+                        </span>
+                        <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${showEditAssignMenu ? 'rotate-180' : ''}`} />
+                      </button>
+                      {showEditAssignMenu && (
+                        <div
+                          ref={editAssignMenuRef}
+                          role="listbox"
+                          tabIndex={-1}
+                          onKeyDown={(e)=> { if(e.key==='Escape'){ e.preventDefault(); setShowEditAssignMenu(false); editAssignBtnRef.current?.focus(); } }}
+                          className="absolute z-50 mt-2 w-full overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 border border-gray-100"
+                        >
+                          <div className="max-h-60 overflow-y-auto py-1">
+                            {employeesSorted.map(option => {
+                              const isActive = Number(option.id) === Number(editForm.assignedEmployeeId);
+                              return (
+                                <button
+                                  type="button"
+                                  key={option.id}
+                                  onClick={() => selectEditTaskAssignee(Number(option.id))}
+                                  className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${isActive ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700'}`}
+                                  role="option"
+                                  aria-selected={isActive}
+                                >
+                                  <span className="truncate">{option.label}</span>
+                                  {isActive && <CheckCircle2 className="h-4 w-4 text-indigo-500" />}
+                                </button>
+                              );
+                            })}
+                            {!employeesSorted.length && (
+                              <div className="px-3 py-2 text-sm text-gray-500">Brak dostępnych pracowników</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={clearEditTaskAssignee}
+                      className="px-3 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-50"
+                      disabled={editForm.assignedEmployeeId == null}
+                    >
+                      Wyczyść
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Termin</label>
+                  <button
+                    type="button"
+                    onClick={editDatePicker.open}
+                    className="w-full inline-flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white shadow-sm hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    <span className="inline-flex items-center gap-2 text-gray-700">
+                      <Calendar className="h-4 w-4 text-indigo-500" />
+                      <span className="truncate">{formatDueDateHuman(editForm.dueDate)}</span>
+                    </span>
+                    <ChevronDown className="h-4 w-4 text-gray-400" />
+                  </button>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleCloseEditModal}
+                  className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-60"
+                  disabled={editSaving}
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="submit"
+                  disabled={editSaving}
+                  className="inline-flex items-center gap-2 px-6 py-2.5 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 shadow hover:from-indigo-500 hover:to-blue-500 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-60"
+                >
+                  {editSaving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Zapisywanie...
+                    </>
+                  ) : (
+                    'Zapisz zmiany'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
+        </Portal>
       )}
     </>
   );
