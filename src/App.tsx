@@ -102,6 +102,20 @@ function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any
   );
 }
 
+function MobileProtectedLayout({ currentUser, onLogout, meetings, rooms }: { currentUser: User | null, onLogout: () => void, meetings: Meeting[], rooms: Room[] }) {
+  const isMobile = useIsMobile();
+  if (!currentUser) return <Navigate to="/login" replace />;
+  if (!isMobile) return <Navigate to="/dashboard" replace />;
+  return (
+    <MobileMeetings
+      currentUser={currentUser}
+      meetings={meetings}
+      onLogout={onLogout}
+      rooms={rooms}
+    />
+  );
+}
+
 // When user lacks permissions, notify and redirect
 function UnauthorizedRedirect() {
   useEffect(() => {
@@ -552,11 +566,17 @@ function App() {
         </Route>
 
         {/* Protected mobile route (no desktop layout) */}
-        <Route path="/m" element={currentUser ? (
-          <MobileMeetings currentUser={currentUser} meetings={meetings} onLogout={handleLogout} rooms={roomsState} />
-        ) : (
-          <Navigate to="/login" replace />
-        )} />
+        <Route
+          path="/m"
+          element={
+            <MobileProtectedLayout
+              currentUser={currentUser}
+              onLogout={handleLogout}
+              meetings={meetings}
+              rooms={roomsState}
+            />
+          }
+        />
 
         {/* Redirect root to dashboard if authenticated, else to login */}
         <Route path="/" element={currentUser ? <Navigate to={isMobile ? '/m' : '/dashboard'} /> : <Navigate to="/login" />} />
