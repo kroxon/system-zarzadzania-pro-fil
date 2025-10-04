@@ -1,4 +1,4 @@
-import { MoreHorizontal, Plus, CheckCircle2, Circle, ArrowUpDown, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Calendar, UserRoundPlus, Loader2 } from 'lucide-react';
+import { MoreHorizontal, Plus, CheckCircle2, Circle, ArrowUpDown, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Calendar, UserRoundPlus, Loader2, Trash2 } from 'lucide-react';
 import Portal from '../common/Portal';
 import { notify } from '../common/Notification';
 import { useState, useEffect, useMemo, useRef } from 'react';
@@ -199,6 +199,14 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
   const [editErrors, setEditErrors] = useState<string[]>([]);
   const [editSaving, setEditSaving] = useState(false);
 
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteDialogRef = useRef<HTMLDivElement | null>(null);
+  const deletePrevFocusRef = useRef<HTMLElement | null>(null);
+  const deleteConfirmBtnRef = useRef<HTMLButtonElement | null>(null);
+
   const yearsList = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const maxYear = currentYear + FUTURE_YEAR_LOOKAHEAD;
@@ -330,6 +338,11 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
     const last = (editSelectedEmployee.surname || '').trim();
     return [last, first].filter(Boolean).join(' ').trim();
   }, [editSelectedEmployee]);
+
+  const deleteTargetTask = useMemo(() => {
+    if (deleteTargetId == null) return null;
+    return taskList.find(task => task.id === deleteTargetId) ?? null;
+  }, [deleteTargetId, taskList]);
 
   const handleOpenCreateModal = () => {
     if (userRole !== 'admin') return; // guard
@@ -551,51 +564,91 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
     };
   }, [editingTask]);
 
-  const handleUndoCompleteTask = (taskId: number) => {
-    const token = localStorage.getItem('token');
-    const task = taskList.find(t => t.id === taskId);
-    if (!token || !task) return;
-    // Only admin or assigned user can toggle
-  const uidNum = Number(effectiveCurrentUserId);
-    if (!(userRole === 'admin' || task.assignedEmployeesIds.some(id => Number(id) === uidNum))) return;
-    import('../../utils/api/tasks').then(api => {
-      api.updateEmployeeTask(taskId, { ...task, isCompleted: false }, token)
-        .then(() => {
-          setTaskList(taskList.map(t => t.id === taskId ? { ...t, isCompleted: false } : t));
-        })
-        .catch(() => {/* obsługa błędu */});
-    });
-  };
-  const handleCompleteTask = (taskId: number) => {
-    const token = localStorage.getItem('token');
-    const task = taskList.find(t => t.id === taskId);
-    if (!token || !task) return;
-  const uidNum = Number(effectiveCurrentUserId);
-    if (!(userRole === 'admin' || task.assignedEmployeesIds.some(id => Number(id) === uidNum))) return;
-    import('../../utils/api/tasks').then(api => {
-      api.updateEmployeeTask(taskId, { ...task, isCompleted: true }, token)
-        .then(() => {
-          setTaskList(taskList.map(t => t.id === taskId ? { ...t, isCompleted: true } : t));
-        })
-        .catch(() => {/* obsługa błędu */});
-    });
-  };
-
-  const handleDeleteTask = async (taskId: number) => {
-    if (userRole !== 'admin') return;
-    if (!window.confirm('Czy na pewno chcesz usunąć to zadanie?')) return;
-    const token = localStorage.getItem('token');
-    if (!token) {
-      notify.error('Brak tokenu uwierzytelnienia. Zaloguj się ponownie.');
-      return;
+  useEffect(() => {
+    if (showDeleteDialog) {
+      document.body.style.overflow = 'hidden';
+      requestAnimationFrame(() => deleteConfirmBtnRef.current?.focus());
+    } else {
+      document.body.style.overflow = '';
     }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showDeleteDialog]);
+
+  const handleUndoCompleteTask = async (taskId: number) => {
+    const token = localStorage.getItem('token');
+    const task = taskList.find(t => t.id === taskId);
+    if (!token || !task) return;
+    const uidNum = Number(effectiveCurrentUserId);
+    if (!(userRole === 'admin' || task.assignedEmployeesIds.some(id => Number(id) === uidNum))) return;
     try {
       const api = await import('../../utils/api/tasks');
-      await api.deleteEmployeeTask(taskId, token);
-      setTaskList(prev => prev.filter(t => t.id !== taskId));
-      notify.success('Zadanie usunięte');
+      await api.updateEmployeeTask(taskId, { ...task, isCompleted: false }, token);
+      setTaskList(prev => prev.map(t => (t.id === taskId ? { ...t, isCompleted: false } : t)));
+      notify.success('Status zadania przywrócony do „Do zrobienia”.');
     } catch (error: any) {
-      notify.error(error?.message || 'Nie udało się usunąć zadania');
+      notify.error(error?.message || 'Nie udało się cofnąć ukończenia zadania.');
+    }
+  };
+
+  const handleCompleteTask = async (taskId: number) => {
+    const token = localStorage.getItem('token');
+    const task = taskList.find(t => t.id === taskId);
+    if (!token || !task) return;
+    const uidNum = Number(effectiveCurrentUserId);
+    if (!(userRole === 'admin' || task.assignedEmployeesIds.some(id => Number(id) === uidNum))) return;
+    try {
+      const api = await import('../../utils/api/tasks');
+      await api.updateEmployeeTask(taskId, { ...task, isCompleted: true }, token);
+      setTaskList(prev => prev.map(t => (t.id === taskId ? { ...t, isCompleted: true } : t)));
+      notify.success('Zadanie oznaczone jako ukończone.');
+    } catch (error: any) {
+      notify.error(error?.message || 'Nie udało się oznaczyć zadania jako ukończone.');
+    }
+  };
+
+  const handleDeleteTask = (taskId: number) => {
+    if (userRole !== 'admin') return;
+    setDeleteTargetId(taskId);
+    setDeleteError(null);
+    setIsDeleting(false);
+    deletePrevFocusRef.current = document.activeElement as HTMLElement | null;
+    setShowDeleteDialog(true);
+  };
+
+  const handleCloseDeleteDialog = () => {
+    setShowDeleteDialog(false);
+    setDeleteTargetId(null);
+    setDeleteError(null);
+    setIsDeleting(false);
+    deletePrevFocusRef.current?.focus?.();
+    deletePrevFocusRef.current = null;
+  };
+
+  const confirmDeleteTask = async () => {
+    if (deleteTargetId == null || isDeleting) return;
+    const token = localStorage.getItem('token');
+    if (!token) {
+      const message = 'Brak tokenu uwierzytelnienia. Zaloguj się ponownie.';
+      setDeleteError(message);
+      notify.error(message);
+      return;
+    }
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const api = await import('../../utils/api/tasks');
+      await api.deleteEmployeeTask(deleteTargetId, token);
+      setTaskList(prev => prev.filter(t => t.id !== deleteTargetId));
+      notify.success('Zadanie zostało usunięte.');
+      handleCloseDeleteDialog();
+    } catch (error: any) {
+      const message = error?.message || 'Nie udało się usunąć zadania.';
+      setDeleteError(message);
+      notify.error(message);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -862,6 +915,123 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+        </Portal>
+      )}
+
+      {showDeleteDialog && (
+        <Portal>
+        <div
+          tabIndex={-1}
+          className="fixed inset-0 z-[1050] flex items-center justify-center p-6 bg-black/45 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isDeleting) {
+              handleCloseDeleteDialog();
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && !isDeleting) {
+              e.preventDefault();
+              handleCloseDeleteDialog();
+            }
+            if (e.key === 'Tab' && deleteDialogRef.current) {
+              const focusables = Array.from(
+                deleteDialogRef.current.querySelectorAll<HTMLElement>(
+                  "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"
+                )
+              ).filter(el => !el.hasAttribute('disabled'));
+              if (!focusables.length) return;
+              const first = focusables[0];
+              const last = focusables[focusables.length - 1];
+              if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+              } else if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+              }
+            }
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="deleteTaskTitle"
+        >
+          <div
+            ref={deleteDialogRef}
+            className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-red-100 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-red-100 bg-gradient-to-r from-rose-50 via-red-50 to-orange-50">
+              <div>
+                <h3 id="deleteTaskTitle" className="text-lg font-semibold text-gray-900">Usuń zadanie</h3>
+                <p className="text-sm text-gray-600">Ta operacja jest nieodwracalna.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseDeleteDialog}
+                className="p-2 rounded-lg hover:bg-white/70 focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
+                aria-label="Zamknij okno potwierdzenia"
+                disabled={isDeleting}
+              >
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Zadanie</div>
+                <div className="mt-1 text-base font-semibold text-gray-900 break-words">
+                  {deleteTargetTask?.name ?? 'Nieznane zadanie'}
+                </div>
+                <dl className="mt-3 space-y-1 text-sm text-gray-600">
+                  <div className="flex items-center justify-between">
+                    <dt>Termin</dt>
+                    <dd className="font-medium text-gray-800">{deleteTargetTask?.dueDate || 'Brak daty'}</dd>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <dt>Przypisane do</dt>
+                    <dd className="font-medium text-gray-800">{deleteTargetTask ? getAssignedNames(deleteTargetTask) || 'Brak' : 'Brak'}</dd>
+                  </div>
+                </dl>
+              </div>
+              <p className="text-sm text-gray-600">
+                Zadanie zostanie trwale usunięte z listy, a przypisani pracownicy stracą do niego dostęp.
+              </p>
+              {deleteError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+                  {deleteError}
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 bg-gray-50 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={handleCloseDeleteDialog}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-100 focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-60"
+                disabled={isDeleting}
+              >
+                Anuluj
+              </button>
+              <button
+                type="button"
+                ref={deleteConfirmBtnRef}
+                onClick={confirmDeleteTask}
+                disabled={isDeleting}
+                className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white rounded-lg bg-gradient-to-r from-red-600 to-rose-600 shadow hover:from-red-500 hover:to-rose-500 focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-60"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Usuwanie...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Usuń zadanie
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
         </Portal>
