@@ -71,6 +71,15 @@ export interface Meeting {
   createdBy: string;
 }
 
+export interface MeetingBatchPayload {
+  meetings: Array<Omit<Meeting, 'id'>>;
+  recurrence?: {
+    additionalWeeks: number;
+    totalOccurrences: number;
+    dates: string[];
+  };
+}
+
 export interface PatientVisit {
   id: string;
   patientId: string;

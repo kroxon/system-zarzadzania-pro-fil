@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Clock, Trash2, AlertCircle } from 'lucide-react';
-import { Meeting, User, Room, Patient, EventStatus } from '../../types';
+import { Meeting, User, Room, Patient, EventStatus, MeetingBatchPayload } from '../../types';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { fetchEmployeeWorkHours } from '../../utils/api/employees';
 import type { WorkHours } from '../../types';
@@ -12,7 +12,7 @@ import { getAllEventStatuses } from '../../utils/api/eventStatuses';
 interface MeetingFormProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (meeting: Omit<Meeting, 'id'>) => void;
+  onSubmit: (payload: MeetingBatchPayload) => Promise<void> | void;
   onDelete?: (meetingId: string) => void;
   users: User[];
   rooms: Room[];
@@ -107,7 +107,59 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   // Workhours cache for employees used to determine availability
   const [workhoursByEmployee, setWorkhoursByEmployee] = useState<Record<string, WorkHours[]>>({});
   const [loadingEmployees, setLoadingEmployees] = useState<Set<string>>(new Set());
+  const workhoursCacheRef = useRef<Map<string, Map<string, WorkHours[]>>>(new Map());
   const token = (currentUser?.token) || localStorage.getItem('token') || undefined;
+
+  const [repeatWeeksForward, setRepeatWeeksForward] = useState<number>(0);
+  const [repeatMenuOpen, setRepeatMenuOpen] = useState(false);
+  const [pendingSubmission, setPendingSubmission] = useState<MeetingBatchPayload | null>(null);
+
+  const getPlural = React.useCallback((count: number, forms: [string, string, string]) => {
+    const abs = Math.abs(count);
+    if (abs === 1) return forms[0];
+    const last = abs % 10;
+    const lastTwo = abs % 100;
+    if (last >= 2 && last <= 4 && !(lastTwo >= 12 && lastTwo <= 14)) return forms[1];
+    return forms[2];
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      workhoursCacheRef.current = new Map();
+      setWorkhoursByEmployee({});
+      setLoadingEmployees(new Set());
+    }
+  }, [isOpen]);
+
+  const computeWeekKey = React.useCallback((dateYmd: string) => {
+    if (!dateYmd) return '';
+    const [y, m, d] = dateYmd.split('-').map(Number);
+    const base = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+    base.setDate(base.getDate() - ((base.getDay() + 6) % 7));
+    return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`;
+  }, []);
+
+  const getWorkhoursFromCache = React.useCallback((id: string, dateYmd: string): WorkHours[] | undefined => {
+    if (!id || !dateYmd) return undefined;
+    const weekKey = computeWeekKey(dateYmd);
+    return workhoursCacheRef.current.get(id)?.get(weekKey);
+  }, [computeWeekKey]);
+
+  const buildRecurrenceDates = React.useCallback((startDate: string, weeksForward: number) => {
+    if (!startDate) return [] as string[];
+    const [y, m, d] = startDate.split('-').map(Number);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return [startDate];
+    const base = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const results: string[] = [];
+    const count = Math.max(0, weeksForward);
+    for (let i = 0; i <= count; i++) {
+      const next = new Date(base);
+      next.setDate(base.getDate() + i * 7);
+      results.push(`${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`);
+    }
+    return results;
+  }, []);
 
   // pobranie statusów (tylko wyświetlanie)
   const [eventStatuses, setEventStatuses] = useState<EventStatus[]>([]);
@@ -151,8 +203,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return match?.id;
   }, [editingMeeting?.statusId, eventStatuses, formData.status, normalizeStatusName]);
 
-  const fetchWorkhoursForIds = React.useCallback(async (ids: string[], dateYmd: string) => {
-    if (!token || !ids.length || !dateYmd) return;
+  const fetchWorkhoursForIds = React.useCallback(async (ids: string[], dateYmd: string, options?: { applyToState?: boolean }) => {
+    if (!token || !ids.length || !dateYmd) return {} as Record<string, WorkHours[]>;
     // compute week window for filtering (Mon..Sun)
     const [y, m, d] = dateYmd.split('-').map(Number);
     const day = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
@@ -164,6 +216,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     weekEnd.setHours(23,59,59,999);
     const wsMs = weekStart.getTime();
     const weMs = weekEnd.getTime();
+    const weekKey = computeWeekKey(dateYmd);
 
     // mark all as loading
     setLoadingEmployees(prev => {
@@ -194,7 +247,16 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
           else toApply[id] = [];
         });
       }
-      setWorkhoursByEmployee(prev => ({ ...prev, ...toApply }));
+      // update cache for fetched week
+      Object.entries(toApply).forEach(([id, list]) => {
+        const existing = workhoursCacheRef.current.get(id) ?? new Map<string, WorkHours[]>();
+        existing.set(weekKey, list);
+        workhoursCacheRef.current.set(id, existing);
+      });
+      if (options?.applyToState !== false) {
+        setWorkhoursByEmployee(prev => ({ ...prev, ...toApply }));
+      }
+      return toApply;
     } finally {
       // clear loading flags
       setLoadingEmployees(prev => {
@@ -203,12 +265,26 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
         return next;
       });
     }
-  }, [token]);
+  }, [token, computeWeekKey]);
+
+  const ensureWorkhoursForWeek = React.useCallback(async (ids: string[], dateYmd: string, options?: { applyToState?: boolean }) => {
+    if (!ids.length || !dateYmd) return {} as Record<string, WorkHours[]>;
+    const weekKey = computeWeekKey(dateYmd);
+    const missing = ids.filter(id => !workhoursCacheRef.current.get(id)?.has(weekKey));
+    if (missing.length) {
+      await fetchWorkhoursForIds(missing, dateYmd, options);
+    }
+    const result: Record<string, WorkHours[]> = {};
+    ids.forEach(id => {
+      result[id] = getWorkhoursFromCache(id, dateYmd) || [];
+    });
+    return result;
+  }, [computeWeekKey, fetchWorkhoursForIds, getWorkhoursFromCache]);
 
 
   // Check availability using backend workhours: requires the requested interval to be fully covered by at least one workhour range
   const isSpecialistAvailable = React.useCallback((id: string, date: string, start: string, end: string) => {
-    const list = workhoursByEmployee[id];
+    const list = getWorkhoursFromCache(id, date) ?? workhoursByEmployee[id];
     if (!list) return false; // not loaded yet -> treat as niedostępny until data arrives
     if (!date || !start || !end) return false;
     const startLocal = new Date(`${date}T${start}:00`);
@@ -232,7 +308,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       }
     }
     return coverFrom >= reqEnd;
-  }, [workhoursByEmployee]);
+  }, [getWorkhoursFromCache, workhoursByEmployee]);
 
   // reset błędów przy otwarciu i zmianie spotkania
   useEffect(() => { if (isOpen) setErrors([]); }, [isOpen]);
@@ -247,6 +323,9 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     setEndOpen(false);
     setShowDeleteConfirm(false);
     setShowPastSubmitInfo(false);
+     setRepeatMenuOpen(false);
+     setRepeatWeeksForward(0);
+     setPendingSubmission(null);
     onClose();
   };
 
@@ -304,75 +383,74 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     }
   }, [editingMeeting, currentUser, selectedTime, initialRoomId, selectedEndTime]);
 
-  const validateForm = (): boolean => {
-    // edycja przeszłego spotkania: pozwól tylko na status/notatki
-    if (restrictPastEdit) {
-      setErrors([]);
-      return true;
+  useEffect(() => {
+    if (editingMeeting) {
+      setRepeatWeeksForward(0);
+      setRepeatMenuOpen(false);
     }
-    const newErrors: string[] = [];
-    const selectedSpecialistIds = formData.specialistIds.filter(Boolean);
-    if (!selectedSpecialistIds.length) {
-      if (!isAdmin) {
-        newErrors.push('Wybierz co najmniej jednego specjalistę. Tylko administrator jest uprawniony do zarezerwowania sali bez specjalisty.');
-      }
-    }
-    // Wymuś udział zalogowanego pracownika w spotkaniu które tworzy
-    if (currentUser.role === 'employee' && !formData.specialistIds.filter(Boolean).includes(currentUser.id)) {
-      newErrors.push('Jako pracownik musisz być uczestnikiem spotkania');
-    }
-    // patient optional – no error
-    if (!formData.roomId) newErrors.push('Wybierz salę');
-    if (!formData.startTime || !formData.endTime) newErrors.push('Określ godziny spotkania');
-    if (formData.startTime && formData.endTime) {
-      const startM = toMin(formData.startTime); const endM = toMin(formData.endTime);
-      if (endM <= startM) newErrors.push('Godzina zakończenia musi być późniejsza niż rozpoczęcia');
-    }
-    // creation: start must be in the future (admin can create in the past)
-    if (!isAdmin && !editingMeeting && formData.startTime && !isDateTimeInFuture(effectiveDate, formData.startTime)) {
-      newErrors.push('Termin rozpoczęcia musi być w przyszłości');
-    }
-    // conflict per specialist and room (using effectiveDate)
-    selectedSpecialistIds.forEach(id => {
-      const u = users.find(u=>u.id===id);
-      const fullName = u ? `${u.surname} ${u.name}` : id;
-      // Dostępność sprawdzamy tylko dla pracowników
-      if (u?.role === 'employee') {
-        if (!isSpecialistAvailable(id, effectiveDate, formData.startTime, formData.endTime)) {
-          newErrors.push(`Specjalista (${fullName}) jest niedostępny`);
-        } else if (specialistHasConflict(id, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) {
-          newErrors.push(`Specjalista (${fullName}) jest zajęty`);
-        }
-      }
-    });
-    // patient conflicts
-    formData.patientIds.forEach(pid => {
-      if (patientHasConflict(pid, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) {
-        const p = effectivePatients.find(pp => String(pp.id) === String(pid));
-        const fullName = p ? `${p.surname} ${p.name}` : pid;
-        newErrors.push(`Podopieczny (${fullName}) jest już w innym spotkaniu w tym czasie`);
-      }
-    });
-    if (roomHasConflict(formData.roomId, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id)) newErrors.push('Sala jest zajęta w tym przedziale czasu');
-    setErrors(newErrors); return newErrors.length===0;
+  }, [editingMeeting]);
+
+  const isMeetingInFuture = (m: Meeting | undefined) => {
+    if (!m) return false;
+    const [y, mo, d] = m.date.split('-').map(Number);
+    const [sh, sm] = m.startTime.split(':').map(Number);
+    const startLocal = new Date(y, (mo || 1) - 1, d || 1, sh || 0, sm || 0, 0, 0);
+    return startLocal.getTime() > Date.now();
   };
 
-  const doSubmit = () => {
+  const isMeetingInPastByEnd = (m: Meeting | undefined) => {
+    if (!m) return false;
+    const [y, mo, d] = m.date.split('-').map(Number);
+    const [eh, em] = m.endTime.split(':').map(Number);
+    const endLocal = new Date(y, (mo || 1) - 1, d || 1, eh || 0, em || 0, 0, 0);
+    return endLocal.getTime() < Date.now();
+  };
+
+  const canCurrentUserEdit = (m: Meeting | undefined) => {
+    if (!m) return false;
+    if (currentUser.role === 'admin' || currentUser.role === 'contact') return true;
+    if (currentUser.role === 'employee') {
+      return m.specialistId === currentUser.id || (m.specialistIds?.includes(currentUser.id) ?? false) || m.createdBy === currentUser.id;
+    }
+    return false;
+  };
+
+  const isEditingPast = !!editingMeeting && isMeetingInPastByEnd(editingMeeting);
+  const pastEditBlocked = !isAdmin && isEditingPast;
+  const restrictPastEdit = !!editingMeeting && isEditingPast && !isAdmin && canCurrentUserEdit(editingMeeting);
+  const canEditThis = !!editingMeeting && canCurrentUserEdit(editingMeeting);
+
+  const [localDate, setLocalDate] = useState<string>(selectedDate);
+  useEffect(()=>{ if(isOpen) setLocalDate(selectedDate); }, [isOpen, selectedDate]);
+  const toYMD = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const parseYMD = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, (m||1)-1, d||1); };
+  const formatPolishDate = (s: string) => { const d = parseYMD(s); const day = String(d.getDate()).padStart(2,'0'); const month = new Intl.DateTimeFormat('pl-PL', { month: 'long' }).format(d); const year = d.getFullYear(); return `${day}.${month}.${year}`; };
+  const effectiveDate = localDate || selectedDate;
+
+  useEffect(() => {
+    if (!isOpen || editingMeeting) return;
+    const todayYMD = toYMD(new Date());
+    if (!isAdmin && localDate < todayYMD) {
+      setLocalDate(todayYMD);
+      setShowPastSubmitInfo(true);
+    }
+  }, [isOpen, editingMeeting, localDate, isAdmin]);
+
+  const buildMeetingForDate = React.useCallback((date: string): Omit<Meeting, 'id'> => {
     const primarySpec = formData.specialistIds[0];
     const primaryPatientId = formData.patientIds[0];
-    // Use effectivePatients (prop patients or loaded from storage) to resolve names
     const patientNamesList = formData.patientIds.map(id => {
       const p = effectivePatients.find(pp => String(pp.id) === String(id));
       if (!p) return String(id);
       return `${p.name} ${p.surname}`;
     });
-    const submitData: Omit<Meeting, 'id'> = {
+    return {
       specialistId: primarySpec || '',
       patientName: patientNamesList[0] || formData.patientName,
       patientId: primaryPatientId,
       guestName: formData.guestName,
       roomId: formData.roomId,
-      date: effectiveDate,
+      date,
       startTime: formData.startTime,
       endTime: formData.endTime,
       notes: formData.notes,
@@ -383,24 +461,129 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       patientNamesList,
       name: formData.meetingName,
     };
-    onSubmit(submitData);
-    onClose();
+  }, [currentUser.id, effectivePatients, formData]);
+
+  const prepareSubmission = React.useCallback(async (): Promise<MeetingBatchPayload | null> => {
+    if (restrictPastEdit) {
+      setErrors([]);
+      return { meetings: [buildMeetingForDate(effectiveDate)] };
+    }
+
+    const newErrors: string[] = [];
+    const selectedSpecialistIds = formData.specialistIds.filter(Boolean);
+    if (!selectedSpecialistIds.length && !isAdmin) {
+      newErrors.push('Wybierz co najmniej jednego specjalistę. Tylko administrator jest uprawniony do zarezerwowania sali bez specjalisty.');
+    }
+    if (currentUser.role === 'employee' && !selectedSpecialistIds.includes(currentUser.id)) {
+      newErrors.push('Jako pracownik musisz być uczestnikiem spotkania');
+    }
+    if (!formData.roomId) newErrors.push('Wybierz salę');
+    if (!formData.startTime || !formData.endTime) newErrors.push('Określ godziny spotkania');
+    if (formData.startTime && formData.endTime) {
+      const startM = toMin(formData.startTime); const endM = toMin(formData.endTime);
+      if (endM <= startM) newErrors.push('Godzina zakończenia musi być późniejsza niż rozpoczęcia');
+    }
+
+    const recurrenceWeeks = editingMeeting ? 0 : repeatWeeksForward;
+    const occurrenceDates = buildRecurrenceDates(effectiveDate, recurrenceWeeks);
+    if (!occurrenceDates.length) {
+      newErrors.push('Nie udało się ustalić daty spotkania');
+    }
+
+    const startTime = formData.startTime;
+    const endTime = formData.endTime;
+    if (!startTime || !endTime) {
+      setErrors(newErrors);
+      return null;
+    }
+
+    const formatDateLabel = (date: string) => {
+      const [y, m, d] = date.split('-').map(Number);
+      const dt = new Date(y, (m || 1) - 1, d || 1);
+      return new Intl.DateTimeFormat('pl-PL', { day: '2-digit', month: 'long', year: 'numeric' }).format(dt);
+    };
+
+    if (selectedSpecialistIds.length) {
+      for (const date of occurrenceDates) {
+        await ensureWorkhoursForWeek(selectedSpecialistIds, date, { applyToState: date === effectiveDate });
+      }
+    }
+
+    occurrenceDates.forEach((date, index) => {
+      if (!isAdmin && !editingMeeting && !isDateTimeInFuture(date, startTime)) {
+        newErrors.push(`Termin ${index === 0 ? 'główny' : `(+${index} tyg.)`} (${formatDateLabel(date)}) znajduje się w przeszłości`);
+        if (index === 0) {
+          setShowPastSubmitInfo(true);
+        }
+      }
+      selectedSpecialistIds.forEach(id => {
+        const u = users.find(user => user.id === id);
+        if (u?.role === 'employee') {
+          const fullName = `${u.surname} ${u.name}`;
+          if (!isSpecialistAvailable(id, date, startTime, endTime)) {
+            newErrors.push(`Specjalista (${fullName}) nie pracuje w godzinach ${startTime}-${endTime} dnia ${formatDateLabel(date)}`);
+          } else if (specialistHasConflict(id, date, startTime, endTime, editingMeeting?.id)) {
+            newErrors.push(`Specjalista (${fullName}) ma inne spotkanie w dniu ${formatDateLabel(date)} (${startTime}-${endTime})`);
+          }
+        }
+      });
+      formData.patientIds.forEach(pid => {
+        if (patientHasConflict(pid, date, startTime, endTime, editingMeeting?.id)) {
+          const p = effectivePatients.find(pp => String(pp.id) === String(pid));
+          const fullName = p ? `${p.surname} ${p.name}` : pid;
+          newErrors.push(`Podopieczny (${fullName}) jest już zapisany ${formatDateLabel(date)} w tym samym czasie`);
+        }
+      });
+      if (formData.roomId && roomHasConflict(formData.roomId, date, startTime, endTime, editingMeeting?.id)) {
+        newErrors.push(`Sala jest zajęta ${formatDateLabel(date)} w godzinach ${startTime}-${endTime}`);
+      }
+    });
+
+    if (newErrors.length) {
+      setErrors(Array.from(new Set(newErrors)));
+      return null;
+    }
+
+    setErrors([]);
+
+    const meetingsPayload = occurrenceDates.map(date => buildMeetingForDate(date));
+    const payload: MeetingBatchPayload = { meetings: meetingsPayload };
+    if (!editingMeeting && recurrenceWeeks > 0) {
+      payload.recurrence = {
+        additionalWeeks: recurrenceWeeks,
+        totalOccurrences: meetingsPayload.length,
+        dates: occurrenceDates,
+      };
+    }
+    return payload;
+  }, [restrictPastEdit, buildMeetingForDate, effectiveDate, formData, isAdmin, currentUser.role, editingMeeting, repeatWeeksForward, buildRecurrenceDates, ensureWorkhoursForWeek, users, isSpecialistAvailable, specialistHasConflict, patientHasConflict, effectivePatients, roomHasConflict, isDateTimeInFuture, setShowPastSubmitInfo]);
+
+  const finalizeSubmit = async (payload: MeetingBatchPayload) => {
+    try {
+      await Promise.resolve(onSubmit(payload));
+      handleClose();
+    } catch (error) {
+      console.error('Nie udało się zapisać spotkań', error);
+      setErrors(['Wystąpił problem podczas zapisywania spotkania. Spróbuj ponownie.']);
+    } finally {
+      setPendingSubmission(null);
+    }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validateForm()) return;
-    // If user changed time to past while form is open, block submission
+    const payload = await prepareSubmission();
+    if (!payload) return;
     if (!isAdmin && !editingMeeting && !isDateTimeInFuture(effectiveDate, formData.startTime)) {
       setShowPastSubmitInfo(true);
       return;
     }
-    // For admin: confirm saving without specialists
     if (isAdmin && formData.specialistIds.length === 0) {
+      setPendingSubmission(payload);
       setShowNoSpecialistConfirm(true);
       return;
     }
-    doSubmit();
+    await finalizeSubmit(payload);
   };
 
   const [roomsOpen, setRoomsOpen] = useState(false);
@@ -438,64 +621,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return ()=> window.removeEventListener('keydown', handleKey, true);
   }, [isOpen, onClose]);
 
-  // Determine if meeting is in the future (based on start time)
-  const isMeetingInFuture = (m: Meeting | undefined) => {
-    if (!m) return false;
-    const [y, mo, d] = m.date.split('-').map(Number);
-    const [sh, sm] = m.startTime.split(':').map(Number);
-    const startLocal = new Date(y, (mo || 1) - 1, d || 1, sh || 0, sm || 0, 0, 0);
-    return startLocal.getTime() > Date.now();
-  };
-
-  // Determine if meeting is in the past (based on end time)
-  const isMeetingInPastByEnd = (m: Meeting | undefined) => {
-    if (!m) return false;
-    const [y, mo, d] = m.date.split('-').map(Number);
-    const [eh, em] = m.endTime.split(':').map(Number);
-    const endLocal = new Date(y, (mo || 1) - 1, d || 1, eh || 0, em || 0, 0, 0);
-    return endLocal.getTime() < Date.now();
-  };
-
-  // Determine if current user can edit this meeting (broader than delete)
-  const canCurrentUserEdit = (m: Meeting | undefined) => {
-    if (!m) return false;
-    if (currentUser.role === 'admin' || currentUser.role === 'contact') return true;
-    if (currentUser.role === 'employee') {
-      return m.specialistId === currentUser.id || (m.specialistIds?.includes(currentUser.id) ?? false) || m.createdBy === currentUser.id;
-    }
-    return false;
-  };
-
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const isEditingPast = !!editingMeeting && isMeetingInPastByEnd(editingMeeting);
-  // Only non-admins are blocked from editing past meetings
-  const pastEditBlocked = !isAdmin && isEditingPast;
-  // (Manual status editing removed – statuses are now display-only)
-
-  // When editing a past meeting and user has permission, restrict editing to status + notes only
-  // Only non-admins are restricted when editing past meetings
-  const restrictPastEdit = !!editingMeeting && isEditingPast && !isAdmin && canCurrentUserEdit(editingMeeting);
-  const canEditThis = !!editingMeeting && canCurrentUserEdit(editingMeeting);
-
-  // lokalna data + format PL
-  const [localDate, setLocalDate] = useState<string>(selectedDate);
-  useEffect(()=>{ if(isOpen) setLocalDate(selectedDate); }, [isOpen, selectedDate]);
-  const toYMD = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  const parseYMD = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, (m||1)-1, d||1); };
-  const formatPolishDate = (s: string) => { const d = parseYMD(s); const day = String(d.getDate()).padStart(2,'0'); const month = new Intl.DateTimeFormat('pl-PL', { month: 'long' }).format(d); const year = d.getFullYear(); return `${day}.${month}.${year}`; };
-  const effectiveDate = localDate || selectedDate;
-
-  // jeśli tworzenie w przeszłości -> ustaw dziś + pokaż info
-  useEffect(() => {
-    if (!isOpen || editingMeeting) return;
-    const todayYMD = toYMD(new Date());
-    if (!isAdmin && localDate < todayYMD) {
-      setLocalDate(todayYMD);
-      setShowPastSubmitInfo(true);
-    }
-  }, [isOpen, editingMeeting, localDate, isAdmin]);
-
-  useEffect(() => {}, [isOpen, currentUser, initialRoomId, selectedTime, selectedEndTime]);
 
   const [dateOpen, setDateOpen] = useState(false);
   const base = parseYMD(localDate);
@@ -588,11 +714,12 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   // Helper: jeden zunifikowany status dla wszystkich ról – patrzymy tylko na dostępność (workhours dla employee, inni zawsze mają "czas pracy"), konflikty i wybrany zakres czasu.
   // Priorytety: ładowanie -> brak godzin (employee) -> brak wybranego czasu -> niedostępny (poza godzinami) -> zajęty (konflikt) -> dostępny.
   const getSpecialistStatus = React.useCallback((u: User) => {
-    const workLoaded = Object.prototype.hasOwnProperty.call(workhoursByEmployee, u.id);
+    const cached = getWorkhoursFromCache(u.id, effectiveDate);
+    const workLoaded = cached !== undefined || Object.prototype.hasOwnProperty.call(workhoursByEmployee, u.id);
     if (!workLoaded) {
-      return { code: 'loading' as const, colorSet: { baseBg: 'bg-slate-50', hoverBg: 'hover:bg-slate-100', leftBorder: 'border-l-4 border-slate-200', nameColor: 'text-slate-600', badge: <span className="text-[10px] text-slate-600 px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">...</span>, disabled: true } };
+      return { code: 'loading' as const, colorSet: { baseBg: 'bg-slate-50', hoverBg: 'hover:bg-slate-100', leftBorder: 'border-l-4 border-slate-200', nameColor: 'text-slate-600', badge: <span className="text-[10px] text-slate-600 px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">ładowanie…</span>, disabled: true } };
     }
-    const hours = (workhoursByEmployee[u.id] || []) as WorkHours[];
+    const hours = cached ?? (workhoursByEmployee[u.id] || []);
     if (hours.length === 0) {
       return { code: 'no-hours' as const, colorSet: { baseBg: 'bg-gray-50', hoverBg: 'hover:bg-gray-100', leftBorder: 'border-l-4 border-gray-300', nameColor: 'text-gray-700', badge: <span className="text-[10px] text-gray-700 px-2 py-0.5 rounded-full bg-gray-100 border border-gray-300">brak godzin</span>, disabled: true } };
     }
@@ -609,7 +736,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       return { code: 'busy' as const, colorSet: { baseBg: 'bg-amber-50', hoverBg: 'hover:bg-amber-100', leftBorder: 'border-l-4 border-amber-300', nameColor: 'text-amber-900', badge: <span className="text-[10px] text-amber-900 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300">zajęty</span>, disabled: true } };
     }
     return { code: 'available' as const, colorSet: { baseBg: 'bg-emerald-50', hoverBg: 'hover:bg-emerald-100', leftBorder: 'border-l-4 border-emerald-300', nameColor: 'text-emerald-900', badge: <span className="text-[10px] text-emerald-900 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300">dostępny</span>, disabled: false } };
-  }, [editingMeeting?.id, effectiveDate, formData.endTime, formData.startTime, isSpecialistAvailable, specialistHasConflict, workhoursByEmployee]);
+  }, [editingMeeting?.id, effectiveDate, formData.endTime, formData.startTime, getWorkhoursFromCache, isSpecialistAvailable, specialistHasConflict, workhoursByEmployee]);
 
   // Sprawdź konflikty spotkań (zajętość)
   const conflictedSpecialists = React.useMemo(() => {
@@ -630,6 +757,30 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     if (!formData.roomId || !formData.startTime || !formData.endTime) return false;
     return roomHasConflict(formData.roomId, effectiveDate, formData.startTime, formData.endTime, editingMeeting?.id);
   }, [formData.roomId, formData.startTime, formData.endTime, effectiveDate, editingMeeting?.id, meetings]);
+
+  const recurrenceDatesPreview = React.useMemo(() => {
+    return buildRecurrenceDates(effectiveDate, editingMeeting ? 0 : repeatWeeksForward);
+  }, [buildRecurrenceDates, effectiveDate, repeatWeeksForward, editingMeeting]);
+
+  const recurrenceSummary = React.useMemo(() => {
+    if (!recurrenceDatesPreview.length) return null;
+    const lastDate = recurrenceDatesPreview[recurrenceDatesPreview.length - 1];
+    const formatter = new Intl.DateTimeFormat('pl-PL', { day: '2-digit', month: 'long', year: 'numeric' });
+    const [y, m, d] = lastDate.split('-').map(Number);
+    const humanLast = formatter.format(new Date(y, (m || 1) - 1, d || 1));
+    return {
+      total: recurrenceDatesPreview.length,
+      lastDate: humanLast,
+    };
+  }, [recurrenceDatesPreview]);
+
+  const recurrenceOptions = React.useMemo(() => [0, 1, 2, 3, 4, 5, 6, 8, 12, 16, 24], []);
+
+  const recurrenceButtonLabel = React.useMemo(() => {
+    if (repeatWeeksForward === 0) return 'Bez powtórzeń';
+    const weeksLabel = getPlural(repeatWeeksForward, ['tydzień', 'tygodnie', 'tygodni']);
+    return `Przez ${repeatWeeksForward} ${weeksLabel}`;
+  }, [repeatWeeksForward, getPlural]);
 
   // Restriction dialog (employees attempting forbidden actions on multi-specialist meetings)
   const [restrictionDialog, setRestrictionDialog] = useState<null | { type: 'removeSpecialist' | 'deleteMeeting' }>(null);
@@ -690,6 +841,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const datePickerRef = useRef<HTMLDivElement|null>(null);
   const startPickerRef = useRef<HTMLDivElement|null>(null);
   const endPickerRef = useRef<HTMLDivElement|null>(null);
+  const repeatMenuRef = useRef<HTMLDivElement|null>(null);
 
   // zamykanie dropdownów po kliknięciu poza
   useEffect(() => {
@@ -702,6 +854,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       if (datePickerRef.current && !datePickerRef.current.contains(t)) { setDateOpen(false); }
       if (startPickerRef.current && !startPickerRef.current.contains(t)) { setStartOpen(false); }
       if (endPickerRef.current && !endPickerRef.current.contains(t)) { setEndOpen(false); }
+      if (repeatMenuRef.current && !repeatMenuRef.current.contains(t)) { setRepeatMenuOpen(false); }
     };
     document.addEventListener('mousedown', onDown, true);
     return () => document.removeEventListener('mousedown', onDown, true);
@@ -1251,11 +1404,72 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
 
           {/* Guest + compact status row and enlarged notes */}
           <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
               {/* Guest field wider (2/3 on md+) */}
-              <div className={!pastEditBlocked ? 'md:col-span-2' : 'md:col-span-2'}>
+              <div className="md:col-span-2">
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Gość (opcjonalnie)</label>
                 <input type="text" value={formData.guestName} onChange={e=> setFormData({...formData, guestName:e.target.value})} placeholder="Imię i nazwisko" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-300 disabled:opacity-60 disabled:cursor-not-allowed" disabled={pastEditBlocked} />
+              </div>
+              {/* Recurrence selector */}
+              <div className="md:col-span-1" ref={repeatMenuRef}>
+                <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Powtórz co tydzień</label>
+                {editingMeeting || restrictPastEdit ? (
+                  <div className="px-3 py-2 border border-dashed border-gray-300 rounded-lg bg-gray-50 text-[12px] text-gray-500">
+                    Opcja dostępna podczas planowania nowych spotkań.
+                  </div>
+                ) : (
+                  <>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRepeatMenuOpen(o => !o);
+                          setRoomsOpen(false);
+                          setSpecOpen(false);
+                          setPatientsOpen(false);
+                          setDateOpen(false);
+                          setStartOpen(false);
+                          setEndOpen(false);
+                        }}
+                        className="w-full px-3 py-2 border border-indigo-200 rounded-lg bg-white text-sm shadow-sm hover:bg-indigo-50 focus:ring-2 focus:ring-indigo-500 focus:border-transparent flex items-center justify-between"
+                      >
+                        <span>{recurrenceButtonLabel}</span>
+                        <svg className={`h-4 w-4 text-indigo-500 transition-transform ${repeatMenuOpen ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.38a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
+                      </button>
+                      {repeatMenuOpen && (
+                        <div className="absolute z-30 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-64 overflow-auto text-sm">
+                          <ul className="py-1">
+                            {recurrenceOptions.map(option => {
+                              const total = option + 1;
+                              const isActive = repeatWeeksForward === option;
+                              const weeksLabel = option === 0
+                                ? ''
+                                : getPlural(option, ['tydzień', 'tygodnie', 'tygodni']);
+                              const meetingsLabel = getPlural(total, ['spotkanie', 'spotkania', 'spotkań']);
+                              return (
+                                <li key={option}>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setRepeatWeeksForward(option); setRepeatMenuOpen(false); }}
+                                    className={`w-full px-3 py-2 text-left flex flex-col gap-0.5 ${isActive ? 'bg-indigo-50 text-indigo-800 font-semibold' : 'hover:bg-indigo-50 text-gray-700'}`}
+                                  >
+                                    <span>{option === 0 ? 'Brak powtórzeń (tylko ten termin)' : `Co tydzień przez ${option} ${weeksLabel}`}</span>
+                                    <span className="text-[11px] text-gray-500">{total} {meetingsLabel}</span>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                    {recurrenceSummary && recurrenceSummary.total > 1 && (
+                      <p className="mt-2 text-[11px] text-indigo-600 font-medium">
+                        Utworzysz {recurrenceSummary.total} {getPlural(recurrenceSummary.total, ['spotkanie', 'spotkania', 'spotkań'])} do {recurrenceSummary.lastDate}.
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
               {/* Status compact (1/3) */}
               <div className="md:col-span-1">
@@ -1405,7 +1619,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       {/* Admin-only confirmation: save without specialist */}
       {showNoSpecialistConfirm && (
         <div className="fixed inset-0 z-[65] flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/50" onClick={()=> setShowNoSpecialistConfirm(false)} />
+          <div className="absolute inset-0 bg-black/50" onClick={()=> { setShowNoSpecialistConfirm(false); setPendingSubmission(null); }} />
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in">
             <div className="p-6">
               <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-indigo-100 flex items-center justify-center">
@@ -1418,14 +1632,19 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
               <div className="flex justify-center gap-3">
                 <button
                   type="button"
-                  onClick={()=> setShowNoSpecialistConfirm(false)}
+                  onClick={()=> { setShowNoSpecialistConfirm(false); setPendingSubmission(null); }}
                   className="px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   Anuluj
                 </button>
                 <button
                   type="button"
-                  onClick={()=> { setShowNoSpecialistConfirm(false); doSubmit(); }}
+                  onClick={async () => {
+                    const submission = pendingSubmission ?? await prepareSubmission();
+                    if (!submission) return;
+                    setShowNoSpecialistConfirm(false);
+                    await finalizeSubmit(submission);
+                  }}
                   className="px-4 py-2.5 text-sm font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
                 >
                   Zapisz bez specjalisty

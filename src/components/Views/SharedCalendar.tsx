@@ -2,14 +2,14 @@ import React, { useState } from 'react';
 import CalendarHeader from '../Calendar/CalendarHeader';
 import MeetingForm from '../Forms/MeetingForm';
 import { generateTimeSlots } from '../../utils/timeSlots';
-import { User, Room, Meeting } from '../../types';
+import { User, Room, Meeting, MeetingBatchPayload } from '../../types';
 
 interface SharedCalendarProps {
   users: User[];
   rooms: Room[];
   meetings: Meeting[];
   currentUser: User;
-  onMeetingCreate: (meeting: Omit<Meeting, 'id'>) => void;
+  onMeetingCreate: (meeting: Omit<Meeting, 'id'>) => Promise<void> | void;
   onMeetingUpdate: (meetingId: string, updates: Partial<Meeting>) => void;
   onMeetingDelete?: (meetingId: string) => void;
   showWeekends: boolean; // new
@@ -91,11 +91,16 @@ const SharedCalendar: React.FC<SharedCalendarProps> = ({
     setShowMeetingForm(true);
   };
 
-  const handleMeetingFormSubmit = (meetingData: Omit<Meeting, 'id'>) => {
+  const handleMeetingFormSubmit = async (payload: MeetingBatchPayload) => {
     if (editingMeeting) {
-      onMeetingUpdate(editingMeeting.id, meetingData);
+      const first = payload.meetings[0];
+      if (first) {
+        await Promise.resolve(onMeetingUpdate(editingMeeting.id, first));
+      }
     } else {
-      onMeetingCreate(meetingData);
+      for (const meetingData of payload.meetings) {
+        await Promise.resolve(onMeetingCreate(meetingData));
+      }
     }
     setShowMeetingForm(false);
     setEditingMeeting(undefined);

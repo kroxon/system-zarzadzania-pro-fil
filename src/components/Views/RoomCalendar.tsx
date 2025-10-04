@@ -236,7 +236,7 @@ const ConfirmModal: React.FC<{
 import CalendarHeader from '../Calendar/CalendarHeader';
 import MeetingForm from '../Forms/MeetingForm';
 import { generateTimeSlots } from '../../utils/timeSlots';
-import { User, Room, Meeting, Patient } from '../../types';
+import { User, Room, Meeting, Patient, MeetingBatchPayload } from '../../types';
 
 const SLOT_HEIGHT = 24;
 const SLOT_GAP = 2;
@@ -275,7 +275,7 @@ function getRoomStyle(room: Room | undefined){
   return { backgroundColor: bg, borderColor: border, color: text };
 }
 
-interface RoomCalendarProps { users: User[]; rooms: Room[]; meetings: Meeting[]; patients: Patient[]; currentUser: User; onMeetingCreate: (m: Omit<Meeting,'id'>) => void; onMeetingUpdate: (id:string, u:Partial<Meeting>)=>void; onMeetingDelete: (id:string) => void; showWeekends:boolean; startHour:number; endHour:number; }
+interface RoomCalendarProps { users: User[]; rooms: Room[]; meetings: Meeting[]; patients: Patient[]; currentUser: User; onMeetingCreate: (m: Omit<Meeting,'id'>) => Promise<void> | void; onMeetingUpdate: (id:string, u:Partial<Meeting>)=>void; onMeetingDelete: (id:string) => void; showWeekends:boolean; startHour:number; endHour:number; }
 
 const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, patients, currentUser, onMeetingCreate, onMeetingUpdate, onMeetingDelete, showWeekends, startHour, endHour }) => {
   // Stan wybranego slotu
@@ -312,7 +312,11 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
         meetings={meetings}
         patients={patients}
         currentUser={currentUser}
-        onSubmit={onMeetingCreate}
+        onSubmit={async (payload: MeetingBatchPayload) => {
+          for (const meetingData of payload.meetings) {
+            await Promise.resolve(onMeetingCreate(meetingData));
+          }
+        }}
         selectedDate={selectedSlot.date}
         selectedTime={selectedSlot.startTime}
         selectedEndTime={selectedSlot.endTime}
@@ -644,7 +648,21 @@ const RoomCalendar: React.FC<RoomCalendarProps> = ({ users, rooms, meetings, pat
     setCurrentDate(new Date(date));
     setShowMeetingForm(true);
   };
-  const handleMeetingFormSubmit = (meetingData: Omit<Meeting,'id'>) => { if(editingMeeting){ onMeetingUpdate(editingMeeting.id, meetingData);} else { onMeetingCreate(meetingData);} setShowMeetingForm(false); setEditingMeeting(undefined); };
+  const handleMeetingFormSubmit = async (payload: MeetingBatchPayload) => {
+    if (editingMeeting) {
+      const first = payload.meetings[0];
+      if (first) {
+        await Promise.resolve(onMeetingUpdate(editingMeeting.id, first));
+      }
+    } else {
+      for (const meetingData of payload.meetings) {
+        await Promise.resolve(onMeetingCreate(meetingData));
+      }
+    }
+    setShowMeetingForm(false);
+    setEditingMeeting(undefined);
+    setFormRoomId(undefined);
+  };
 
   // Week view (day columns, time grid like day view, meetings overlay)
   const renderWeekView = () => {

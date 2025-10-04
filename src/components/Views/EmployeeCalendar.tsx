@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import CalendarHeader from '../Calendar/CalendarHeader';
 import { generateTimeSlots } from '../../utils/timeSlots';
-import { User, Room, Meeting, Patient } from '../../types';
+import { User, Room, Meeting, Patient, MeetingBatchPayload } from '../../types';
 import { ChevronDown, Check, Trash2, Loader2 } from 'lucide-react';
 import MonthCalendar from './MonthCalendar';
 import MeetingForm from '../Forms/MeetingForm';
@@ -36,7 +36,7 @@ interface EmployeeCalendarProps {
   showWeekends: boolean;
   startHour: number;
   endHour: number;
-  onMeetingCreate: (m: Omit<Meeting,'id'>) => void;
+  onMeetingCreate: (m: Omit<Meeting,'id'>) => Promise<void> | void;
   onMeetingUpdate: (id:string, u: Partial<Meeting>) => void;
   onMeetingDelete?: (id:string) => void;
   patients?: Patient[];
@@ -768,7 +768,20 @@ const EmployeeCalendar: React.FC<EmployeeCalendarProps> = ({ users, rooms, meeti
       <MeetingForm
         isOpen={showMeetingForm}
         onClose={()=> { setShowMeetingForm(false); setEditingMeeting(undefined); }}
-        onSubmit={(data)=> { if(editingMeeting){ onMeetingUpdate(editingMeeting.id, data); } else { onMeetingCreate(data); } setShowMeetingForm(false); setEditingMeeting(undefined); }}
+        onSubmit={async (payload: MeetingBatchPayload) => {
+          if (editingMeeting) {
+            const first = payload.meetings[0];
+            if (first) {
+              await Promise.resolve(onMeetingUpdate(editingMeeting.id, first));
+            }
+          } else {
+            for (const meetingData of payload.meetings) {
+              await Promise.resolve(onMeetingCreate(meetingData));
+            }
+          }
+          setShowMeetingForm(false);
+          setEditingMeeting(undefined);
+        }}
         onDelete={(id)=> { onMeetingDelete?.(id); setShowMeetingForm(false); setEditingMeeting(undefined); }}
         users={users}
         rooms={rooms}
