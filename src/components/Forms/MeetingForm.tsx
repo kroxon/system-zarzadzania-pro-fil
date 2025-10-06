@@ -1,10 +1,105 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Clock, Trash2, AlertCircle } from 'lucide-react';
+import { Calendar, Clock, Trash2, AlertCircle, ChevronDown, Check } from 'lucide-react';
 import { Meeting, User, Room, Patient, EventStatus, MeetingBatchPayload } from '../../types';
 import { generateTimeSlots } from '../../utils/timeSlots';
 import { fetchEmployeeWorkHours } from '../../utils/api/employees';
 import type { WorkHours } from '../../types';
 import { getAllEventStatuses } from '../../utils/api/eventStatuses';
+
+type StatusCategory = 'planned' | 'in-progress' | 'completed' | 'absent' | 'cancelled' | 'other';
+
+type StatusVisual = {
+  dot: string;
+  text: string;
+  hoverBg: string;
+  selectedBg: string;
+  selectedText: string;
+  check: string;
+};
+
+const statusCategoryToMeetingStatus: Record<StatusCategory, Meeting['status']> = {
+  planned: 'present',
+  'in-progress': 'in-progress',
+  completed: 'present',
+  absent: 'absent',
+  cancelled: 'cancelled',
+  other: 'present'
+};
+
+const deriveStatusCategory = (name?: string): StatusCategory => {
+  const label = (name || '').toLowerCase();
+  if (/(anul|odwo|cancel)/.test(label)) return 'cancelled';
+  if (/(nieobec|absent)/.test(label)) return 'absent';
+  if (/(ukoń|zakoń|complete|done|finished)/.test(label)) return 'completed';
+  if (/(trak|tok|progress)/.test(label)) return 'in-progress';
+  if (/(plan|zaplan)/.test(label)) return 'planned';
+  return 'other';
+};
+
+const getStatusVisual = (category: StatusCategory): StatusVisual => {
+  switch (category) {
+    case 'planned':
+      return {
+        dot: 'bg-emerald-500',
+        text: 'text-emerald-700',
+        hoverBg: 'hover:bg-emerald-50',
+        selectedBg: 'bg-emerald-50',
+        selectedText: 'text-emerald-800',
+        check: 'text-emerald-600'
+      };
+    case 'in-progress':
+      return {
+        dot: 'bg-sky-500',
+        text: 'text-sky-700',
+        hoverBg: 'hover:bg-sky-50',
+        selectedBg: 'bg-sky-50',
+        selectedText: 'text-sky-800',
+        check: 'text-sky-600'
+      };
+    case 'completed':
+      return {
+        dot: 'bg-indigo-500',
+        text: 'text-indigo-700',
+        hoverBg: 'hover:bg-indigo-50',
+        selectedBg: 'bg-indigo-50',
+        selectedText: 'text-indigo-800',
+        check: 'text-indigo-600'
+      };
+    case 'absent':
+      return {
+        dot: 'bg-red-500',
+        text: 'text-red-700',
+        hoverBg: 'hover:bg-red-50',
+        selectedBg: 'bg-red-50',
+        selectedText: 'text-red-800',
+        check: 'text-red-600'
+      };
+    case 'cancelled':
+      return {
+        dot: 'bg-orange-500',
+        text: 'text-orange-700',
+        hoverBg: 'hover:bg-orange-50',
+        selectedBg: 'bg-orange-50',
+        selectedText: 'text-orange-800',
+        check: 'text-orange-600'
+      };
+    default:
+      return {
+        dot: 'bg-slate-400',
+        text: 'text-slate-600',
+        hoverBg: 'hover:bg-slate-50',
+        selectedBg: 'bg-slate-100',
+        selectedText: 'text-slate-700',
+        check: 'text-slate-500'
+      };
+  }
+};
+
+const statusRestrictionMessages: Record<Exclude<StatusCategory, 'absent' | 'cancelled' | 'other'>, string> = {
+  planned: 'Status dostępny tylko dla spotkań w przyszłości.',
+  'in-progress': 'Status dostępny wyłącznie podczas trwającego spotkania.',
+  completed: 'Status dostępny po zakończeniu spotkania.'
+};
 
 // Availability will be validated against backend workhours
 
@@ -35,7 +130,8 @@ interface MeetingFormState {
   startTime: string;
   endTime: string;
   notes: string;
-  status: Meeting['status'];
+  statusCategory: StatusCategory;
+  statusId?: number;
   specialistIds: string[];
   patientIds: string[];
   meetingName: string;
@@ -92,7 +188,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     startTime: selectedTime,
     endTime: selectedEndTime || computeDefaultEnd(selectedTime),
     notes: '',
-    status: 'present',
+  statusCategory: 'planned',
+    statusId: undefined,
     specialistIds: (currentUser.role === 'employee' ? [currentUser.id] : (selectedSpecialistId ? [selectedSpecialistId] : [])),
     patientIds: [],
     meetingName: ''
@@ -112,6 +209,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
 
   const [repeatWeeksForward, setRepeatWeeksForward] = useState<number>(0);
   const [repeatMenuOpen, setRepeatMenuOpen] = useState(false);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [pendingSubmission, setPendingSubmission] = useState<MeetingBatchPayload | null>(null);
 
   const getPlural = React.useCallback((count: number, forms: [string, string, string]) => {
@@ -184,24 +282,51 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return () => { cancelled = true; };
   }, [isOpen, token]);
 
-  // Helper: normalize backend status name to Meeting.status union
-  const normalizeStatusName = React.useCallback((name?: string): 'present' | 'absent' | 'cancelled' | 'in-progress' => {
-    const s = (name || '').toLowerCase();
-    if (/(cancel|odwo)/.test(s)) return 'cancelled';
-    if (/(absent|nieobec)/.test(s)) return 'absent';
-    if (/(progress|w toku)/.test(s)) return 'in-progress';
-    return 'present';
-  }, []);
+  // Helper: derive UI-facing status category from backend label
+  const detectStatusCategory = React.useCallback((name?: string): StatusCategory => deriveStatusCategory(name), []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!eventStatuses.length) return;
+    setFormData(prev => {
+        if (prev.statusId != null) {
+          const matchById = eventStatuses.find(s => s.id === prev.statusId);
+          if (matchById) {
+            const category = detectStatusCategory(matchById.name);
+            if (category !== prev.statusCategory) {
+              return { ...prev, statusCategory: category };
+            }
+          }
+          return prev;
+        }
+      if (editingMeeting?.statusId != null) {
+        const match = eventStatuses.find(s => s.id === editingMeeting.statusId);
+        if (match) {
+          return { ...prev, statusId: match.id, statusCategory: detectStatusCategory(match.name) };
+        }
+      }
+      const fallback = eventStatuses.find(s => detectStatusCategory(s.name) === prev.statusCategory) || eventStatuses[0];
+      if (!fallback) return prev;
+      return { ...prev, statusId: fallback.id, statusCategory: detectStatusCategory(fallback.name) };
+    });
+  }, [detectStatusCategory, eventStatuses, editingMeeting?.statusId, isOpen]);
 
   // aktywny status (edycja)
-  const activeStatusId = React.useMemo(() => {
-    // Prefer editingMeeting.statusId if present
-    if (editingMeeting?.statusId != null) return editingMeeting.statusId;
-    // Otherwise, try to infer from current normalized status (formData.status)
+  const selectedStatus = React.useMemo(() => {
     if (!eventStatuses || !eventStatuses.length) return undefined;
-    const match = eventStatuses.find(s => normalizeStatusName(s.name) === formData.status);
-    return match?.id;
-  }, [editingMeeting?.statusId, eventStatuses, formData.status, normalizeStatusName]);
+    if (formData.statusId != null) {
+      const match = eventStatuses.find(s => s.id === formData.statusId);
+      if (match) return match;
+    }
+    if (editingMeeting?.statusId != null) {
+      const match = eventStatuses.find(s => s.id === editingMeeting.statusId);
+      if (match) return match;
+    }
+    return eventStatuses.find(s => detectStatusCategory(s.name) === formData.statusCategory);
+  }, [detectStatusCategory, eventStatuses, formData.statusCategory, formData.statusId, editingMeeting?.statusId]);
+
+  const statusesAvailable = !eventStatusesLoading && !eventStatusesError && eventStatuses.length > 0;
+  const currentStatusTheme = React.useMemo(() => getStatusVisual(formData.statusCategory), [formData.statusCategory]);
 
   const fetchWorkhoursForIds = React.useCallback(async (ids: string[], dateYmd: string, options?: { applyToState?: boolean }) => {
     if (!token || !ids.length || !dateYmd) return {} as Record<string, WorkHours[]>;
@@ -326,6 +451,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
      setRepeatMenuOpen(false);
      setRepeatWeeksForward(0);
      setPendingSubmission(null);
+    setStatusMenuOpen(false);
     onClose();
   };
 
@@ -348,48 +474,6 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     return effectivePatients;
   }, [effectivePatients, patientAssignmentFilter, assignedPatientIds]);
 
-  useEffect(() => {
-    if (editingMeeting) {
-      setFormData(prev => ({
-        ...prev,
-        specialistId: editingMeeting.specialistId,
-        patientName: editingMeeting.patientName,
-        guestName: editingMeeting.guestName || '',
-        roomId: editingMeeting.roomId,
-        startTime: editingMeeting.startTime,
-        endTime: editingMeeting.endTime,
-        notes: editingMeeting.notes || '',
-        status: editingMeeting.status,
-        specialistIds: (editingMeeting.specialistIds && editingMeeting.specialistIds.length
-          ? editingMeeting.specialistIds.filter(Boolean)
-          : (editingMeeting.specialistId ? [editingMeeting.specialistId] : [])),
-        patientIds: editingMeeting.patientIds || (editingMeeting.patientId ? [editingMeeting.patientId] : []),
-        meetingName: (editingMeeting as any)?.name || ''
-      }));
-    } else {
-      setFormData({
-        specialistId: (currentUser.role === 'employee' ? currentUser.id : (selectedSpecialistId || '')),
-        patientName: '',
-        guestName: '',
-        roomId: initialRoomId || '',
-        startTime: selectedTime,
-        endTime: selectedEndTime || computeDefaultEnd(selectedTime),
-        notes: '',
-        status: 'present',
-        specialistIds: (currentUser.role === 'employee' ? [currentUser.id] : (selectedSpecialistId ? [selectedSpecialistId] : [])),
-        patientIds: [],
-        meetingName: ''
-      });
-    }
-  }, [editingMeeting, currentUser, selectedTime, initialRoomId, selectedEndTime]);
-
-  useEffect(() => {
-    if (editingMeeting) {
-      setRepeatWeeksForward(0);
-      setRepeatMenuOpen(false);
-    }
-  }, [editingMeeting]);
-
   const isMeetingInFuture = (m: Meeting | undefined) => {
     if (!m) return false;
     const [y, mo, d] = m.date.split('-').map(Number);
@@ -405,6 +489,67 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
     const endLocal = new Date(y, (mo || 1) - 1, d || 1, eh || 0, em || 0, 0, 0);
     return endLocal.getTime() < Date.now();
   };
+
+  useEffect(() => {
+    if (editingMeeting) {
+      const meetingCategory = (() => {
+        switch (editingMeeting.status) {
+          case 'in-progress':
+            return 'in-progress' as StatusCategory;
+          case 'absent':
+            return 'absent' as StatusCategory;
+          case 'cancelled':
+            return 'cancelled' as StatusCategory;
+          case 'present': {
+            if (isMeetingInPastByEnd(editingMeeting)) return 'completed' as StatusCategory;
+            if (isMeetingInFuture(editingMeeting)) return 'planned' as StatusCategory;
+            return 'in-progress' as StatusCategory;
+          }
+          default:
+            return 'planned' as StatusCategory;
+        }
+      })();
+      setFormData(prev => ({
+        ...prev,
+        specialistId: editingMeeting.specialistId,
+        patientName: editingMeeting.patientName,
+        guestName: editingMeeting.guestName || '',
+        roomId: editingMeeting.roomId,
+        startTime: editingMeeting.startTime,
+        endTime: editingMeeting.endTime,
+        notes: editingMeeting.notes || '',
+        statusCategory: meetingCategory,
+        statusId: typeof editingMeeting.statusId === 'number' ? editingMeeting.statusId : prev.statusId,
+        specialistIds: (editingMeeting.specialistIds && editingMeeting.specialistIds.length
+          ? editingMeeting.specialistIds.filter(Boolean)
+          : (editingMeeting.specialistId ? [editingMeeting.specialistId] : [])),
+        patientIds: editingMeeting.patientIds || (editingMeeting.patientId ? [editingMeeting.patientId] : []),
+        meetingName: (editingMeeting as any)?.name || ''
+      }));
+    } else {
+      setFormData({
+        specialistId: (currentUser.role === 'employee' ? currentUser.id : (selectedSpecialistId || '')),
+        patientName: '',
+        guestName: '',
+        roomId: initialRoomId || '',
+        startTime: selectedTime,
+        endTime: selectedEndTime || computeDefaultEnd(selectedTime),
+        notes: '',
+        statusCategory: 'planned',
+        statusId: undefined,
+        specialistIds: (currentUser.role === 'employee' ? [currentUser.id] : (selectedSpecialistId ? [selectedSpecialistId] : [])),
+        patientIds: [],
+        meetingName: ''
+      });
+    }
+  }, [editingMeeting, currentUser, selectedTime, initialRoomId, selectedEndTime, selectedSpecialistId]);
+
+  useEffect(() => {
+    if (editingMeeting) {
+      setRepeatWeeksForward(0);
+      setRepeatMenuOpen(false);
+    }
+  }, [editingMeeting]);
 
   const canCurrentUserEdit = (m: Meeting | undefined) => {
     if (!m) return false;
@@ -426,6 +571,52 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   const parseYMD = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, (m||1)-1, d||1); };
   const formatPolishDate = (s: string) => { const d = parseYMD(s); const day = String(d.getDate()).padStart(2,'0'); const month = new Intl.DateTimeFormat('pl-PL', { month: 'long' }).format(d); const year = d.getFullYear(); return `${day}.${month}.${year}`; };
   const effectiveDate = localDate || selectedDate;
+
+  const { meetingStart, meetingEnd } = React.useMemo(() => {
+    if (!effectiveDate || !formData.startTime || !formData.endTime) {
+      return { meetingStart: null as Date | null, meetingEnd: null as Date | null };
+    }
+    const [y, m, d] = effectiveDate.split('-').map(Number);
+    const [sh, sm] = formData.startTime.split(':').map(Number);
+    const [eh, em] = formData.endTime.split(':').map(Number);
+    if ([y, m, d, sh, sm, eh, em].some(n => !Number.isFinite(n))) {
+      return { meetingStart: null as Date | null, meetingEnd: null as Date | null };
+    }
+    const start = new Date(y, (m || 1) - 1, d || 1, sh || 0, sm || 0, 0, 0);
+    const end = new Date(y, (m || 1) - 1, d || 1, eh || 0, em || 0, 0, 0);
+    return { meetingStart: start, meetingEnd: end };
+  }, [effectiveDate, formData.endTime, formData.startTime]);
+
+  const isStatusAllowed = React.useCallback((category: StatusCategory) => {
+    if (!meetingStart || !meetingEnd) return true;
+    const now = Date.now();
+    const startMs = meetingStart.getTime();
+    const endMs = meetingEnd.getTime();
+
+    switch (category) {
+      case 'planned':
+        return startMs > now;
+      case 'in-progress':
+        return startMs <= now && now < endMs;
+      case 'completed':
+        return endMs <= now;
+      default:
+        return true;
+    }
+  }, [meetingEnd, meetingStart]);
+
+  useEffect(() => {
+    if (!statusesAvailable) return;
+    if (isStatusAllowed(formData.statusCategory)) return;
+    const fallback = eventStatuses.find(status => {
+      const category = detectStatusCategory(status.name);
+      return isStatusAllowed(category);
+    });
+    if (fallback) {
+      const category = detectStatusCategory(fallback.name);
+      setFormData(prev => ({ ...prev, statusId: fallback.id, statusCategory: category }));
+    }
+  }, [detectStatusCategory, eventStatuses, formData.statusCategory, isStatusAllowed, statusesAvailable]);
 
   useEffect(() => {
     if (!isOpen || editingMeeting) return;
@@ -454,7 +645,8 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       startTime: formData.startTime,
       endTime: formData.endTime,
       notes: formData.notes,
-      status: formData.status,
+    statusId: formData.statusId,
+    status: statusCategoryToMeetingStatus[formData.statusCategory],
       createdBy: currentUser.id,
       specialistIds: formData.specialistIds,
       patientIds: formData.patientIds,
@@ -837,6 +1029,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
   // refy do obsługi kliknięcia poza dropdownem
   const specMenuRef = useRef<HTMLDivElement|null>(null);
   const patientsMenuRef = useRef<HTMLDivElement|null>(null);
+  const statusMenuRef = useRef<HTMLDivElement|null>(null);
   const roomsMenuRef = useRef<HTMLDivElement|null>(null);
   const datePickerRef = useRef<HTMLDivElement|null>(null);
   const startPickerRef = useRef<HTMLDivElement|null>(null);
@@ -850,6 +1043,7 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
       const t = e.target as Node;
       if (specMenuRef.current && !specMenuRef.current.contains(t)) { setSpecOpen(false); setSpecSearch(''); }
       if (patientsMenuRef.current && !patientsMenuRef.current.contains(t)) { setPatientsOpen(false); setPatientsSearch(''); }
+  if (statusMenuRef.current && !statusMenuRef.current.contains(t)) { setStatusMenuOpen(false); }
       if (roomsMenuRef.current && !roomsMenuRef.current.contains(t)) { setRoomsOpen(false); }
       if (datePickerRef.current && !datePickerRef.current.contains(t)) { setDateOpen(false); }
       if (startPickerRef.current && !startPickerRef.current.contains(t)) { setStartOpen(false); }
@@ -1398,7 +1592,6 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 </div>
               </div>
 
-              {/* status tylko do wyświetlenia */}
             </div>
           </div> {/* end grid of left + right columns */}
 
@@ -1472,22 +1665,83 @@ const MeetingForm: React.FC<MeetingFormProps> = ({
                 )}
               </div>
               {/* Status compact (1/3) */}
-              <div className="md:col-span-1">
+              <div className="md:col-span-1" ref={statusMenuRef}>
                 <label className="block text-xs font-semibold tracking-wide text-gray-600 mb-2 uppercase">Status</label>
-                <div className="text-xs">
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!statusesAvailable) return;
+                      setStatusMenuOpen(o => !o);
+                      setRoomsOpen(false);
+                      setSpecOpen(false);
+                      setPatientsOpen(false);
+                      setDateOpen(false);
+                      setStartOpen(false);
+                      setEndOpen(false);
+                      setRepeatMenuOpen(false);
+                    }}
+                    disabled={!statusesAvailable}
+                    className={`w-full px-3 py-2 border border-indigo-200 rounded-lg bg-white text-sm shadow-sm flex items-center justify-between transition-colors ${statusesAvailable ? `${currentStatusTheme.hoverBg ?? 'hover:bg-indigo-50'} focus:ring-2 focus:ring-indigo-500 focus:border-transparent` : 'opacity-60 cursor-not-allowed'}`}
+                  >
+                    {selectedStatus ? (
+                      <span className="flex items-center gap-2">
+                        <span className={`h-2.5 w-2.5 rounded-full ${currentStatusTheme.dot}`} />
+                        <span className={`font-medium ${currentStatusTheme.text}`}>{selectedStatus.name}</span>
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">Wybierz status</span>
+                    )}
+                    <ChevronDown className={`h-4 w-4 text-indigo-500 transition-transform ${statusMenuOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {statusMenuOpen && statusesAvailable && (
+                    <div className="absolute z-30 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-64 overflow-auto text-sm">
+                      <ul className="py-1">
+                        {eventStatuses.map(status => {
+                          const category = detectStatusCategory(status.name);
+                          const theme = getStatusVisual(category);
+                          const isSelected = selectedStatus?.id === status.id;
+                          const disabled = !isStatusAllowed(category);
+                          const restriction = disabled ? statusRestrictionMessages[category as keyof typeof statusRestrictionMessages] : null;
+                          return (
+                            <li key={status.id}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (disabled) return;
+                                  setFormData(fd => ({ ...fd, statusId: status.id, statusCategory: category }));
+                                  setStatusMenuOpen(false);
+                                }}
+                                disabled={disabled}
+                                className={`w-full px-3 py-2 flex items-center justify-between text-left rounded-md transition-colors ${disabled ? 'cursor-not-allowed bg-gray-50 text-gray-400' : isSelected ? `${theme.selectedBg} ${theme.selectedText} font-semibold` : `bg-white ${theme.hoverBg ?? 'hover:bg-gray-50'} ${theme.text}`}`}
+                              >
+                                <span className="flex items-center gap-2 min-w-0">
+                                  <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${disabled ? 'bg-gray-300' : theme.dot}`} />
+                                  <span className={`truncate ${disabled ? 'text-gray-400' : isSelected ? theme.selectedText : theme.text}`}>{status.name}</span>
+                                </span>
+                                {isSelected && !disabled && <Check className={`h-4 w-4 ${theme.check ?? 'text-indigo-600'}`} />}
+                              </button>
+                              {disabled && restriction && (
+                                <div className="px-3 pb-3 text-[11px] leading-tight text-gray-400">
+                                  {restriction}
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
+                        {!eventStatuses.length && (
+                          <li className="px-3 py-2 text-xs text-gray-400">Brak dostępnych statusów</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                <div className="mt-2 text-xs min-h-[18px]">
                   {eventStatusesLoading && <span className="text-gray-500">Ładowanie…</span>}
                   {!eventStatusesLoading && eventStatusesError && <span className="text-red-600">{eventStatusesError}</span>}
-                  {!eventStatusesLoading && !eventStatusesError && (() => {
-                    const active = activeStatusId != null ? eventStatuses.find(s => s.id === activeStatusId) : undefined;
-                    if (active) {
-                      return (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-600 text-white font-medium tracking-wide">
-                          {active.name}
-                        </span>
-                      );
-                    }
-                    return <span className="text-gray-500">Brak</span>;
-                  })()}
+                  {!eventStatusesLoading && !eventStatusesError && !eventStatuses.length && (
+                    <span className="text-gray-500">Brak dostępnych statusów</span>
+                  )}
                 </div>
               </div>
             </div>

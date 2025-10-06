@@ -12,7 +12,7 @@ import EmployeesManage from './components/Views/EmployeesManage';
 import Patients from './components/Views/Patients';
 import RoomsManage from './components/Views/RoomsManage';
 import TasksPage from './components/Tasks/TasksPage';
-import { User, Meeting, Room, CreateEvent } from './types';
+import { User, Meeting, Room, CreateEvent, UpdateEvent } from './types';
 import MobileMeetings from './components/Views/MobileMeetings';
 import { useIsMobile } from './utils/device';
 import { notify } from './components/common/Notification';
@@ -464,7 +464,8 @@ function App() {
       ...specialistIds.map(id => Number(id)).filter(n => Number.isFinite(n)),
       ...patientIds.map(id => Number(id)).filter(n => Number.isFinite(n)),
     ];
-    const payload: CreateEvent = {
+    const mergedStatusId = updates.statusId ?? existing.statusId;
+    const payload: UpdateEvent = {
       name,
       start: toLocalNaiveIso(date, startTime)!,
       end: toLocalNaiveIso(date, endTime)!,
@@ -472,6 +473,7 @@ function App() {
       roomId: (updates.roomId ?? existing.roomId) ? Number(updates.roomId ?? existing.roomId) : null,
       info: (updates.notes ?? existing.notes) || null,
       guest: (updates.guestName ?? existing.guestName) || undefined,
+      statusId: typeof mergedStatusId === 'number' ? mergedStatusId : undefined,
     };
     try {
       await updateEvent(idNum, payload, token);
