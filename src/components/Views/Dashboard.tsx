@@ -237,24 +237,39 @@ const Dashboard: React.FC<DashboardProps> = ({ users, rooms, meetings, patients 
   // Aggregate counts for status tiles
   const deriveCounts = () => {
     const list = statsMode === 'month' ? monthEmployeesStats : yearEmployeesStats;
-    if (!list || list.length === 0) return { total:0, completed:0, cancelled:0, absent:0 };
+    const base = { total: 0, completed: 0, cancelled: 0, absent: 0 };
+    if (!list || list.length === 0) return base;
+
+    const buildFromRecord = (record?: AggregatedEmployeeStats | null) => {
+      if (!record) return base;
+      const completed = record.completedEvents ?? 0;
+      const cancelled = record.cancelledEvents ?? 0;
+      const absent = record.absentPatients ?? 0;
+      return {
+        total: completed + cancelled + absent,
+        completed,
+        cancelled,
+        absent
+      };
+    };
+
     if (isAdminScoped) {
       if (selectedSpecialist === 'all') {
-        return list.reduce((acc, r) => ({
-          total: acc.total + r.totalEvents,
-          completed: acc.completed + r.completedEvents,
-          cancelled: acc.cancelled + r.cancelledEvents,
-            absent: acc.absent + r.absentPatients
-        }), { total:0, completed:0, cancelled:0, absent:0 });
-      } else {
-        const numericId = parseInt(String(selectedSpecialist),10);
-        const rec = list.find(r => r.employeeId === numericId);
-        return rec ? { total: rec.totalEvents, completed: rec.completedEvents, cancelled: rec.cancelledEvents, absent: rec.absentPatients } : { total:0, completed:0, cancelled:0, absent:0 };
+        return list.reduce((acc, record) => {
+          const stats = buildFromRecord(record);
+          return {
+            total: acc.total + stats.total,
+            completed: acc.completed + stats.completed,
+            cancelled: acc.cancelled + stats.cancelled,
+            absent: acc.absent + stats.absent
+          };
+        }, base);
       }
-    } else {
-      const rec = list[0];
-      return { total: rec.totalEvents, completed: rec.completedEvents, cancelled: rec.cancelledEvents, absent: rec.absentPatients };
+      const numericId = parseInt(String(selectedSpecialist), 10);
+      return buildFromRecord(list.find(r => r.employeeId === numericId));
     }
+
+    return buildFromRecord(list[0]);
   };
   const { total: totalCount, completed: presentCount, cancelled: cancelledCount, absent: absentCount } = deriveCounts();
   const percent = (part: number) => totalCount ? Math.round((part / totalCount) * 100) : 0;
