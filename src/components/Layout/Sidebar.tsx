@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { /* Calendar, */ Users, MapPin, Settings, BarChart3, User, /* ListChecks, */ ClipboardList } from 'lucide-react';
+import { /* Calendar, */ Users, MapPin, Settings, BarChart3, User, /* ListChecks, */ ClipboardList, HelpCircle } from 'lucide-react';
 import { useUnsavedChangesGuard } from '../common/UnsavedChangesGuard';
 
 interface SidebarProps {
@@ -24,6 +24,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
     // Wyłączone tymczasowo: Quizy
     // { id: 'quizes', label: 'Quizy', icon: ListChecks, roles: ['admin', 'employee', 'contact'] },
     { id: 'tasks', label: 'Zadania', icon: ClipboardList, roles: ['admin', 'employee', 'contact'] },
+    { id: 'faq', label: 'FAQ i pomoc', icon: HelpCircle, roles: ['admin', 'employee', 'contact'] },
     { id: 'settings', label: 'Ustawienia', icon: Settings, roles: ['admin'] }
   ];
   const availableOther = otherItems.filter(i => i.roles.includes(userRole));
@@ -228,8 +229,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, userRole }) => {
                 <button
                   onClick={() => attempt(() => { 
                     navigate(
-                      item.id === 'tasks' ? '/tasks' : 
-                      item.id === 'settings' ? '/options' : 
+                      item.id === 'tasks' ? '/tasks' :
+                      item.id === 'settings' ? '/options' :
+                      item.id === 'faq' ? '/faq' :
                       '/'+item.id
                     );
                     setEmployeesGroupSelected(false); setEmployeesOpen(false); setRoomsGroupSelected(false); setRoomsOpen(false); 

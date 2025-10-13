@@ -17,6 +17,7 @@ import MobileMeetings from './components/Views/MobileMeetings';
 import { useIsMobile } from './utils/device';
 import { notify } from './components/common/Notification';
 import Settings from './components/Views/Settings';
+import FAQ from './components/Views/FAQ';
 // Icons were used in removed view meta; keeping import minimal
 import { mapBackendRolesToFrontend } from './utils/roleMapper';
 import { fetchEmployees } from './utils/api/employees';
@@ -76,6 +77,9 @@ function ProtectedLayout({ currentUser, onLogout, children }: { currentUser: any
     } else if (path.startsWith('/dashboard')) {
       currentView = 'dashboard';
       pageTitle = 'Panel główny';
+    } else if (path.startsWith('/faq')) {
+      currentView = 'faq';
+      pageTitle = 'FAQ i pomoc';
     }
     return { currentView, pageTitle };
   };
@@ -565,6 +569,7 @@ function App() {
           <Route path="/patients" element={<Patients />} />
           <Route path="/tasks" element={<TasksPage userRole={currentUser?.role || 'employee'} currentUserId={currentUser?.id || ''} />} />
           <Route path="/options" element={<Settings currentUser={currentUser!} token={currentUser?.token || localStorage.getItem('token') || undefined} onUsersRefresh={refreshBackendUsersGlobal} />} />
+          <Route path="/faq" element={<FAQ />} />
         </Route>
 
         {/* Protected mobile route (no desktop layout) */}

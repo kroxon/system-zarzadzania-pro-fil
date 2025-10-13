@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loginUser } from '../../utils/api/auth';
 import { fetchUserById } from '../../utils/api/user';
-import { User as UserIcon } from 'lucide-react';
+import { User as UserIcon, HelpCircle, X } from 'lucide-react';
 import RegisterForm from './RegisterForm';
 import ResetPasswordForm from './ResetPasswordForm';
 import { notify } from '../common/Notification';
+import Portal from '../common/Portal';
 
 
 interface LoginFormProps {
@@ -18,6 +19,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
   // Flip tylko login <-> register, reset fade
   const [isRegistering, setIsRegistering] = useState(false);
   const [resetFlip, setResetFlip] = useState<'none' | 'in' | 'out'>('none');
+  const [showHelp, setShowHelp] = useState(false);
 
   const handleFlip = (panel: 'login' | 'register' | 'reset') => {
     if (panel === 'register') {
@@ -164,6 +166,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                   >
                     Zarejestruj się
                   </button>
+                  {/* Subtle inline helpers removed; dedicated floating help button added below */}
                 </form>
               </div>
             </div>
@@ -183,6 +186,73 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
           </div>
         </div>
       </div>
+
+      {showHelp && (
+        <Portal>
+          <div className="fixed inset-0 z-[9999]">
+            <div className="absolute inset-0 bg-black/30" onClick={() => setShowHelp(false)} />
+            <div className="absolute inset-0 flex items-center justify-center p-4">
+              <div className="w-full max-w-md bg-white rounded-xl shadow-xl border border-gray-200">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                  <h3 className="text-sm font-semibold text-gray-900">Poradnik: logowanie i rejestracja</h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowHelp(false)}
+                    className="p-1 rounded hover:bg-gray-100 text-gray-500"
+                    aria-label="Zamknij"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="px-4 py-3 text-sm text-gray-700 space-y-3">
+                  <div>
+                    <div className="font-medium text-gray-900 mb-1">Logowanie</div>
+                    <ul className="list-disc pl-5 space-y-1">
+                      <li>Użyj adresu e‑mail i hasła przypisanego do Twojego konta.</li>
+                      <li>Jeśli konto jest nowe, upewnij się, że zostało aktywowane przez administratora.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <div className="font-medium text-gray-900 mb-1">Rejestracja</div>
+                    <ul className="list-disc pl-5 space-y-1">
+                      <li>Wybierz „Zarejestruj się” i wypełnij formularz.</li>
+                      <li>Po rejestracji konto wymaga akceptacji przez administratora. Do czasu aktywacji logowanie będzie niedostępne.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <div className="font-medium text-gray-900 mb-1">Reset hasła</div>
+                    <ul className="list-disc pl-5 space-y-1">
+                      <li>Kliknij „Zapomniałeś hasła?” i podaj adres e‑mail.</li>
+                      <li>Jeśli wiadomość nie dociera, sprawdź foldery SPAM/Oferty/„Inne”.</li>
+                      <li>Jeżeli nadal nie otrzymujesz wiadomości, skontaktuj się z administratorem.</li>
+                    </ul>
+                  </div>
+                  {/* Removed: Additional FAQ hint link per request */}
+                </div>
+                <div className="px-4 pb-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowHelp(false)}
+                    className="w-full mt-2 bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 text-sm"
+                  >
+                    Rozumiem
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Portal>
+      )}
+      {/* Floating help button in bottom-right corner */}
+      <button
+        type="button"
+        onClick={() => setShowHelp(true)}
+        aria-label="Pomoc z logowaniem"
+        className="fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-lg bg-white border border-gray-200 text-indigo-600 hover:text-white hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 flex items-center justify-center"
+        title="Pomoc"
+      >
+        <HelpCircle className="h-8 w-8" />
+      </button>
     </div>
   );
 }
