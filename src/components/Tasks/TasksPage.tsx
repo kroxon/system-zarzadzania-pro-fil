@@ -6,6 +6,12 @@ import { EmployeeTask, Employee } from '../../types/index';
 import { fetchEmployees } from '../../utils/api/employees';
 import { createEmployeeTask } from '../../utils/api/tasks';
 
+const emitNotificationsRefresh = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('app:notificationsRefresh'));
+  }
+};
+
 type TaskFormState = {
   name: string;
   assignedEmployeeId: number | null;
@@ -409,6 +415,7 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
       setShowCreateModal(false);
       setCreateForm(createEmptyFormState());
       notify.success('Zadanie utworzone');
+      emitNotificationsRefresh();
     } catch (err) {
       setCreateErrors(['Nie udało się utworzyć zadania. Spróbuj ponownie.']);
     } finally {
@@ -480,6 +487,7 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
   await api.updateEmployeeTask(editingTask.id, payload, token);
   setTaskList(prev => prev.map(task => (task.id === editingTask.id ? { ...task, ...payload } : task)));
       notify.success('Zadanie zaktualizowane');
+      emitNotificationsRefresh();
       setEditingTask(null);
     } catch (err: any) {
       setEditErrors([err?.message || 'Nie udało się zaktualizować zadania']);
@@ -587,6 +595,7 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
       await api.updateEmployeeTask(taskId, { ...task, isCompleted: false }, token);
       setTaskList(prev => prev.map(t => (t.id === taskId ? { ...t, isCompleted: false } : t)));
       notify.success('Status zadania przywrócony do „Do zrobienia”.');
+      emitNotificationsRefresh();
     } catch (error: any) {
       notify.error(error?.message || 'Nie udało się cofnąć ukończenia zadania.');
     }
@@ -603,6 +612,7 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
       await api.updateEmployeeTask(taskId, { ...task, isCompleted: true }, token);
       setTaskList(prev => prev.map(t => (t.id === taskId ? { ...t, isCompleted: true } : t)));
       notify.success('Zadanie oznaczone jako ukończone.');
+      emitNotificationsRefresh();
     } catch (error: any) {
       notify.error(error?.message || 'Nie udało się oznaczyć zadania jako ukończone.');
     }
@@ -642,6 +652,7 @@ export default function TasksPage({ userRole, currentUserId }: TasksPageProps) {
       await api.deleteEmployeeTask(deleteTargetId, token);
       setTaskList(prev => prev.filter(t => t.id !== deleteTargetId));
       notify.success('Zadanie zostało usunięte.');
+      emitNotificationsRefresh();
       handleCloseDeleteDialog();
     } catch (error: any) {
       const message = error?.message || 'Nie udało się usunąć zadania.';

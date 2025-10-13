@@ -3,6 +3,12 @@ import { fetchPendingUsers, approveUser, rejectUser } from '../../utils/api/admi
 import { PendingUser, Role } from '../../types';
 import { notify } from '../common/Notification';
 
+const emitNotificationsRefresh = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('app:notificationsRefresh'));
+  }
+};
+
 type SettingsProps = {
 	currentUser?: { role: string };
 	token?: string;
@@ -36,6 +42,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, token, onUsersRefresh 
 			await approveUser(userId, role, token);
 			// Usuń z listy oczekujących
 			setPendingUsers(prev => prev.filter(u => u.id !== userId));
+			emitNotificationsRefresh();
 			// Spróbuj odświeżyć globalną listę pracowników aby nowy był natychmiast widoczny
 			if (onUsersRefresh) {
 				try { await onUsersRefresh(); } catch { /* ciche pominięcie */ }
@@ -51,6 +58,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, token, onUsersRefresh 
 		try {
 			await rejectUser(userId, token);
 			setPendingUsers(prev => prev.filter(u => u.id !== userId));
+			emitNotificationsRefresh();
 		} catch (e: any) {
 			notify.error('Nie udało się odrzucić użytkownika' + (e?.message ? `: ${e.message}` : ''));
 		}
