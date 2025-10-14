@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-const MOBILE_BREAKPOINT = 768; // tailwind md breakpoint
+const MOBILE_BREAKPOINT = 480; // optimized for actual mobile devices (phones in portrait)
 
 // Simple device helpers for mobile detection
 // Heuristic: rely on viewport width, fall back to UA when sizing info is unavailable
