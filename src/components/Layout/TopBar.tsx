@@ -3,6 +3,7 @@ import { User, LogOut, Bell } from 'lucide-react';
 import { useUnsavedChangesGuard } from '../common/UnsavedChangesGuard';
 import { fetchEmployeeTasks } from '../../utils/api/tasks';
 import { fetchPendingUsers } from '../../utils/api/admin';
+import { notify } from '../common/Notification';
 import type { EmployeeTask, PendingUser } from '../../types';
 
 interface TopBarProps {
@@ -20,6 +21,24 @@ interface TopBarProps {
 const TopBar: React.FC<TopBarProps> = ({ currentUser, onLogout, pageTitle, pageIcon }) => {
   const { attempt } = useUnsavedChangesGuard();
   const [hasNotifications, setHasNotifications] = React.useState(false);
+  
+  // Use localStorage to persist the last seen count across page reloads
+  const getLastSeenCount = () => {
+    try {
+      const stored = localStorage.getItem('topbar_last_pending_count');
+      return stored ? parseInt(stored, 10) : 0;
+    } catch {
+      return 0;
+    }
+  };
+  
+  const setLastSeenCount = (count: number) => {
+    try {
+      localStorage.setItem('topbar_last_pending_count', count.toString());
+    } catch {
+      // ignore storage errors
+    }
+  };
 
   React.useEffect(() => {
     let active = true;
@@ -80,6 +99,30 @@ const TopBar: React.FC<TopBarProps> = ({ currentUser, onLogout, pageTitle, pageI
         const hasPendingApprovals = currentUser.role === 'admin' && pending.length > 0;
 
         if (active) {
+          const lastSeenCount = getLastSeenCount();
+
+          // Show notification for new pending users
+          if (currentUser.role === 'admin' && pending.length > lastSeenCount) {
+            const newUsersCount = pending.length - lastSeenCount;
+            
+            if (newUsersCount > 0) {
+              const message = newUsersCount === 1 
+                ? 'Nowy użytkownik oczekuje na zatwierdzenie konta'
+                : `${newUsersCount} nowych użytkowników oczekuje na zatwierdzenie kont`;
+              notify.info(message);
+              
+              // Update last seen count
+              setLastSeenCount(pending.length);
+              
+              // Notify other components about the change
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('app:notificationsRefresh'));
+              }
+            }
+          } else if (currentUser.role === 'admin') {
+            // Update count even if no notification (for future comparisons)
+            setLastSeenCount(pending.length);
+          }
           setHasNotifications(hasIncompleteAssignedTask || hasPendingApprovals);
         }
       } catch {
@@ -91,7 +134,7 @@ const TopBar: React.FC<TopBarProps> = ({ currentUser, onLogout, pageTitle, pageI
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        load();
+        setTimeout(load, 100); // Small delay to ensure proper state reset
       }
     };
 
