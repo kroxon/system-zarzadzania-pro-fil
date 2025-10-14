@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { forgotPassword, resetPassword } from '../../utils/api/auth';
+import { notify } from '../common/Notification';
 
 export interface ResetPasswordFormProps {
   onResetSuccess: () => void;
@@ -23,7 +24,8 @@ const ResetPasswordForm: React.FC<ResetPasswordFormProps> = ({ onResetSuccess, o
     setError(null);
     try {
       await forgotPassword({ email });
-  setStep(2);
+      notify.info('Link resetujący został wysłany na Twój email. Sprawdź również folder spam i postępuj zgodnie z instrukcjami w wiadomości.');
+      setStep(2);
     } catch (err: any) {
       // let backend-driven notification (translated) be shown; avoid local duplicate messages
       console.error('forgotPassword failed', err);
